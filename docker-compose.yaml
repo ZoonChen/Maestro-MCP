@@ -1,0 +1,17 @@
+services:
+  maestro:
+    build: .
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ../:/workspaces:ro
+      - ./maestro.yaml:/app/maestro.yaml:ro
+    command: serve --config /app/maestro.yaml --db /app/data/maestro.db --http :8080 --sse :3000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

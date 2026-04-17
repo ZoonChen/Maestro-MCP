@@ -1,0 +1,13 @@
+.git
+.idea
+.vscode
+*.exe
+*.dll
+*.so
+*.dylib
+data/
+tests/
+node_modules/
+*.md
+!web/dist/
+.claude/

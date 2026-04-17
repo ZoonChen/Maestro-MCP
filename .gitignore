@@ -1,0 +1,60 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+go.work
+go.work.sum
+
+# Dependencies
+vendor/
+
+# Environment / secrets
+.env
+.env.*
+maestro.yaml
+
+# Runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Build output
+maestro
+maestro.exe
+
+# Node.js
+node_modules/
+web/node_modules/
+web/dist/
+tests/e2e/node_modules/
+
+# Test results
+test-results/
+playwright-report/
+test-results/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Maestro worktree data
+.maestro/
+
+# Claude Code local settings
+.claude/settings.local.json
