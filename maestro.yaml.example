@@ -1,0 +1,45 @@
+# Maestro MCP Configuration
+# Copy this file to maestro.yaml and edit as needed.
+# All values can be overridden via environment variables (see below).
+
+# Database path (SQLite). Use ":memory:" for testing.
+db_path: "data/maestro.db"
+# Env override: MAESTRO_DB_PATH
+
+# HTTP server address (REST API + WebSocket + Web UI)
+http_addr: ":8080"
+# Env override: MAESTRO_HTTP_ADDR
+
+# MCP SSE server address (for remote MCP clients like OpenClaw)
+sse_addr: ":3000"
+# Env override: MAESTRO_SSE_ADDR
+
+# Default MCP transport mode: "stdio" or "sse"
+transport: "stdio"
+
+# Maximum concurrent connections (SSE + WebSocket combined)
+max_connections: 50
+
+# Logging configuration
+log_level: "info"    # debug, info, warn, error
+log_format: "text"   # text or json (structured logging)
+
+# Session stale timeout in seconds (heartbeat interval threshold)
+# Sessions that don't send a heartbeat within this period are marked offline.
+stale_timeout_sec: 120
+
+# Garbage collection intervals
+worktree_gc_interval_sec: 600  # 10 minutes - cleans up abandoned/merged worktrees
+data_gc_interval_hours: 24     # 24 hours - purges old activity/audit logs
+
+# Data retention periods (in days)
+activity_log_retention_days: 90
+audit_log_retention_days:    180
+
+# Authentication — Bearer token for REST API and WebSocket connections.
+# If empty, authentication is DISABLED (all requests are allowed).
+# RECOMMENDED: set via environment variable in production.
+#   export MAESTRO_AUTH_TOKEN="your-secure-random-token"
+auth_token: ""
+# Env override: MAESTRO_AUTH_TOKEN
+# The /health endpoint and /dashboard are always accessible without auth.
