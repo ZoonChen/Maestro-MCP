@@ -6,9 +6,10 @@
 ## 1. 目标提交与 CI Evidence
 
 - 收口分支：`m0/target-candidate`（单一收口提交：代码 + 测试 + 文档状态翻转 + 矩阵翻转 + 门禁脚本修正）。
-- 目标提交（PR head）：`76bfcf7095e75660f288c5beb3e7e385c00b319a`（本复盘回填提交之上的 head 以 PR 页面为准）
+- 目标提交（PR head）：`8b5f756c8c90ae20fce87f1eaa35213abd772fa8`（含本复盘回填；首版收口提交为 `76bfcf7095e75660f288c5beb3e7e385c00b319a`）
 - PR 链接：https://github.com/ZoonChen/Maestro-MCP/pull/1
-- 远程 CI Evidence：三个工作流（`ci.yml` / `docs.yml` / `m0-runtime.yml`）在 PR head 全绿；M0 运行时 Evidence = artifact `m0-runtime-<PR head SHA>`（binary + SBOM，30 天保留，关键结论以本文与 PR 描述留档）。
+- 合流方式：merge commit `d5eb807`（"Merge pull request #1"，真 merge 非 squash），`8b5f756` 因此在 main 历史可达；合流后 main 头上的本地与远程 `docs-check` 均通过（HEAD 字面量绑定在合并提交上成立）。
+- 远程 CI Evidence：三个工作流（`ci.yml` / `docs.yml` / `m0-runtime.yml`）在 PR head `8b5f756` 全绿（build 2m34s、lint 1m58s、docs 46s、build-test-sbom 10m4s，run 33052256770/33052256766/33052256774）；合流后 push-main 的 CI 与 Documentation 亦 success。M0 运行时 Evidence = artifact `m0-runtime-9e4142a7818b8f6305d391915362fd497e2103b0`（binary + SBOM，约 10.9 MB，30 天保留）。注：pull_request 事件中 `github.sha` 为 GitHub 的 merge-ref 提交（`9e4142a…`），artifact 名据此生成；PR head 提交以本节记录为准。
 - `last_verified_commit: HEAD` 为自引用绑定字面量：文档声称的验证提交即携带该文档的收口提交本身；实际 SHA 以本节 PR head 记录为准（矩阵 `Verified Commit` 同语义）。
 
 ## 2. 角色签署记录
@@ -17,12 +18,12 @@
 
 | 角色 | 签署人 | 日期 | 范围 |
 | --- | --- | --- | --- |
-| product_owner | 待签 | — | M0 可用流程验收（Exit Gate 五条） |
-| technical_lead | 待签 | — | 构建/状态机/验证链与目标提交绑定 |
-| qa_owner | 待签 | — | Exit Evidence 逐项（TC-MCP-001/003/004、TC-TASK-002/003/004、TC-VAL-001..005、TC-CTX-002/003、TC-BLD-001） |
-| security_owner | 待签 | — | 安全负测试（Origin/匿名/路径/命令/资源限制） |
+| product_owner | 待补签 | — | M0 可用流程验收（Exit Gate 五条） |
+| technical_lead | 待补签 | — | 构建/状态机/验证链与目标提交绑定 |
+| qa_owner | 待补签 | — | Exit Evidence 逐项（TC-MCP-001/003/004、TC-TASK-002/003/004、TC-VAL-001..005、TC-CTX-002/003、TC-BLD-001） |
+| security_owner | 待补签 | — | 安全负测试（Origin/匿名/路径/命令/资源限制） |
 
-四角色齐全后方可合入 main；合入即 V0 收敛点闭环。
+**实际合并记录（流程偏离）**：PR #1 在四角色 approving review 完成前由 repo owner（ZoonChen）于 CI 全绿后直接以 merge commit `d5eb807` 合入 main（2026-08-27）。签署要求未满足即合流是本收敛点的流程偏离；owner 的合并动作视为对变更集的整体接受，四角色签署按上表待补（建议以事后 review 或书面记录补齐，并在 W1 前完成）。
 
 ## 3. 本轮偏离项与根因
 
