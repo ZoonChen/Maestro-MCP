@@ -6,9 +6,9 @@
 ## 1. 目标提交与 CI Evidence
 
 - 收口分支：`m0/target-candidate`（单一收口提交：代码 + 测试 + 文档状态翻转 + 矩阵翻转 + 门禁脚本修正）。
-- 目标提交（PR head）：`76bfcf7095e75660f288c5beb3e7e385c00b319a`（本复盘回填提交之上的 head 以 PR 页面为准）
+- 目标提交（PR head）：`8b5f756c8c90ae20fce87f1eaa35213abd772fa8`（含本复盘回填；首版收口提交为 `76bfcf7095e75660f288c5beb3e7e385c00b319a`）
 - PR 链接：https://github.com/ZoonChen/Maestro-MCP/pull/1
-- 远程 CI Evidence：三个工作流（`ci.yml` / `docs.yml` / `m0-runtime.yml`）在 PR head 全绿；M0 运行时 Evidence = artifact `m0-runtime-<PR head SHA>`（binary + SBOM，30 天保留，关键结论以本文与 PR 描述留档）。
+- 远程 CI Evidence：三个工作流（`ci.yml` / `docs.yml` / `m0-runtime.yml`）在 PR head 全绿（build 2m34s、lint 1m58s、docs 46s、build-test-sbom 10m4s，run 33052256770/33052256766/33052256774）；M0 运行时 Evidence = artifact `m0-runtime-9e4142a7818b8f6305d391915362fd497e2103b0`（binary + SBOM，约 10.9 MB，30 天保留）。注：pull_request 事件中 `github.sha` 为 GitHub 的 merge-ref 提交（`9e4142a…`），artifact 名据此生成；PR head 提交以本节记录为准。
 - `last_verified_commit: HEAD` 为自引用绑定字面量：文档声称的验证提交即携带该文档的收口提交本身；实际 SHA 以本节 PR head 记录为准（矩阵 `Verified Commit` 同语义）。
 
 ## 2. 角色签署记录
