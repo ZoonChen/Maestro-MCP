@@ -125,7 +125,7 @@ func TestAutoTransitionStatus_AllDone_ToCompleted(t *testing.T) {
 			AllowedDirectories: `["src/"]`,
 			Priority:           model.PriorityNormal,
 		}
-		mustCreateTask(t, svc.stores.taskStore, task)
+		mustSeedHistoricalDoneTask(t, svc.stores, task)
 	}
 
 	err := svc.featSvc.AutoTransitionStatus(ctx, testProjectID, "feat-done-01")
@@ -160,7 +160,7 @@ func TestAutoTransitionStatus_OnePending_StaysActive(t *testing.T) {
 		AllowedDirectories: `["src/"]`,
 		Priority:           model.PriorityNormal,
 	}
-	mustCreateTask(t, svc.stores.taskStore, taskDone)
+	mustSeedHistoricalDoneTask(t, svc.stores, taskDone)
 
 	taskPending := &model.Task{
 		ID:                 "T-mix-pending",

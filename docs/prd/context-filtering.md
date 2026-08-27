@@ -1,154 +1,87 @@
-# 3.3 M3: 动态上下文降噪
-
-> **文档版本:** v2.1 | **更新日期:** 2026-04-17
-> **所属:** 产品需求文档 > 功能需求 > 动态上下文降噪
-> **相关文档:** [任务管理](task-management.md) | [契约解析引擎](../technical/contract-engine.md)
-
+---
+doc_id: PRD-CONTEXT-FILTERING
+spec_version: 3.0
+spec_status: review
+implementation_status: partial
+verification_status: unverified
+owner_role: product_owner
+approver_roles: [product_owner, technical_lead, security_owner]
+introduced_in: M0
+authority_for: [context_selection, context_budget, untrusted_context_handling]
+related_adrs: [ADR-003, ADR-007]
+related_specs: [../specs/mcp/tools.schema.json, ../specs/schemas/config.schema.json]
+related_tests: [../testing/agent-evaluation-redteam.md, ../testing/integration-test-plan.md]
+last_verified_commit: null
 ---
 
-## 降噪策略
+# 上下文筛选与边界
 
-Agent 领取任务时，Maestro 返回**最小必要上下文**，而非全量文档：
+> 当前实现说明：M0 已实现 Task、依赖项与 API contract 的最小上下文切片。必需来源缺失、无效或构建失败均 fail-closed；若失败发生在领取之后，Task/Session/Worker/Lease 会在同一补偿事务中恢复一致状态，新建 Worktree 标记清理，既有已修改 Worktree 则隔离且不得自动重派。带不可变 manifest、完整 token/byte/file 预算和多来源排序的 ContextSet 仍属 M3，因此本规范保持 `partial/unverified`。
 
-| 上下文类型 | 降噪规则 |
-|---|---|
-| **API 契约** | 仅含 `required_apis` 指定的接口（方法、路径、请求/响应 Schema），其余全部丢弃 |
-| **文件树** | 仅列出 Worktree 中 `allowed_directories` 内的文件，跳过 node_modules、.git 等 |
-| **依赖摘要** | 前置任务的输出仅返回 `summary` 字段，不返回全量变更文件列表 |
+## 1. 目标与非目标
 
-## 契约源 Provider
+`CTX-REQ-001` 为每个执行步骤构建“足够且仅足够”的 project-scoped ContextSet。`CTX-REQ-002` 上下文 MUST 有来源、版本、预算、敏感级别和可复现筛选结果。本文不授予读取权限，不把检索结果当作可信指令，也不保存无限期记忆。
 
-| Provider | 格式 | 支持阶段 |
-|---|---|---|
-| `openapi` | OpenAPI 3.x YAML/JSON | v0.2（首版） |
-| `manual_json` | 手动录入的 JSON 契约 | v0.2 |
-| `graphql` | GraphQL Schema | 规划中 |
-| `protobuf` | Proto 文件 | 规划中 |
+## 2. 参与者、角色、权限和信任边界
 
-未配置契约源的项目，上下文降级为纯 description + allowed_directories + 文件列表。
+调用主体提出任务意图；Context Builder 依据服务端授权检索；Runner 只读取 Lease 允许的工作区；Agent 消费过滤后的不可信内容；Verifier 可查看来源清单而非越权原文。仓库、Issue、MR、测试日志和 Prompt 均为潜在注入边界。
 
-### manual_json 契约格式
+## 3. 触发条件、输入和前置条件
 
-手动录入的 JSON 契约必须遵循以下最小 schema：
+任务规划、复现、修改、验证前分别构建 ContextSet。输入为 task ID、step kind、exact SHA、允许路径/数据源、token/byte/file budget；前置条件为有效 delegated context、项目可见性、可解析 include/exclude 规则及不存在符号链接逃逸。
 
-```json
-[
-  {
-    "method": "GET",
-    "path": "/api/v1/orders",
-    "description": "获取订单列表",
-    "request_schema": {
-      "type": "object",
-      "properties": {
-        "page": { "type": "integer" },
-        "size": { "type": "integer" }
-      }
-    },
-    "response_schema": {
-      "type": "object",
-      "properties": {
-        "data": { "type": "array" },
-        "total": { "type": "integer" }
-      }
-    }
-  }
-]
+## 4. 正常交互及时序图
+
+```mermaid
+sequenceDiagram
+    participant W as Workflow
+    participant A as Authorization
+    participant C as Context Builder
+    participant S as Repo/Issue/Evidence
+    participant G as Agent
+    W->>A: authorize sources for step
+    A-->>C: scoped grants
+    C->>S: fetch exact versions
+    C->>C: normalize, rank, redact, budget
+    C-->>W: immutable ContextSet + manifest
+    W-->>G: content as untrusted data
 ```
 
-**必填字段：**
+## 5. 失败、取消、超时、重试、恢复和用户提示
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `method` | string | HTTP 方法: GET / POST / PUT / DELETE / PATCH |
-| `path` | string | API 路径，以 `/` 开头 |
-| `description` | string | 接口描述 |
+必要来源缺失、SHA 不匹配、无法解码、超预算无法压缩、敏感内容脱敏失败时 MUST 中止该步骤。可选来源失败应记录 omission，不得静默补造。取消停止检索并删除临时明文；重试固定相同版本。用户提示列出缺失来源、限制和缩小范围建议，但不泄漏被拒资源。
 
-**可选字段：**
+## 6. 状态机、规则和不可变式
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `request_schema` | object | 请求体 JSON Schema（可简化） |
-| `response_schema` | object | 响应体 JSON Schema（可简化） |
-| `tags` | string[] | 接口标签（如 `["user", "read"]`） |
-| `examples` | object[] | 请求/响应示例 |
-| `source` | string | 来源说明（如 "手动录入 by 张三"） |
+ContextSet 状态：`requested → collecting → filtered → sealed → consumed/expired`，失败为 `rejected`。`CTX-RULE-001` sealed 后不可修改；`CTX-RULE-002` 内容不能覆盖系统/工具策略；`CTX-RULE-003` 来源权限在每次构建时重验；`CTX-RULE-004` 必需来源 omission 时 fail-closed。
 
-`manual_json` 契约文件放在项目配置的 `contract_paths` 目录下，后缀为 `.json`。
+## 7. 字段、配置和格式校验
 
-## 数据源与降级
+Manifest 至少含 `context_id/project_id/task_id/step/source_uri/source_version/digest/classification/selected_bytes/token_estimate/redactions/created_at/expires_at`。路径必须 canonicalize，拒绝绝对路径、`..`、NUL、符号链接越界。文件类型、单文件/总字节、文件数和 token 上限必须有硬限制。
 
-- 项目可配置 API 契约文件路径（如 OpenAPI 文档）
-- Maestro 启动时解析契约文件，构建索引，领取任务时按需提取
-- 契约文件变更时自动重新解析
-- **降级策略**: 未配置契约文件时，`required_apis` 字段失效，上下文仅包含任务描述 + 目录边界 + 文件列表。不影响边界控制和测试验证
+## 8. 并发、幂等和一致性
 
-## 配置继承
+构建键为 `task_id + step + source_versions + filter_version + budget`；同键返回同 digest。构建期间源版本变化则废弃并重建，不混合版本。manifest 与引用 Evidence 原子保存，缓存按 project/context 隔离且按过期时间清除。
 
-优先级：`Task.test_requirements` > `Project.config` > `全局默认配置`。各字段的具体回退规则（含例外项如 `test_timeout` 不在 Task 级覆盖）详见 [边界控制与验证](validation.md) 的测试要求配置回退链表。
+## 9. 安全、Secret、隐私和审计
 
-## get_next_task 返回上下文标准结构
+先授权、再获取、再脱敏；Secret pattern 命中默认移除并记录类型，不记录原值。Central Plane 不持久化完整源码；脱敏加密 Agent 轨迹最多 30 天。审计记录请求者、数据源类别、数量、digest、拒绝原因和策略版本。
 
-Agent 调用 `get_next_task` 后，返回的上下文遵循以下标准结构：
+## 10. 质量门禁、证据与 fail-closed 规则
 
-```json
-{
-  "task": {
-    "id": "T-00042",
-    "title": "实现订单查询 API",
-    "description": "...",
-    "role": "backend",
-    "priority": "normal",
-    "allowed_directories": ["src/api/orders/"],
-    "forbidden_patterns": ["*.md"],
-    "test_requirements": {
-      "command": "go test ./src/api/orders/... -coverprofile=coverage/cover.out",
-      "coverage_format": "go-cover",
-      "coverage_path": "coverage/cover.out",
-      "min_coverage": 80.0
-    },
-    "dependencies": []
-  },
-  "workspace": {
-    "root": "/path/to/project/.maestro/worktrees/T-00042",
-    "allowed_directories": ["src/api/orders/"],
-    "forbidden_patterns": ["*.md"]
-  },
-  "context": {
-    "api_contracts": [
-      { "method": "GET", "path": "/api/v1/orders", "request_schema": {}, "response_schema": {} }
-    ],
-    "related_files": [
-      "src/api/orders/controller.go",
-      "src/api/orders/model.go"
-    ],
-    "dependency_summaries": [
-      { "task_id": "T-00001", "summary": "完成用户模型", "outputs": [...] }
-    ]
-  },
-  "limits": {
-    "max_related_files": 50,
-    "max_dependency_summary_chars": 2000
-  }
-}
-```
+Agent 输出若声称基于仓库/测试事实，MUST 引用 manifest source ID；空泛或不存在引用不得通过验证。注入扫描、scope 校验、SHA freshness 和 redaction 是 Required Gate，不可由 Agent 豁免。
 
-### 裁剪上限规则
+## 11. 指标、SLO、告警和运维动作
 
-| 维度 | 上限 | 超出处理 |
-|---|---|---|
-| `api_contracts` 数量 | 无硬限制 | 按 `required_apis` 精确匹配，不会超量 |
-| `related_files` 数量 | 50 | 超出按修改时间排序，截断保留最近修改的 50 个 |
-| `dependency_summaries` 单条长度 | 2000 字符 | 超出截断并追加 `[TRUNCATED]` |
-| `related_files` 目录深度 | 不限制 | 但跳过 node_modules、.git、vendor 等 |
-| 文件内容 | 不返回 | 仅返回路径列表，Agent 按需自行读取 |
+监控构建 P95、token/byte 利用率、omission、redaction、cache hit、stale rebuild 和越界拒绝。上下文构建 P95 目标 < 2s（不含外部大对象下载）；Secret 命中或跨项目请求立即安全告警。
 
-### 降级处理
+## 12. 验收测试和需求追踪
 
-| 场景 | 处理方式 |
-|---|---|
-| `required_apis` 中的接口在契约索引中找不到 | 从 `context.api_contracts` 中排除该项，不报错 |
-| 多个契约源对同一接口有不同定义 | 以 `openapi` > `manual_json` 的优先级选取 |
-| 前置任务无 summary | `dependency_summaries` 中该项仅包含 `task_id` 和 `title` |
-| 项目未配置契约源 | `api_contracts` 返回空数组，其他字段正常返回 |
-| 前置任务无 outputs 字段 | `dependency_summaries` 中省略 outputs，仅包含 task_id、title、summary |
-| 前置任务无 summary 也无 outputs | `dependency_summaries` 中仅包含 task_id 和 title |
+- `TC-CTX-001`：同输入产生相同 manifest digest，版本变化触发重建。
+- `TC-CTX-002`：绝对路径、遍历、符号链接逃逸和跨项目来源被拒绝。
+- `TC-CTX-003`：Prompt injection 不改变 Tool/网络/Secret 权限。
+- `TC-CTX-004`：超预算采用可验证压缩；必需信息无法保留则停止并转人工。
+
+## 13. 数据迁移、兼容、发布与回滚
+
+旧 include/exclude 规则迁移到版本化 Filter Policy；不明确的 wildcard 默认收紧并产生人工清单。旧缓存不得复用到 v3。新筛选器先 shadow 比较 omission/size，再 enforce；回滚只能回到同等或更严格边界。

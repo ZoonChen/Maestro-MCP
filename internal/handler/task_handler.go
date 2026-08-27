@@ -2,11 +2,12 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
-	"log/slog"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
+	"github.com/ZoonChen/Maestro-MCP/internal/publicerror"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
@@ -50,7 +51,7 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
@@ -84,6 +85,10 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	}
 
 	if body.TestRequirements != "" {
+		if err := service.ValidateTaskTestRequirements([]byte(body.TestRequirements)); err != nil {
+			errorReply(c, &service.ValidationError{Code: "VALIDATION_INPUT_INVALID", Cause: err})
+			return
+		}
 		t.TestRequirements = []byte(body.TestRequirements)
 	}
 
@@ -114,25 +119,28 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": tasks})
 }
 
-// GetNextTask handles GET /api/v1/projects/:id/tasks/next?role=&worker_id=.
-// This is the atomic claim endpoint: finds and atomically claims the next pending task.
+// GetNextTask handles POST /api/v1/projects/:id/tasks/next?role=&worker_id=.
+// This is the atomic claim endpoint: finds and atomically claims the next queued task.
 func (h *TaskHandler) GetNextTask(c *gin.Context) {
 	pid := c.Param("id")
 	role := c.Query("role")
 	workerID := c.Query("worker_id")
+	sessionID := c.Query("session_id")
 
 	if workerID == "" {
 		workerID = "default"
 	}
+	if sessionID == "" {
+		sessionID = "api-" + role
+	}
 
-	// The session_id for REST API calls defaults to "api".
-	// In production, this would be extracted from auth middleware.
-	sessionID := "api"
-
-	// Ensure the "api" session exists in the database before claiming.
-	// The tasks table has a foreign key on assigned_session_id referencing agent_sessions,
-	// so the session must exist for the UPDATE to succeed.
-	h.ensureAPISession(c, pid)
+	// M0 has a shared development principal, but a claim session must still be
+	// bound to the requested task role. M1 replaces this compatibility path with
+	// the authenticated Runner/session context.
+	if err := h.ensureNamedSession(c, pid, sessionID, role); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	task, err := h.taskService.GetNextTask(c.Request.Context(), pid, sessionID, role, workerID)
 	if err != nil {
@@ -178,7 +186,7 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
@@ -218,12 +226,22 @@ func (h *TaskHandler) ClaimTask(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
-	// Ensure the session exists (FK constraint on assigned_session_id).
-	h.ensureNamedSession(c, pid, body.SessionID, "worker")
+	// Bind a newly created compatibility session to the task's required role;
+	// the removed literal "worker" was not a valid domain role and made the
+	// real REST claim path unusable on a fresh database.
+	taskToClaim, err := h.taskService.GetTask(c.Request.Context(), pid, tid)
+	if err != nil {
+		errorReply(c, err)
+		return
+	}
+	if err := h.ensureNamedSession(c, pid, body.SessionID, taskToClaim.Role); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	task, err := h.taskService.ClaimTask(c.Request.Context(), pid, tid, body.SessionID, body.WorkerID)
 	if err != nil {
@@ -234,10 +252,62 @@ func (h *TaskHandler) ClaimTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": task})
 }
 
+// HeartbeatTask handles POST /api/v1/projects/:id/tasks/:tid/heartbeat.
+// The Lease ID, Lease version, and idempotency key are explicit concurrency
+// inputs. M0 may derive Session/Worker from the durable task assignment; the
+// service still proves the exact owner, epoch, live deadline, and Worker CAS.
+func (h *TaskHandler) HeartbeatTask(c *gin.Context) {
+	pid := c.Param("id")
+	tid := c.Param("tid")
+	var body struct {
+		SessionID      string `json:"session_id"`
+		WorkerID       string `json:"worker_id"`
+		LeaseID        string `json:"lease_id" binding:"required"`
+		LeaseVersion   int64  `json:"lease_version" binding:"required"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		invalidRequestReply(c)
+		return
+	}
+	headerKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	bodyKey := strings.TrimSpace(body.IdempotencyKey)
+	if headerKey != "" && bodyKey != "" && headerKey != bodyKey {
+		errorReply(c, fmt.Errorf("HeartbeatTask: header/body idempotency key mismatch: %w", store.ErrInvalidParameter))
+		return
+	}
+	if bodyKey == "" {
+		bodyKey = headerKey
+	}
+
+	sessionID := strings.TrimSpace(body.SessionID)
+	workerID := strings.TrimSpace(body.WorkerID)
+	if sessionID == "" || workerID == "" {
+		task, err := h.taskService.GetTask(c.Request.Context(), pid, tid)
+		if err != nil {
+			errorReply(c, err)
+			return
+		}
+		if sessionID == "" && task.AssignedSessionID != nil {
+			sessionID = *task.AssignedSessionID
+		}
+		if workerID == "" && task.AssignedWorkerID != nil {
+			workerID = *task.AssignedWorkerID
+		}
+	}
+	lease, err := h.taskService.HeartbeatTask(c.Request.Context(), pid, tid,
+		sessionID, workerID, body.LeaseID, body.LeaseVersion, bodyKey)
+	if err != nil {
+		errorReply(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": lease})
+}
+
 // SubmitTask handles POST /api/v1/projects/:id/tasks/:tid/submit.
 // Body: {summary?, session_id?}.
-// Tries zero-trust validation (git diff + test execution). Falls back to a simplified
-// submit (in_progress -> submitted) if the task has no worktree (e.g., during testing).
+// Runs zero-trust validation. Missing worktree/evidence is a hard failure and
+// never falls back to an unvalidated state transition.
 func (h *TaskHandler) SubmitTask(c *gin.Context) {
 	pid := c.Param("id")
 	tid := c.Param("tid")
@@ -245,63 +315,71 @@ func (h *TaskHandler) SubmitTask(c *gin.Context) {
 	var body struct {
 		Summary   *string `json:"summary"`
 		SessionID string  `json:"session_id"`
+		WorkerID  string  `json:"worker_id"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
-	// Use provided session_id, or default to "api" for REST API calls.
-	sessionID := "api"
-	if body.SessionID != "" {
-		sessionID = body.SessionID
-	}
-	workerID := "api"
-
-	// Try zero-trust validation first. If worktree is not available
-	// (e.g., no git repo in test environments), fall back to simplified submit.
-	err := h.validationService.SubmitAndValidate(c.Request.Context(), pid, tid, sessionID, workerID, body.Summary)
+	// Missing compatibility identifiers are derived from the durable Task
+	// assignment. A caller cannot make an unowned submission pass by inventing
+	// another session/worker pair.
+	task, err := h.taskService.GetTask(c.Request.Context(), pid, tid)
 	if err != nil {
-		if errors.Is(err, store.ErrWorktreeNotFound) {
-			// No worktree — simplified submit without validation.
-			result := &model.TaskResult{
-				ID:      tid,
-				Summary: body.Summary,
-			}
-			if err := h.taskService.SubmitTaskResult(c.Request.Context(), pid, tid, sessionID, workerID, result); err != nil {
-				errorReply(c, err)
-				return
-			}
-		} else {
-			errorReply(c, err)
-			return
-		}
+		errorReply(c, err)
+		return
+	}
+	sessionID := body.SessionID
+	if sessionID == "" && task.AssignedSessionID != nil {
+		sessionID = *task.AssignedSessionID
+	}
+	workerID := body.WorkerID
+	if workerID == "" && task.AssignedWorkerID != nil {
+		workerID = *task.AssignedWorkerID
 	}
 
-	task, _ := h.taskService.GetTask(c.Request.Context(), pid, tid) //nolint:errcheck // mutation already succeeded; best-effort read for response
+	err = h.validationService.SubmitAndValidate(c.Request.Context(), pid, tid, sessionID, workerID, body.Summary)
+	if err != nil {
+		errorReply(c, err)
+		return
+	}
+
+	task, _ = h.taskService.GetTask(c.Request.Context(), pid, tid) //nolint:errcheck // mutation already succeeded; best-effort read for response
 	c.JSON(http.StatusOK, gin.H{"data": task})
 }
 
 // BlockTask handles POST /api/v1/projects/:id/tasks/:tid/block.
-// Body: {reason}.
+// Body: {reason, session_id?}. If session_id is omitted, the durable task
+// assignment is used. ReportBlocker still validates the exact live Lease.
 func (h *TaskHandler) BlockTask(c *gin.Context) {
 	pid := c.Param("id")
 	tid := c.Param("tid")
 
 	var body struct {
-		Reason string `json:"reason" binding:"required"`
+		Reason    string `json:"reason" binding:"required"`
+		SessionID string `json:"session_id"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
-	sessionID := "api"
-
-	// Ensure the "api" session exists before writing activity_log with session_id FK.
-	h.ensureAPISession(c, pid)
+	sessionID := strings.TrimSpace(body.SessionID)
+	if sessionID == "" {
+		task, err := h.taskService.GetTask(c.Request.Context(), pid, tid)
+		if err != nil {
+			errorReply(c, err)
+			return
+		}
+		if task.AssignedSessionID == nil || strings.TrimSpace(*task.AssignedSessionID) == "" {
+			errorReply(c, fmt.Errorf("BlockTask: session_id is required when the task has no durable assignment: %w", store.ErrInvalidParameter))
+			return
+		}
+		sessionID = *task.AssignedSessionID
+	}
 
 	if err := h.taskService.ReportBlocker(c.Request.Context(), pid, tid, sessionID, body.Reason); err != nil {
 		errorReply(c, err)
@@ -323,13 +401,16 @@ func (h *TaskHandler) ResolveBlocker(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
 	// Ensure the "api" session exists — ResolveBlocker logs activity using
 	// the task's assigned_session_id which references agent_sessions.
-	h.ensureAPISession(c, pid)
+	if err := h.ensureAPISession(c, pid); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	if err := h.taskService.ResolveBlocker(c.Request.Context(), pid, tid, body.Reassign, ""); err != nil {
 		errorReply(c, err)
@@ -354,12 +435,15 @@ func (h *TaskHandler) VerifyTask(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
 	// Ensure the verifier session exists before it is used in activity_log / verified_by.
-	h.ensureNamedSession(c, pid, body.SessionID, "verifier")
+	if err := h.ensureNamedSession(c, pid, body.SessionID, model.RoleVerifier); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	if err := h.taskService.SubmitVerification(c.Request.Context(), pid, body.SessionID, body.WorkerID, tid, body.Passed, body.Notes); err != nil {
 		errorReply(c, err)
@@ -370,28 +454,8 @@ func (h *TaskHandler) VerifyTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": task})
 }
 
-// MergeTask handles POST /api/v1/projects/:id/tasks/:tid/merge.
-// Transitions a ready_to_merge task to done via the service layer.
-func (h *TaskHandler) MergeTask(c *gin.Context) {
-	pid := c.Param("id")
-	tid := c.Param("tid")
-
-	sessionID := "api"
-
-	// Ensure the "api" session exists before writing activity_log with session_id FK.
-	h.ensureAPISession(c, pid)
-
-	if err := h.taskService.MergeTask(c.Request.Context(), pid, tid, sessionID); err != nil {
-		errorReply(c, err)
-		return
-	}
-
-	task, _ := h.taskService.GetTask(c.Request.Context(), pid, tid) //nolint:errcheck // mutation already succeeded; best-effort read for response
-	c.JSON(http.StatusOK, gin.H{"data": task})
-}
-
-// GetNextVerificationTask handles GET /api/v1/projects/:id/tasks/next-verification.
-// Atomically claims the next submitted task for verification (submitted -> verifying).
+// GetNextVerificationTask handles POST /api/v1/projects/:id/tasks/next-verification.
+// Atomically creates an independent verification Lease for the next validating task.
 func (h *TaskHandler) GetNextVerificationTask(c *gin.Context) {
 	pid := c.Param("id")
 
@@ -405,7 +469,10 @@ func (h *TaskHandler) GetNextVerificationTask(c *gin.Context) {
 	}
 
 	// Ensure the verifier session exists before it is used in activity_log.
-	h.ensureNamedSession(c, pid, verifierSessionID, "verifier")
+	if err := h.ensureNamedSession(c, pid, verifierSessionID, model.RoleVerifier); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	task, err := h.taskService.GetVerificationTask(c.Request.Context(), pid, verifierSessionID, verifierWorkerID)
 	if err != nil {
@@ -428,7 +495,7 @@ func (h *TaskHandler) ResolveMergeConflict(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
@@ -492,13 +559,16 @@ func (h *TaskHandler) GetTaskDiff(c *gin.Context) {
 }
 
 // ForceRollbackTask handles POST /api/v1/projects/:id/tasks/:tid/force-rollback.
-// Admin escape hatch: rolls back a task from any non-terminal state to pending.
+// Admin escape hatch: rolls back an eligible task to queued.
 func (h *TaskHandler) ForceRollbackTask(c *gin.Context) {
 	pid := c.Param("id")
 	tid := c.Param("tid")
 
 	sessionID := "admin"
-	h.ensureAPISession(c, pid)
+	if err := h.ensureAPISession(c, pid); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	if err := h.taskService.ForceRollback(c.Request.Context(), pid, tid, sessionID); err != nil {
 		errorReply(c, err)
@@ -520,14 +590,17 @@ func (h *TaskHandler) CancelTask(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
 	sessionID := "api"
 
 	// Ensure the "api" session exists before writing activity_log with session_id FK.
-	h.ensureAPISession(c, pid)
+	if err := h.ensureAPISession(c, pid); err != nil {
+		errorReply(c, err)
+		return
+	}
 
 	if err := h.taskService.CancelTask(c.Request.Context(), pid, tid, sessionID, body.Reason); err != nil {
 		errorReply(c, err)
@@ -549,137 +622,51 @@ const apiSessionRole = "coordinator"
 // ensureAPISession lazily creates the "api" session for the given project
 // if it does not already exist. This is needed because the tasks table has
 // a foreign key on assigned_session_id referencing agent_sessions.
-func (h *TaskHandler) ensureAPISession(c *gin.Context, projectID string) {
-	h.ensureNamedSession(c, projectID, "api", apiSessionRole)
+func (h *TaskHandler) ensureAPISession(c *gin.Context, projectID string) error {
+	return h.ensureNamedSession(c, projectID, "api", apiSessionRole)
 }
 
 // ensureNamedSession lazily creates a session with the given ID for the given
 // project if it does not already exist. The session is created with the
 // specified role and a "rest-api" client type.
-func (h *TaskHandler) ensureNamedSession(c *gin.Context, projectID, sessionID, role string) {
+func (h *TaskHandler) ensureNamedSession(c *gin.Context, projectID, sessionID, role string) error {
 	sess := &model.AgentSession{
 		ID:         sessionID,
 		ProjectID:  projectID,
 		Role:       role,
 		ClientType: "rest-api",
-		Capacity:   100,
+		Capacity:   5,
 		Status:     model.SessionStatusOnline,
 	}
-	created, err := h.sessionService.EnsureSession(c.Request.Context(), projectID, sess)
+	_, err := h.sessionService.EnsureSession(c.Request.Context(), projectID, sess)
 	if err != nil {
-		slog.Error("ensureNamedSession: failed to ensure session", "session_id", sessionID, "error", err)
-	} else if created {
-		slog.Debug("ensureNamedSession: created new session", "session_id", sessionID, "project_id", projectID)
+		return err
 	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
 // Error mapping helpers
 // ---------------------------------------------------------------------------
 
-// mapErrorToHTTP maps a service/store error to an appropriate HTTP status code.
-// Uses errors.Is to correctly match wrapped errors from the service layer
-// (e.g., fmt.Errorf("SubmitTaskResult: %w", store.ErrTaskStateInvalid)).
-func mapErrorToHTTP(err error) int {
-	if errors.Is(err, store.ErrTaskNotFound) || errors.Is(err, store.ErrProjectNotFound) ||
-		errors.Is(err, store.ErrFeatureNotFound) || errors.Is(err, store.ErrSessionNotFound) ||
-		errors.Is(err, store.ErrNoAvailableTask) || errors.Is(err, store.ErrWorktreeNotFound) ||
-		errors.Is(err, store.ErrWorkerNotFound) || errors.Is(err, store.ErrContractNotFound) {
-		return http.StatusNotFound
-	}
-	// 409 Conflict: state conflicts
-	if errors.Is(err, store.ErrTaskStateInvalid) || errors.Is(err, store.ErrTaskAlreadyCancelled) {
-		return http.StatusConflict
-	}
-	// 403 Forbidden: ownership/authorization violations
-	if errors.Is(err, store.ErrTaskNotOwned) {
-		return http.StatusForbidden
-	}
-	// 422 Unprocessable Entity: semantic validation failures
-	if errors.Is(err, store.ErrBoundaryViolation) || errors.Is(err, store.ErrCoverageBelowMin) ||
-		errors.Is(err, store.ErrCircularDependency) || errors.Is(err, store.ErrValidationFailed) {
-		return http.StatusUnprocessableEntity
-	}
-	// 429 Too Many Requests: capacity limits
-	if errors.Is(err, store.ErrSessionCapacityFull) {
-		return http.StatusTooManyRequests
-	}
-	// 400 Bad Request: input/validation errors
-	if errors.Is(err, store.ErrInvalidParameter) || errors.Is(err, store.ErrFeatureStatusInvalid) ||
-		errors.Is(err, store.ErrDependencyNotReady) || errors.Is(err, store.ErrProjectAlreadyExists) ||
-		errors.Is(err, store.ErrProjectNotBound) || errors.Is(err, store.ErrProjectAmbiguous) {
-		return http.StatusBadRequest
-	}
-	// 412 Precondition Failed: dependency unmet
-	if errors.Is(err, store.ErrTaskDependencyUnmet) {
-		return http.StatusPreconditionFailed
-	}
-	// 500 Internal Server Error: infrastructure failures (explicit mapping for clarity)
-	if errors.Is(err, store.ErrWorktreeCreateFailed) || errors.Is(err, store.ErrWorktreeCleanFailed) {
-		return http.StatusInternalServerError
-	}
-	if errors.Is(err, store.ErrConcurrentConflict) || errors.Is(err, store.ErrMergeConflict) {
-		return http.StatusConflict
-	}
-	if errors.Is(err, store.ErrProjectArchived) {
-		return http.StatusForbidden
-	}
-	if errors.Is(err, store.ErrTestExecutionFailed) {
-		return http.StatusUnprocessableEntity
-	}
-	return http.StatusInternalServerError
-}
-
-// mapErrorCode maps a service/store error to a machine-readable error code string.
-func mapErrorCode(err error) string {
-	codes := []struct {
-		err  error
-		code string
-	}{
-		{store.ErrTaskNotFound, "TASK_NOT_FOUND"},
-		{store.ErrProjectNotFound, "PROJECT_NOT_FOUND"},
-		{store.ErrFeatureNotFound, "FEATURE_NOT_FOUND"},
-		{store.ErrSessionNotFound, "SESSION_NOT_FOUND"},
-		{store.ErrNoAvailableTask, "NO_AVAILABLE_TASK"},
-		{store.ErrWorktreeNotFound, "WORKTREE_NOT_FOUND"},
-		{store.ErrWorkerNotFound, "WORKER_NOT_FOUND"},
-		{store.ErrContractNotFound, "CONTRACT_NOT_FOUND"},
-		{store.ErrTaskStateInvalid, "TASK_STATE_INVALID"},
-		{store.ErrTaskAlreadyCancelled, "TASK_ALREADY_CANCELLED"},
-		{store.ErrTaskNotOwned, "TASK_NOT_OWNED"},
-		{store.ErrBoundaryViolation, "BOUNDARY_VIOLATION"},
-		{store.ErrCoverageBelowMin, "COVERAGE_BELOW_MIN"},
-		{store.ErrCircularDependency, "CIRCULAR_DEPENDENCY"},
-		{store.ErrValidationFailed, "VALIDATION_FAILED"},
-		{store.ErrSessionCapacityFull, "SESSION_CAPACITY_FULL"},
-		{store.ErrInvalidParameter, "INVALID_PARAMETER"},
-		{store.ErrFeatureStatusInvalid, "FEATURE_STATUS_INVALID"},
-		{store.ErrDependencyNotReady, "DEPENDENCY_NOT_READY"},
-		{store.ErrProjectAlreadyExists, "PROJECT_ALREADY_EXISTS"},
-		{store.ErrProjectNotBound, "PROJECT_NOT_BOUND"},
-		{store.ErrProjectAmbiguous, "PROJECT_AMBIGUOUS"},
-		{store.ErrTaskDependencyUnmet, "TASK_DEPENDENCY_UNMET"},
-		{store.ErrWorktreeCreateFailed, "WORKTREE_CREATE_FAILED"},
-		{store.ErrWorktreeCleanFailed, "WORKTREE_CLEAN_FAILED"},
-		{store.ErrConcurrentConflict, "CONCURRENT_CONFLICT"},
-		{store.ErrMergeConflict, "MERGE_CONFLICT"},
-		{store.ErrProjectArchived, "PROJECT_ARCHIVED"},
-		{store.ErrTestExecutionFailed, "TEST_EXECUTION_FAILED"},
-	}
-	for _, c := range codes {
-		if errors.Is(err, c.err) {
-			return c.code
-		}
-	}
-	return "INTERNAL_ERROR"
-}
-
-// errorReply sends a structured JSON error response with status, message, and error_code.
+// errorReply is the only service/store error-to-wire boundary for REST.
 func errorReply(c *gin.Context, err error) {
-	code := mapErrorCode(err)
-	status := mapErrorToHTTP(err)
+	public := publicerror.Classify(err)
+	publicerror.Log(err, public)
+	c.JSON(public.HTTPStatus, gin.H{
+		"error":          public.Message,
+		"error_code":     public.Code,
+		"correlation_id": public.CorrelationID,
+	})
+}
+
+func invalidRequestReply(c *gin.Context) {
+	errorReply(c, store.ErrInvalidParameter)
+}
+
+func staticErrorReply(c *gin.Context, status int, code, message string) {
 	c.JSON(status, gin.H{
-		"error":      err.Error(),
-		"error_code": code,
+		"error": message, "error_code": code,
+		"correlation_id": publicerror.NewCorrelationID(),
 	})
 }

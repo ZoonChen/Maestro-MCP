@@ -1,0 +1,24 @@
+{
+  "schema_version": "3.0",
+  "evidence_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d1",
+  "project_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d2",
+  "work_item_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d3",
+  "kind": "unit",
+  "authority": "merge_gate",
+  "status": "passed",
+  "source_sha": "1111111111111111111111111111111111111111",
+  "target_sha": "2222222222222222222222222222222222222222",
+  "pipeline_id": 101,
+  "job_id": 202,
+  "policy_version": "3.0.0",
+  "producer": {
+    "type": "gitlab_job",
+    "id": "202",
+    "version": "runner-17.11"
+  },
+  "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "attempt": 1,
+  "observed_at": "2026-08-25T08:00:00Z",
+  "created_at": "2026-08-25T08:00:01Z",
+  "sensitivity": "internal"
+}

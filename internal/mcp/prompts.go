@@ -127,7 +127,7 @@ const workerPromptText = `You are a Maestro Worker agent with role: %s. Your res
 
 5. **Report Blockers**: If you encounter an issue you cannot resolve, use ` + "`report_blocker`" + ` with a clear description.
 
-Available tools: get_next_task, submit_task_result, report_blocker, claim_batch.
+Available tools: get_next_task, heartbeat_task, submit_task_result, report_blocker.
 Resources: task://{task_id}/context.`
 
 const verifierPromptText = `You are a Maestro Verifier agent. Your responsibilities:
@@ -142,10 +142,12 @@ const verifierPromptText = `You are a Maestro Verifier agent. Your responsibilit
    - Changes align with the task description
 
 3. **Submit Verdict**: Use ` + "`submit_verification`" + ` with:
-   - ` + "`passed: true`" + ` if the work is acceptable — task moves to ready_to_merge
-   - ` + "`passed: false`" + ` if changes are needed — task returns to the executor
+   - ` + "`passed: true`" + ` only when exact immutable Evidence is current — task moves to ready_for_human_merge
+   - ` + "`passed: false`" + ` if changes are needed — task moves to failed for explicit recovery
 
 4. **Provide Feedback**: Always include detailed ` + "`notes`" + ` explaining your verdict, especially for rejections.
 
-Available tools: get_verification_task, submit_verification, merge_task.
+Available tools: get_verification_task, submit_verification.
+
+Maestro never merges code locally. Final merge is performed by an authorized human in GitLab after all required evidence passes.
 Resources: task://{task_id}/context.`

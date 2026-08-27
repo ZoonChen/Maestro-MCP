@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/quality-policy-v3.json",
+  "title": "Maestro Quality Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "scope", "required_gates", "coverage", "security", "flaky_retry_count", "waiver"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "scope": {"enum": ["company", "project", "task"]},
+    "extends": {"type": ["string", "null"]},
+    "required_gates": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 12,
+      "items": {
+        "enum": [
+          "baseline_freshness",
+          "boundary",
+          "policy_integrity",
+          "build",
+          "unit",
+          "lint_typecheck",
+          "coverage",
+          "integration",
+          "contract",
+          "secret_scan",
+          "sast",
+          "dependency",
+          "image",
+          "license"
+        ]
+      },
+      "allOf": [
+        {"contains": {"const": "baseline_freshness"}},
+        {"contains": {"const": "boundary"}},
+        {"contains": {"const": "policy_integrity"}},
+        {"contains": {"const": "build"}},
+        {"contains": {"const": "unit"}},
+        {"contains": {"const": "lint_typecheck"}},
+        {"contains": {"const": "coverage"}},
+        {"contains": {"const": "secret_scan"}},
+        {"contains": {"const": "sast"}},
+        {"contains": {"const": "dependency"}},
+        {"contains": {"const": "image"}},
+        {"contains": {"const": "license"}}
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changed_lines_min_percent", "max_total_drop_points"],
+      "properties": {
+        "changed_lines_min_percent": {"type": "number", "minimum": 80, "maximum": 100},
+        "max_total_drop_points": {"type": "number", "minimum": 0, "maximum": 0.5}
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_severities", "license_denylist"],
+      "properties": {
+        "block_severities": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["critical", "high", "medium", "low"]},
+          "allOf": [
+            {"contains": {"const": "critical"}},
+            {"contains": {"const": "high"}}
+          ]
+        },
+        "license_denylist": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "flaky_retry_count": {"type": "integer", "const": 1},
+    "waiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_days", "requires_distinct_approver", "non_waivable_gates"],
+      "properties": {
+        "max_days": {"type": "integer", "const": 7},
+        "requires_distinct_approver": {"const": true},
+        "non_waivable_gates": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "identity_isolation",
+              "sha_integrity",
+              "policy_integrity",
+              "webhook_authenticity"
+            ]
+          },
+          "allOf": [
+            {"contains": {"const": "identity_isolation"}},
+            {"contains": {"const": "sha_integrity"}},
+            {"contains": {"const": "policy_integrity"}},
+            {"contains": {"const": "webhook_authenticity"}}
+          ]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "company-strict",
+      "version": "3.0.0",
+      "scope": "company",
+      "required_gates": [
+        "baseline_freshness",
+        "boundary",
+        "policy_integrity",
+        "build",
+        "unit",
+        "lint_typecheck",
+        "coverage",
+        "secret_scan",
+        "sast",
+        "dependency",
+        "image",
+        "license"
+      ],
+      "coverage": {"changed_lines_min_percent": 80, "max_total_drop_points": 0.5},
+      "security": {"block_severities": ["critical", "high"], "license_denylist": ["AGPL-3.0-only"]},
+      "flaky_retry_count": 1,
+      "waiver": {
+        "max_days": 7,
+        "requires_distinct_approver": true,
+        "non_waivable_gates": ["identity_isolation", "sha_integrity", "policy_integrity", "webhook_authenticity"]
+      }
+    }
+  ]
+}

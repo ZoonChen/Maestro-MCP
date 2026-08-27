@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -109,20 +111,22 @@ func TestCheckBoundaries(t *testing.T) {
 			wantViolationCount: 0,
 		},
 		{
-			name:               "no allowed dirs means unrestricted",
-			changedFiles:       []string{"foo/bar.go", "baz/qux.go"},
-			allowedDirs:        nil,
-			forbiddenPatterns:  nil,
-			wantOK:             true,
-			wantViolationCount: 0,
+			name:                 "missing allowed dirs fails closed",
+			changedFiles:         []string{"foo/bar.go", "baz/qux.go"},
+			allowedDirs:          nil,
+			forbiddenPatterns:    nil,
+			wantOK:               false,
+			wantViolationCount:   1,
+			wantViolationSubstrs: []string{"allowed_directories evidence is missing"},
 		},
 		{
-			name:               "empty allowed dirs JSON means unrestricted",
-			changedFiles:       []string{"foo/bar.go"},
-			allowedDirs:        []string{},
-			forbiddenPatterns:  nil,
-			wantOK:             true,
-			wantViolationCount: 0,
+			name:                 "empty allowed dirs JSON fails closed",
+			changedFiles:         []string{"foo/bar.go"},
+			allowedDirs:          []string{},
+			forbiddenPatterns:    nil,
+			wantOK:               false,
+			wantViolationCount:   1,
+			wantViolationSubstrs: []string{"must contain at least one directory"},
 		},
 		{
 			name:                 "forbidden pattern on file inside allowed dir still triggers",
@@ -232,4 +236,38 @@ func containsAt(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestCheckBoundariesRejectsTraversalAndSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	requireDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(requireDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(requireDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	result := checkBoundariesInWorktree(root, []string{"src/escape/secret.txt"}, `["src"]`, `[]`)
+	if result.OK || result.ErrorCode != "BOUNDARY_VIOLATION" {
+		t.Fatalf("expected symlink boundary violation, got %+v", result)
+	}
+
+	result = checkBoundaries([]string{"src/../../secret.txt"}, `["src"]`, `[]`)
+	if result.OK {
+		t.Fatalf("expected traversal boundary violation, got %+v", result)
+	}
+}
+
+func TestCheckBoundariesRejectsInvalidPolicyJSON(t *testing.T) {
+	result := checkBoundaries([]string{"src/main.go"}, `{`, `[]`)
+	if result.OK || result.ErrorCode != "POLICY_INVALID" {
+		t.Fatalf("expected fail-closed policy error, got %+v", result)
+	}
+
+	result = checkBoundaries([]string{"src/main.go"}, `["src"]`, `["["]`)
+	if result.OK || result.ErrorCode != "POLICY_INVALID" {
+		t.Fatalf("expected invalid glob policy error, got %+v", result)
+	}
 }

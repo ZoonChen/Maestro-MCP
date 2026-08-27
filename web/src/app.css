@@ -8,8 +8,8 @@
   --bg-tertiary: #eaeef2;
   --border: #d0d7de;
   --text-primary: #1f2328;
-  --text-secondary: #656d76;
-  --text-tertiary: #8b949e;
+  --text-secondary: #57606a;
+  --text-tertiary: #656d76;
   --accent: #0969da;
   --accent-light: #ddf4ff;
   --green: #1a7f37;
@@ -28,7 +28,7 @@
   --border: #21262d;
   --text-primary: #c9d1d9;
   --text-secondary: #8b949e;
-  --text-tertiary: #484f58;
+  --text-tertiary: #7d8590;
   --accent: #58a6ff;
   --accent-light: #1c2128;
   --green: #3fb950;
@@ -46,6 +46,13 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
 }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 
 /* ===== Layout ===== */
 .app { display: flex; height: 100vh; overflow: hidden; }
@@ -57,6 +64,21 @@ body {
 .main {
   flex: 1; overflow-y: auto; padding: 24px 32px;
 }
+.error-notice {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--red);
+  border-radius: 6px; background: var(--red-bg); color: var(--red); font-size: 12px;
+}
+.error-notice button {
+  border: 1px solid var(--red); border-radius: 4px; padding: 3px 8px;
+  background: transparent; color: var(--red); cursor: pointer;
+}
+.connection-status {
+  margin-left: auto; font-size: 10px; text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.connection-status.connected { color: var(--green); }
+.connection-status.error, .connection-status.disconnected { color: var(--red); }
 
 /* ===== Sidebar ===== */
 .sidebar-header {
@@ -124,6 +146,9 @@ body {
 }
 .status-badge.active { background: var(--green-bg); color: var(--green); }
 .status-badge.archived { background: var(--bg-tertiary); color: var(--text-secondary); }
+.status-badge.planning { background: var(--accent-light); color: var(--accent); }
+.status-badge.completed { background: var(--green-bg); color: var(--green); }
+.status-badge.closed { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 /* ===== Board Header ===== */
 .board-header {
@@ -164,7 +189,7 @@ body {
 }
 .feature-card {
   background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px;
-  padding: 12px; cursor: pointer; color: inherit;
+  padding: 12px; cursor: pointer; color: inherit; width: 100%; text-align: left; font: inherit;
 }
 .feature-card:hover { border-color: var(--accent); }
 .feature-card.selected { border-color: var(--accent); background: var(--accent-light); }
@@ -176,7 +201,7 @@ body {
 .feature-pct { font-size: 11px; color: var(--text-secondary); }
 .feature-filter-hint {
   font-size: 11px; color: var(--accent); cursor: pointer; font-weight: normal;
-  margin-left: 8px;
+  margin-left: 8px; border: 0; background: transparent;
 }
 
 /* ===== Session Panel ===== */
@@ -203,6 +228,9 @@ body {
 .worker-icon { color: var(--text-tertiary); }
 .worker-id { font-family: monospace; }
 .worker-status { color: var(--text-secondary); }
+.worker-status.busy { color: var(--green); }
+.worker-status.reserved { color: var(--yellow); }
+.worker-status.lost, .worker-status.unknown { color: var(--red); }
 
 /* ===== Task Board ===== */
 .task-board {
@@ -229,7 +257,8 @@ body {
 /* ===== Task Card ===== */
 .task-card {
   background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px; margin-bottom: 6px; cursor: pointer;
+  padding: 10px; margin-bottom: 6px; cursor: pointer; width: 100%;
+  color: inherit; font: inherit; text-align: left;
 }
 .task-card:hover { border-color: var(--accent); }
 .task-card.blocked { border-left: 3px solid var(--red); }
@@ -314,9 +343,14 @@ body {
 .info-value { font-size: 13px; }
 .info-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; padding-left: 112px; }
 .status-text { font-size: 13px; font-weight: 600; }
-.status-text.status-submitted, .status-text.status-submitted { color: var(--blue); }
+.status-text.status-validating, .status-text.status-ready_for_human_merge { color: var(--blue); }
 .status-text.status-done { color: var(--green); }
-.status-text.status-rejected { color: var(--red); }
+.status-text.status-blocked, .status-text.status-cancelling,
+.status-text.status-failed, .status-text.status-needs_human { color: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}
 
 /* ===== Validation Table ===== */
 .validation-list { }

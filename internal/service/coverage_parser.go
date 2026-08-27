@@ -3,206 +3,275 @@ package service
 import (
 	"bufio"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
-// parseCoverage reads a coverage report file and returns the coverage percentage (0-100).
-// Supported formats: "go-cover", "cobertura", "jacoco", "istanbul".
-// Returns -1 if the file cannot be parsed or the format is unsupported.
-func parseCoverage(coveragePath, coverageFormat, worktreePath string) float64 {
-	// Resolve path relative to worktree if not absolute.
-	fullPath := coveragePath
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(worktreePath, fullPath)
+// parseCoverageEvidence is the fail-closed coverage parser used by validation.
+// It requires an explicit known parser, a bounded regular file inside the
+// worktree and fully valid content. Auto-detection and partial parsing are
+// deliberately unsupported because either would allow malformed evidence to
+// be interpreted as a pass.
+func parseCoverageEvidence(coveragePath, coverageFormat, worktreePath string) (float64, error) {
+	if coverageFormat != "go-cover" && coverageFormat != "cobertura" && coverageFormat != "jacoco" && coverageFormat != "istanbul" {
+		return 0, fmt.Errorf("unsupported coverage parser %q", coverageFormat)
 	}
-
-	data, err := os.ReadFile(fullPath)
+	normalized, err := normalizeRepositoryPath(coveragePath, false)
+	if err != nil || isSystemPath(normalized) {
+		return 0, fmt.Errorf("unsafe coverage path")
+	}
+	fullPath, err := resolvePathWithinRoot(worktreePath, normalized, true)
 	if err != nil {
-		return -1
+		return 0, fmt.Errorf("resolve coverage path: %w", err)
+	}
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat coverage evidence: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxValidationFileBytes {
+		return 0, fmt.Errorf("coverage evidence must be a non-empty regular file no larger than %d bytes", maxValidationFileBytes)
+	}
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return 0, fmt.Errorf("open coverage evidence: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxValidationFileBytes+1))
+	if err != nil {
+		return 0, fmt.Errorf("read coverage evidence: %w", err)
+	}
+	if int64(len(data)) > maxValidationFileBytes || !utf8.Valid(data) {
+		return 0, fmt.Errorf("coverage evidence exceeds bounds or is not UTF-8")
 	}
 
+	var coverage float64
 	switch coverageFormat {
 	case "go-cover":
-		return parseGoCover(string(data))
+		coverage, err = parseGoCoverStrict(string(data))
 	case "cobertura":
-		return parseCobertura(string(data))
+		coverage, err = parseCoberturaStrict(data)
 	case "jacoco":
-		return parseJacoco(string(data))
+		coverage, err = parseJacocoStrict(data)
 	case "istanbul":
-		return parseIstanbul(string(data))
-	default:
-		// Try auto-detect by content.
-		trimmed := strings.TrimSpace(string(data))
-		if strings.HasPrefix(trimmed, "mode:") {
-			return parseGoCover(string(data))
-		}
-		if strings.Contains(trimmed, "<report") && strings.Contains(trimmed, "<counter") {
-			return parseJacoco(string(data))
-		}
-		if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"s"`) {
-			return parseIstanbul(string(data))
-		}
-		if strings.Contains(trimmed, "<coverage") && strings.Contains(trimmed, "cobertura") {
-			return parseCobertura(string(data))
-		}
-		return -1
+		coverage, err = parseIstanbulStrict(data)
 	}
+	if err != nil || math.IsNaN(coverage) || math.IsInf(coverage, 0) || coverage < 0 || coverage > 100 {
+		if err == nil {
+			err = fmt.Errorf("coverage value is outside 0..100")
+		}
+		return 0, err
+	}
+	return coverage, nil
 }
 
-// parseGoCover parses a Go coverage profile and returns the coverage percentage.
-// Format: "mode: set|count|atomic" followed by lines like:
-//
-//	file.go:10.1,20.2 3 1
-//
-// The last number on each line is the count (0 = not covered, >0 = covered).
-func parseGoCover(content string) float64 {
+func parseGoCoverStrict(content string) (float64, error) {
 	scanner := bufio.NewScanner(strings.NewReader(content))
-	var totalStmts, coveredStmts int
-
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	modeSeen := false
+	records := 0
+	var totalStmts, coveredStmts int64
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		// Skip mode line and empty lines.
-		if line == "" || strings.HasPrefix(line, "mode:") {
+		if line == "" {
 			continue
 		}
-
-		// Parse: file:range count
-		// Format: "filename.go:line.col,line.col statements count"
+		if !modeSeen {
+			if line != "mode: set" && line != "mode: count" && line != "mode: atomic" {
+				return 0, fmt.Errorf("invalid Go coverage mode line")
+			}
+			modeSeen = true
+			continue
+		}
 		parts := strings.Fields(line)
-		if len(parts) < 3 {
-			continue
+		if len(parts) != 3 || !strings.Contains(parts[0], ":") {
+			return 0, fmt.Errorf("malformed Go coverage record")
 		}
-
-		stmts, err := strconv.Atoi(parts[len(parts)-2])
-		if err != nil {
-			continue
+		stmts, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || stmts <= 0 {
+			return 0, fmt.Errorf("invalid Go coverage statement count")
 		}
-		count, err := strconv.Atoi(parts[len(parts)-1])
-		if err != nil {
-			continue
+		count, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || count < 0 {
+			return 0, fmt.Errorf("invalid Go coverage execution count")
 		}
-
+		if totalStmts > math.MaxInt64-stmts {
+			return 0, fmt.Errorf("go coverage counter overflow")
+		}
 		totalStmts += stmts
 		if count > 0 {
 			coveredStmts += stmts
 		}
+		records++
 	}
-
-	if totalStmts == 0 {
-		return 0
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scan Go coverage: %w", err)
 	}
-	return float64(coveredStmts) / float64(totalStmts) * 100
+	if !modeSeen || records == 0 || totalStmts == 0 {
+		return 0, fmt.Errorf("go coverage evidence contains no statements")
+	}
+	return float64(coveredStmts) / float64(totalStmts) * 100, nil
 }
 
-// parseCobertura parses a Cobertura XML coverage report and returns the
-// line-rate as a percentage. Looks for the line-rate attribute on the
-// top-level <coverage> element.
-func parseCobertura(content string) float64 {
-	// Simple extraction: find line-rate="0.85" attribute.
-	// For production use, consider a proper XML parser.
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "<coverage") {
-			continue
+func rejectUnsafeXML(data []byte) error {
+	lower := strings.ToLower(string(data))
+	if strings.Contains(lower, "<!doctype") || strings.Contains(lower, "<!entity") {
+		return fmt.Errorf("DTD/entity declarations are forbidden")
+	}
+	return nil
+}
+
+func parseCoberturaStrict(data []byte) (float64, error) {
+	if err := rejectUnsafeXML(data); err != nil {
+		return 0, err
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder.Strict = true
+	depth := 0
+	foundRoot := false
+	var rate float64
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
 		}
-		// Extract line-rate attribute.
-		idx := strings.Index(line, `line-rate="`)
-		if idx < 0 {
-			continue
-		}
-		start := idx + len(`line-rate="`)
-		end := strings.Index(line[start:], `"`)
-		if end < 0 {
-			continue
-		}
-		rate, err := strconv.ParseFloat(line[start:start+end], 64)
 		if err != nil {
-			continue
+			return 0, fmt.Errorf("parse Cobertura XML: %w", err)
 		}
-		return rate * 100
+		switch value := token.(type) {
+		case xml.StartElement:
+			depth++
+			if depth > 128 {
+				return 0, fmt.Errorf("cobertura XML nesting exceeds limit")
+			}
+			if depth == 1 {
+				if value.Name.Local != "coverage" {
+					return 0, fmt.Errorf("cobertura root element must be coverage")
+				}
+				for _, attr := range value.Attr {
+					if attr.Name.Local == "line-rate" {
+						rate, err = strconv.ParseFloat(attr.Value, 64)
+						if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 1 {
+							return 0, fmt.Errorf("invalid Cobertura line-rate")
+						}
+						foundRoot = true
+					}
+				}
+			}
+		case xml.EndElement:
+			depth--
+		}
 	}
-	return -1
+	if !foundRoot || depth != 0 {
+		return 0, fmt.Errorf("cobertura line-rate evidence is missing")
+	}
+	return rate * 100, nil
 }
 
-// parseJacoco parses a JaCoCo XML coverage report and returns the instruction
-// coverage percentage. JaCoCo uses <counter type="INSTRUCTION" missed="X" covered="Y"/>
-// elements nested within the report.
-func parseJacoco(content string) float64 {
-	var totalMissed, totalCovered int
-
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, `<counter`) {
-			continue
-		}
-		if !strings.Contains(line, `type="INSTRUCTION"`) {
-			continue
-		}
-
-		missed := extractIntAttr(line, "missed")
-		covered := extractIntAttr(line, "covered")
-		if missed < 0 || covered < 0 {
-			continue
-		}
-
-		totalMissed += missed
-		totalCovered += covered
+func parseJacocoStrict(data []byte) (float64, error) {
+	if err := rejectUnsafeXML(data); err != nil {
+		return 0, err
 	}
-
-	total := totalCovered + totalMissed
-	if total == 0 {
-		return 0
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder.Strict = true
+	depth := 0
+	foundRoot := false
+	foundCounter := false
+	var missed, covered int64
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, fmt.Errorf("parse JaCoCo XML: %w", err)
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			depth++
+			if depth > 128 {
+				return 0, fmt.Errorf("JaCoCo XML nesting exceeds limit")
+			}
+			if depth == 1 {
+				if value.Name.Local != "report" {
+					return 0, fmt.Errorf("JaCoCo root element must be report")
+				}
+				foundRoot = true
+			}
+			if depth == 2 && value.Name.Local == "counter" {
+				attrs := make(map[string]string, len(value.Attr))
+				for _, attr := range value.Attr {
+					attrs[attr.Name.Local] = attr.Value
+				}
+				if attrs["type"] == "INSTRUCTION" {
+					missed, err = strconv.ParseInt(attrs["missed"], 10, 64)
+					if err != nil || missed < 0 {
+						return 0, fmt.Errorf("invalid JaCoCo missed counter")
+					}
+					covered, err = strconv.ParseInt(attrs["covered"], 10, 64)
+					if err != nil || covered < 0 {
+						return 0, fmt.Errorf("invalid JaCoCo covered counter")
+					}
+					foundCounter = true
+				}
+			}
+		case xml.EndElement:
+			depth--
+		}
 	}
-	return float64(totalCovered) / float64(total) * 100
+	if !foundRoot || !foundCounter || depth != 0 || missed+covered <= 0 {
+		return 0, fmt.Errorf("JaCoCo report-level instruction counter is missing")
+	}
+	return float64(covered) / float64(missed+covered) * 100, nil
 }
 
-// parseIstanbul parses an Istanbul/nyc JSON coverage report and returns the
-// statement coverage percentage. Istanbul JSON is a map of file paths to
-// coverage data objects, each with an "s" field mapping statement IDs to hit counts.
-func parseIstanbul(content string) float64 {
-	// Top-level: map of filepath -> file coverage object
+func parseIstanbulStrict(data []byte) (float64, error) {
 	var report map[string]struct {
-		S map[string]int `json:"s"`
+		S map[string]int64 `json:"s"`
 	}
-	if err := json.Unmarshal([]byte(content), &report); err != nil {
-		return -1
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	if err := decoder.Decode(&report); err != nil {
+		return 0, fmt.Errorf("parse Istanbul JSON: %w", err)
 	}
-
-	var totalStmts, coveredStmts int
-	for _, fileCov := range report {
-		for _, hitCount := range fileCov.S {
-			totalStmts++
-			if hitCount > 0 {
-				coveredStmts++
+	if err := ensureJSONEOF(decoder); err != nil {
+		return 0, err
+	}
+	if len(report) == 0 {
+		return 0, fmt.Errorf("istanbul report contains no files")
+	}
+	var total, covered int64
+	for _, file := range report {
+		if len(file.S) == 0 {
+			return 0, fmt.Errorf("istanbul file contains no statement counters")
+		}
+		for _, hits := range file.S {
+			if hits < 0 {
+				return 0, fmt.Errorf("istanbul statement counter is negative")
+			}
+			total++
+			if hits > 0 {
+				covered++
 			}
 		}
 	}
-
-	if totalStmts == 0 {
-		return 0
+	if total == 0 {
+		return 0, fmt.Errorf("istanbul report contains no statements")
 	}
-	return float64(coveredStmts) / float64(totalStmts) * 100
+	return float64(covered) / float64(total) * 100, nil
 }
 
-// extractIntAttr extracts an integer attribute value from an XML/HTML-like tag line.
-// Returns -1 if the attribute is not found or cannot be parsed.
-func extractIntAttr(line, attr string) int {
-	prefix := attr + `="`
-	idx := strings.Index(line, prefix)
-	if idx < 0 {
-		return -1
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("coverage JSON contains multiple values")
+		}
+		return fmt.Errorf("coverage JSON trailing data: %w", err)
 	}
-	start := idx + len(prefix)
-	end := strings.Index(line[start:], `"`)
-	if end < 0 {
-		return -1
-	}
-	val, err := strconv.Atoi(line[start : start+end])
-	if err != nil {
-		return -1
-	}
-	return val
+	return nil
 }

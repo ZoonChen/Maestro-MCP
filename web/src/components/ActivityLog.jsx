@@ -1,49 +1,66 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { ErrorNotice } from './ErrorNotice';
+import { apiGet, describeAPIError } from '../api/client';
 
 const EVENT_ICONS = {
-  task_created: '+',
-  task_claimed: '→',
-  task_submitted: '✓',
-  task_unblocked: '→',
-  task_verifying: '◉',
-  task_approved: '✓✓',
-  task_rejected: '✗',
-  task_blocked: '⚠',
-  merge_conflicted: '⚡',
-  conflict_reopened: '↺',
-  task_cancelled: '⊘',
-  task_merged: '✓✓✓',
-  task_done: '✓✓✓',
-  task_merge_requested: '↔',
-  followup_created: '↗',
-  reopened: '↺',
-  validation_passed: '✓',
-  validation_failed: '✗',
-  session_online: '●',
-  session_offline: '○',
-  feature_created: '★',
-  feature_updated: '★',
+  'task.created': '+',
+  'task.claimed': '→',
+  'task.submitted': '✓',
+  'task.unblocked': '→',
+  'task.verifying': '◉',
+  'task.approved': '✓✓',
+  'task.rejected': '✗',
+  'task.blocked': '⚠',
+  'task.cancelled': '⊘',
+  'task.done': '✓✓✓',
+  'task.merge_requested': '↔',
+  'task.followup_created': '↗',
+  'task.reopened': '↺',
+  'validation.passed': '✓',
+  'validation.failed': '✗',
+  'session.online': '●',
+  'session.offline': '○',
+  'feature.created': '★',
+  'feature.updated': '★',
 };
 
 const EVENT_COLORS = {
-  task_approved: 'text-green',
-  task_merged: 'text-green',
-  task_done: 'text-green',
-  validation_passed: 'text-green',
-  task_created: 'text-blue',
-  task_claimed: 'text-blue',
-  feature_created: 'text-blue',
-  task_submitted: 'text-blue',
-  task_unblocked: 'text-blue',
-  task_verifying: 'text-yellow',
-  followup_created: 'text-yellow',
-  reopened: 'text-yellow',
-  task_rejected: 'text-red',
-  task_blocked: 'text-red',
-  task_cancelled: 'text-red',
-  validation_failed: 'text-red',
-  merge_conflicted: 'text-red',
+  'task.approved': 'text-green',
+  'task.done': 'text-green',
+  'validation.passed': 'text-green',
+  'task.created': 'text-blue',
+  'task.claimed': 'text-blue',
+  'feature.created': 'text-blue',
+  'task.submitted': 'text-blue',
+  'task.unblocked': 'text-blue',
+  'task.verifying': 'text-yellow',
+  'task.followup_created': 'text-yellow',
+  'task.reopened': 'text-yellow',
+  'task.rejected': 'text-red',
+  'task.blocked': 'text-red',
+  'task.cancelled': 'text-red',
+  'validation.failed': 'text-red',
+  'task.needs_human': 'text-red',
 };
+
+function normalizedEntry(entry) {
+  if (entry.type) {
+    return {
+      ...entry,
+      eventType: entry.type,
+      createdAt: entry.timestamp || entry.occurred_at,
+      taskId: entry.payload?.task_id,
+      detail: entry.payload,
+    };
+  }
+  const prefix = entry.task_id ? 'task.' : '';
+  return {
+    ...entry,
+    eventType: entry.event_type || `${prefix}${entry.action || 'activity'}`,
+    createdAt: entry.created_at,
+    taskId: entry.task_id,
+  };
+}
 
 function formatDetail(action, detail) {
   if (!detail) return action;
@@ -63,19 +80,32 @@ function formatDetail(action, detail) {
   }
 }
 
-export function ActivityLog({ projectId, wsEvents }) {
+export function ActivityLog({ projectId, wsEvents, refreshVersion, wsStatus }) {
   const [activity, setActivity] = useState([]);
   const [showWs, setShowWs] = useState(false);
+  const [error, setError] = useState('');
+  const requestVersion = useRef(0);
 
   const fetchActivity = useCallback(async () => {
+    const currentRequest = ++requestVersion.current;
+    setError('');
     try {
-      const res = await fetch(`/api/v1/projects/${projectId}/board/activity?limit=50`);
-      const json = await res.json();
-      if (json.data) setActivity(json.data);
-    } catch {}
+      const nextActivity = await apiGet(`/api/v1/projects/${projectId}/board/activity?limit=50`);
+      if (currentRequest !== requestVersion.current) return;
+      setActivity(nextActivity || []);
+    } catch (requestError) {
+      if (currentRequest !== requestVersion.current) return;
+      setError(describeAPIError(requestError));
+    }
   }, [projectId]);
 
-  useEffect(() => { fetchActivity(); }, [fetchActivity]);
+  useEffect(() => {
+    fetchActivity();
+    return () => { requestVersion.current += 1; };
+  }, [fetchActivity]);
+  useEffect(() => {
+    if (refreshVersion > 0) fetchActivity();
+  }, [refreshVersion, fetchActivity]);
 
   const formatTime = (ts) => {
     if (!ts) return '';
@@ -99,20 +129,23 @@ export function ActivityLog({ projectId, wsEvents }) {
           Live events
         </label>
       </div>
+      <span class={`connection-status ${wsStatus}`}>WebSocket: {wsStatus}</span>
+      <ErrorNotice message={error} onRetry={fetchActivity} />
       <div class="activity-list">
         {entries.slice(0, 50).map((entry, i) => {
-          const eventType = entry.event_type || entry.action || '';
+          const normalized = normalizedEntry(entry);
+          const eventType = normalized.eventType;
           const icon = EVENT_ICONS[eventType] || '·';
           const colorClass = EVENT_COLORS[eventType] || '';
           return (
             <div key={`${entry.id || ''}-${i}`} class="activity-entry">
               <span class="activity-icon">{icon}</span>
-              <span class="activity-time">{formatTime(entry.created_at)}</span>
+              <span class="activity-time">{formatTime(normalized.createdAt)}</span>
               <span class={`activity-text ${colorClass}`}>
-                {formatDetail(eventType, entry.detail)}
+                {formatDetail(eventType, normalized.detail)}
               </span>
-              {entry.task_id && (
-                <span class="activity-task">{entry.task_id}</span>
+              {normalized.taskId && (
+                <span class="activity-task">{normalized.taskId}</span>
               )}
             </div>
           );

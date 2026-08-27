@@ -27,14 +27,17 @@ data/
 *.db-shm
 
 # Build output
-maestro
-maestro.exe
+/maestro
+/maestro.exe
+/bin/
+/dist/
 
 # Node.js
 node_modules/
 web/node_modules/
 web/dist/
 tests/e2e/node_modules/
+tests/e2e/.test-data/
 
 # Test results
 test-results/
@@ -44,6 +47,7 @@ test-results/
 # IDE
 .idea/
 .vscode/
+.zcode/
 *.swp
 *.swo
 *~

@@ -1,116 +1,219 @@
-# 3.6 M6: Web 看板
-
-> **文档版本:** v2.1 | **更新日期:** 2026-04-17
-> **所属:** 产品需求文档 > 功能需求 > Web 看板
-> **相关文档:** [配置与部署](deployment.md) | [多项目管理](project-management.md) | [接口规范](../technical/api-spec.md)
-
+---
+doc_id: PRD-WEB-DASHBOARD
+spec_version: 3.0
+spec_status: review
+implementation_status: partial
+verification_status: unverified
+owner_role: product_owner
+approver_roles: [product_owner, technical_lead, security_owner, qa_owner]
+introduced_in: M4
+authority_for: [governance_console_ia, human_control_interactions, dashboard_states]
+related_adrs: [ADR-003, ADR-005, ADR-007]
+related_specs: [../specs/openapi/control-plane.yaml, ../specs/rbac/permissions.yaml]
+related_tests: [../testing/pilot-acceptance.md, ../testing/agent-evaluation-redteam.md]
+last_verified_commit: null
 ---
 
-## 页面布局
+# Web 治理与人工控制台
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│  Maestro MCP                    [user-svc ▼]       [Settings] │
-├──────────┬────────────────────────────────────────────────────┤
-│          │                                                     │
-│ PROJECTS │  ┌─ Summary ────────────────────────────────────┐  │
-│          │  │  Features: 3  │ Tasks: 12 │ Done: 7 │ Active │  │
-│ ● user   │  │  ████████████████████░░░░░░  58%             │  │
-│   service│  └──────────────────────────────────────────────┘  │
-│          │                                                     │
-│          │  ┌─ Active Sessions ─────────────────────────────┐  │
-│ ● order  │  │  cc-backend-01 (backend)  3/5 workers        │  │
-│   service│  │  ├── default  │ T-005: 支付API      23min    │  │
-│ ● admin  │  │  ├── sub-1    │ T-008: 订单查询     15min    │  │
-│   web    │  │  ├── sub-2    │ T-009: 退款接口     12min    │  │
-│ ○ shared │  │  ├── sub-3    │ idle                        │  │
-│   libs   │  │  └── sub-4    │ idle                        │  │
-│          │  └──────────────────────────────────────────────┘  │
-│          │                                                     │
-│          │  ┌─ Task Board ─────────────────────────────────┐  │
-│          │  │  Pending (3)    In Progress (2)    Done (7)   │  │
-│          │  │  ┌─────────┐   ┌──────────────┐  ┌────────┐ │  │
-│          │  │  │ T-008   │   │ T-005        │  │ T-001  │ │  │
-│          │  │  │ 实现支付│   │ 订单查询API  │  │ 用户模型│ │  │
-│          │  │  │ backend │   │ backend-01   │  │ backend │ │  │
-│          │  │  └─────────┘   └──────────────┘  └────────┘ │  │
-│          │  └──────────────────────────────────────────────┘  │
-│          │                                                     │
-│          │  ┌─ Activity Log ───────────────────────────────┐  │
-│          │  │  14:32  backend-01  submitted T-005 (92%)    │  │
-│          │  │  14:28  frontend-01 claimed T-007            │  │
-│          │  └──────────────────────────────────────────────┘  │
-└──────────┴────────────────────────────────────────────────────┘
+## 1. 目标与非目标
+
+`UI-REQ-001` 控制台 MUST 让用户看清系统状态、证据、责任方和下一步，并可审批、重试、暂停、取消、撤销 Runner/凭据及申请限时豁免。`UI-REQ-002` Agent 运行 MUST 展示计划、进度、Tool 轨迹摘要、预算与人工接管。非目标：在浏览器中实现 IDE、隐藏后端失败、仅靠隐藏按钮执行授权，或用动态生成原始 UI 取代受控组件库。
+
+## 2. 参与者、角色、权限和信任边界
+
+角色首页按任务而非数据库表组织：platform admin 看实例/安全/运行健康；project admin 看项目/成员/Runner/策略；coordinator 看队列与阻塞；developer 看本人执行；verifier 看待验证/Evidence；viewer 只读。导航为“概览、项目、任务、缺陷、MR/Pipeline、Evidence、Runner、策略、审计、运维”。前端只呈现服务端授权结果，敏感详情需再次鉴权。
+
+## 3. 触发条件、输入和前置条件
+
+OIDC 登录后按 principal 载入可见项目与能力；URL deep link 必须服务端校验。写操作均要求当前资源版本、原因（高风险操作）、幂等键和二次确认所需影响摘要。实时更新通过带 cursor 的事件流，断线显示 last sync 并切只读。
+
+## 4. 正常交互及时序图
+
+### 4.1 OIDC 登录与远程 MCP
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant B as Browser/MCP Client
+    participant C as Control Plane
+    participant I as OIDC Provider
+    U->>B: Sign in / connect
+    B->>C: Authorization request + PKCE
+    C->>I: Redirect with state/nonce
+    I-->>C: Authorization code
+    C->>I: Exchange and validate claims
+    C-->>B: Secure session or scoped token
+    B->>C: initialize / load dashboard
+    C-->>B: authorized capabilities
 ```
 
-## 功能清单
+### 4.2 Runner 注册、批准与吊销
 
-| 功能 | 说明 |
-|---|---|
-| **项目侧边栏** | 左侧列出所有已注册项目，点击切换看板视图。实心圆=活跃，空心圆=已归档 |
-| **项目下拉选择器** | 顶部下拉框快速切换项目，支持键盘快捷跳转 |
-| **跨项目总览页** | 首页展示所有项目的进度概览（缩略卡片），无需逐个点进去 |
-| **总览面板** | Feature/Task 统计、整体进度条、Agent 在线状态、软限制告警（如 Task 数超过建议上限） |
-| **看板视图** | Kanban 风格，按状态列排布 Task 卡片 |
-| **Agent 监控** | 实时显示各 Agent 当前任务、已耗时、Worker 分配、历史完成数 |
-| **活动日志** | WebSocket 推送的实时操作流：任务创建/认领/提交/阻塞等事件 |
-| **Task 详情** | 点击卡片弹出详情：描述、边界、API 契约、测试结果、变更文件列表 |
-| **Feature 视图** | 按 Feature 聚合查看，展示各 Feature 下所有 Task 的进度 |
-| **暗色/亮色主题** | 跟随系统或手动切换 |
-| **软限制告警** | Summary 区域显示项目规模警告（Feature/Task 超建议上限），点击查看详情和优化建议 |
+```mermaid
+sequenceDiagram
+    actor A as Project Admin
+    participant C as Control Plane
+    participant R as Runner
+    A->>C: Create one-time registration code
+    R->>C: Register + device proof + capabilities
+    C-->>A: Pending runner with impact summary
+    A->>C: Approve project scope
+    R->>C: Poll approval with enrollment identity
+    C-->>R: Device identity activated
+    A->>C: Revoke runner + reason
+    C-->>R: Revoke event / reject future leases
+```
 
-## 任务状态在看板中的展示规则
+### 4.3 Lease、心跳、离线与恢复
 
-### 默认看板列
+```mermaid
+sequenceDiagram
+    participant C as Control Plane
+    participant R as Runner
+    actor O as Coordinator
+    R->>C: HTTPS long-poll claim + device token
+    C-->>R: Lease(task, epoch, deadline)
+    R->>C: Accept + HTTPS heartbeat + progress
+    Note over C,R: heartbeat lost
+    C-->>O: suspect/offline warning
+    C->>C: expire lease after timeout
+    R->>C: reconnect with old epoch
+    C-->>R: reject old epoch + reconcile
+    C-->>O: requeue or manual recovery
+```
 
-| 看板列 | 包含的状态 | 说明 |
-|---|---|---|
-| Pending | `pending`, `blocked` | 等待认领和被阻塞的任务 |
-| In Progress | `in_progress` | 正在执行的任务 |
-| Review | `submitted`, `verifying`, `ready_to_merge` | 验证流程中的任务 |
-| Done | `done` | 已完成的任务。merge 成功作为事件记录在 Activity Log 中 |
-| Conflicts | `merge_conflicted` | 独立 Conflicts 列，卡片标橙色警告，显示冲突摘要。协调者可通过"解决冲突"操作选择 reopen/cancel/followup |
+### 4.4 GitLab 项目接入与 Webhook
 
-### 特殊状态处理
+```mermaid
+sequenceDiagram
+    actor A as Platform/Project Admin
+    participant C as Control Plane
+    participant G as GitLab
+    A->>C: Configure approved host/repository
+    C->>G: Verify TLS, project and bot scopes
+    G-->>C: Repository metadata
+    C-->>A: Show scopes and webhook setup
+    G->>C: Signed raw webhook
+    C->>C: Verify + persist Inbox
+    C-->>G: 2xx after persistence
+    C-->>A: Synced status / reconciliation result
+```
 
-| 状态 | 看板行为 |
-|---|---|
-| `cancelled` | **默认隐藏**，通过筛选器"显示已取消"切换可见 |
-| `blocked` | 显示在 Pending 列，卡片标红色阻塞标记，hover 显示 blocker_reason |
-| `merge_conflicted` | 独立 Conflicts 列，卡片标橙色警告，显示冲突摘要 |
-| `rejected` | 瞬时伪状态（非稳定状态），回退 in_progress 后保持原列，活动日志记录 reject 事件 |
-| 全部 cancelled | Feature 进度显示 N/A，标记为"无有效任务"，不自动关闭 |
+### 4.5 任务分支、MR、Pipeline 与人工合并
 
-### Activity Log 事件展示
+```mermaid
+sequenceDiagram
+    actor D as Developer/Coordinator
+    participant C as Control Plane
+    participant R as Runner
+    participant G as GitLab/CI
+    C-->>R: Remote baseline + task branch
+    R->>G: Host broker pushes task branch
+    C->>G: Bot creates/updates MR
+    G-->>C: Pipeline evidence webhook
+    C-->>D: Gate results + exact SHA
+    D->>G: Human review and merge
+    G-->>C: Merged event
+    C-->>D: done with audit link
+```
 
-| 事件 | 图标 | 展示格式 |
-|---|---|---|
-| 任务创建 | + | `session_id created T-{id}: {title}` |
-| 任务认领 | → | `session_id/worker_id claimed T-{id}` |
-| 任务提交 | ✓ | `session_id/worker_id submitted T-{id} ({coverage}%)` |
-| 阻塞解除 | → | `coordinator unblocked T-{id}` |
-| 验证领取 | ◉ | `session_id/worker_id verifying T-{id}` |
-| 验证通过 | ✓✓ | `session_id/worker_id approved T-{id}` |
-| 验证拒绝 | ✗ | `session_id/worker_id rejected T-{id}: {notes摘要}` |
-| 任务阻塞 | ⚠ | `session_id blocked T-{id}: {reason摘要}` |
-| 合并冲突 | ⚡ | `system merge_conflicted T-{id}` |
-| 冲突重开 | ↺ | `coordinator reopened T-{id}` |
-| 任务取消 | ⊘ | `coordinator cancelled T-{id}: {reason摘要}` |
-| 合并成功 | ✓✓✓ | `system merged T-{id}` |
-| 合并执行 | ↔ | `session_id/worker_id merge_requested T-{id}` |
-| 任务完成 | ✓✓✓ | `system done T-{id}` |
-| 冲突跟进 | ↗ | `coordinator followup_created T-{id} → T-{new_id}` |
+### 4.6 前后端跨仓联调
 
-## 人工运维能力 (Phase 4 规划)
+```mermaid
+sequenceDiagram
+    actor Q as QA/Coordinator
+    participant C as Control Plane
+    participant K as Contract Engine
+    participant E as E2E Environment
+    Q->>C: Select frontend/backend SHAs
+    C->>K: Validate contract hash/diff
+    K-->>C: Compatible or breaking
+    C->>E: Deploy exact artifact digests
+    E-->>C: Joint E2E evidence
+    C-->>Q: Combination result / responsibility
+```
 
-初期 Web 看板为只读。Phase 4 起逐步增加以下人工干预能力：
+### 4.7 Defect 到 Agent 修复
 
-| 操作 | 说明 | Phase |
-|---|---|---|
-| 强制释放 Session | 将卡死的 Session 标记离线，释放其所有任务 | Phase 4 |
-| 强制回退 Task | 将 in_progress/block 任务回退到 pending | Phase 4 |
-| 强制清理 Worktree | 删除 stale 状态的 Worktree | Phase 4 |
-| 查看测试日志 | 展示服务端执行测试的完整输出 | Phase 3 |
-| 下载 Diff/Patch | 下载任务的代码变更 | Phase 4 |
+```mermaid
+sequenceDiagram
+    actor Q as QA/Coordinator
+    participant C as Workflow
+    participant A as Agent
+    participant R as Runner
+    participant G as GitLab CI
+    Q->>C: Approve eligible remediation
+    C->>C: Scope and pre-call budget gate
+    C->>A: Untrusted context + allowed tools
+    A->>R: Reproduce, edit, test
+    R-->>C: Diff, evidence, actual usage
+    C->>G: Create MR and request CI
+    G-->>Q: CI evidence for human review
+```
 
-Phase 1-3 阶段如需人工干预，可直接操作 SQLite 数据库（文档提供应急 SQL）。
+### 4.8 Gate 豁免、撤销与应急恢复
+
+```mermaid
+sequenceDiagram
+    actor R as Requester
+    actor A as Independent Approver
+    participant C as Control Plane
+    participant O as Operations
+    R->>C: Request waiver(MR/SHA/check, reason, expiry)
+    C-->>A: Impact, evidence and non-waivable checks
+    A->>C: Approve or reject
+    C-->>R: Time-bound decision + audit
+    O->>C: Emergency revoke/stop
+    C->>C: reduce capability, stale affected decisions
+    C-->>A: Recovery validation and re-approval required
+```
+
+## 5. 失败、取消、超时、重试、恢复和用户提示
+
+每页 MUST 有 loading/empty/error/success/stale/offline/permission-denied 状态。每个写操作显示作用对象、影响范围、不可逆部分、前后 diff 与明确动词；可撤销则优先提供 Undo。`409` 显示服务器新版本与刷新/重新应用选择；超时查询 operation 状态再允许重试。Agent 中断保留已生成结果并标 `stopped`，降级必须显式说明且不得显示虚假成功。
+
+| 操作 | 确认与反馈 | 失败/恢复 |
+| --- | --- | --- |
+| 审批/驳回 | 展示 Evidence、SHA、职责冲突 | stale 时强制刷新 |
+| 重试 | 展示失败类别、次数、预计成本 | 非幂等步骤禁止一键重试 |
+| 暂停/取消 | 展示运行中步骤与清理影响 | 超时转人工/隔离 |
+| Runner/凭据撤销 | 展示受影响 Lease/项目 | 立即生效，恢复需重新批准 |
+| Gate 豁免 | 展示 check、MR/SHA、期限、风险 | 不可豁免项无入口；可撤销 |
+
+## 6. 状态机、规则和不可变式
+
+UI Operation：`idle → confirming → submitting → accepted → completed/failed/conflicted/cancelled`。`UI-RULE-001` 前端状态不是业务真源；`UI-RULE-002` 高风险确认必须展示影响而非通用“确定吗”；`UI-RULE-003` Agent 计划/Tool/预算/证据可见且可停止；`UI-RULE-004` Static component schema 优先，禁止模型生成可执行 DOM/脚本。
+
+## 7. 字段、配置和格式校验
+
+表单使用显式 label、必填/长度/格式就近提示；原因字段 10–2,000 字符；豁免到期不超过 7 天；版本/SHA 只读来自服务端；敏感字段默认遮蔽且不可复制原值。分页、过滤、排序使用白名单；时间同时显示本地值与 UTC tooltip。
+
+## 8. 并发、幂等和一致性
+
+每次提交生成幂等键并携带 expected version；按钮在已受理后禁止重复，但页面刷新可按 operation ID 恢复。事件流按 event ID/cursor 去重，snapshot 带水位线。冲突不得自动覆盖用户或服务端更新，批量操作逐项返回结果。
+
+## 9. 安全、Secret、隐私和审计
+
+浏览器使用 Secure/HttpOnly/SameSite Cookie、CSRF 防护、严格 CSP 和 Origin 校验；不在 localStorage 保存 token。敏感页面防缓存，日志/前端错误上报脱敏。所有写操作、敏感查看、下载与拒绝记录 actor、project、resource、decision、reason、IP/correlation ID。
+
+## 10. 质量门禁、证据与 fail-closed 规则
+
+UI 发布 Gate 包括 RBAC 逐页/逐动作测试、契约测试、可访问性、错误/空态、并发冲突、事件恢复与安全扫描。页面不渲染或 Evidence 拉取失败时不得提供放行/豁免成功路径；最终决定必须显示 policy version 和 exact SHA。
+
+## 11. 指标、SLO、告警和运维动作
+
+监控首屏/交互延迟、操作成功/冲突/撤销、错误恢复、Agent 停止/接管、审批耗时与可访问性回归。100ms 内给操作反馈，长任务持续显示阶段进度。必须满足 WCAG AA：正常文字 4.5:1、全键盘可达、可见焦点、语义/ARIA、reduced motion；关键页无横向滚动。
+
+## 12. 验收测试和需求追踪
+
+- `TC-UI-001`：各角色首页、导航和动作与服务端 RBAC 一致。
+- `TC-UI-002`：所有核心页覆盖 loading/empty/error/success/stale/offline/403/404。
+- `TC-UI-003`：八个时序场景可从 UI 完成并关联审计/Evidence。
+- `TC-UI-004`：冲突、超时、重复点击、断线恢复不产生重复副作用。
+- `TC-UI-005`：键盘、读屏、对比度、reduced motion 自动与人工走查通过。
+- `TC-UI-006`：Agent 进度/Tool/预算可见，可停止、接管且无静默降级。
+
+## 13. 数据迁移、兼容、发布与回滚
+
+旧 Dashboard 路由提供短期重定向，不迁移浏览器 token。新控制台按角色/项目 feature flag 灰度，先只读再开放写操作；UI 的受权事件流/WebSocket 在兼容窗口内支持前一 minor。这里不指旧 MCP SSE transport，也不改变远程 MCP 使用 Streamable HTTP、Runner 使用出站 HTTPS long-poll 的决策。回滚关闭新写入口并保留 operation/audit，不恢复匿名访问或客户端自报权限。

@@ -8,17 +8,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 )
-
-const maxClaimRetry = 3
 
 // TaskService implements the task state machine and all task-related business logic.
 type TaskService struct {
@@ -97,13 +95,18 @@ func (s *TaskService) CreateTask(ctx context.Context, projectID string, t *model
 	if t.AllowedDirectories == "" {
 		return fmt.Errorf("CreateTask: %w: allowed_directories is required", store.ErrInvalidParameter)
 	}
-
-	// Validate role is one of the allowed values.
-	validRoles := map[string]bool{
-		model.RoleBackend: true, model.RoleFrontend: true, model.RoleDevops: true,
-		model.RoleVerifier: true, model.RoleCoordinator: true,
+	if _, err := parseAllowedDirectories(t.AllowedDirectories); err != nil {
+		return fmt.Errorf("CreateTask: %w: %v", store.ErrInvalidParameter, err)
 	}
-	if !validRoles[t.Role] {
+	if _, err := parseForbiddenPatterns(string(t.ForbiddenPatterns)); err != nil {
+		return fmt.Errorf("CreateTask: %w: %v", store.ErrInvalidParameter, err)
+	}
+	if err := ValidateTaskTestRequirements(t.TestRequirements); err != nil {
+		return fmt.Errorf("CreateTask: %w: %v", store.ErrInvalidParameter, err)
+	}
+
+	// Validate queue routing fields before they can affect scheduler ordering.
+	if !validTaskRole(t.Role) {
 		return fmt.Errorf("CreateTask: %w: invalid role %q, must be one of backend/frontend/devops/verifier/coordinator", store.ErrInvalidParameter, t.Role)
 	}
 
@@ -116,10 +119,16 @@ func (s *TaskService) CreateTask(ctx context.Context, projectID string, t *model
 
 	// Set defaults.
 	if t.Status == "" {
-		t.Status = model.TaskStatusPending
+		t.Status = model.TaskStatusQueued
+	}
+	if t.Status != model.TaskStatusDraft && t.Status != model.TaskStatusQueued {
+		return fmt.Errorf("CreateTask: %w: new task status must be draft or queued, got %q", store.ErrTaskStateInvalid, t.Status)
 	}
 	if t.Priority == "" {
 		t.Priority = model.PriorityNormal
+	}
+	if !validTaskPriority(t.Priority) {
+		return fmt.Errorf("CreateTask: %w: invalid priority %q", store.ErrInvalidParameter, t.Priority)
 	}
 	t.ProjectID = projectID
 
@@ -145,18 +154,42 @@ func (s *TaskService) CreateTask(ctx context.Context, projectID string, t *model
 		}
 	}
 
-	if err := s.taskStore.Create(ctx, projectID, t); err != nil {
+	// Creation changes the claimable queue when the initial state is queued.
+	// Persist the task, queue CAS token, activity and audit as one unit so a
+	// caller can never observe a new task under an old queue version.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return fmt.Errorf("CreateTask: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertNewTaskTx(ctx, tx, projectID, t); err != nil {
 		return fmt.Errorf("CreateTask: %w", err)
 	}
-
-	// Log activity.
+	if t.Status == model.TaskStatusQueued {
+		if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+			return fmt.Errorf("CreateTask: queue version: %w", err)
+		}
+	}
 	detail := fmt.Sprintf(`{"title":%q,"role":%q,"feature_id":%q}`, t.Title, t.Role, t.FeatureID)
-	if err := s.logActivity(ctx, projectID, nil, &t.ID, model.ActionCreated, &detail); err != nil {
-		slog.Error("CreateTask: failed to log activity", "task_id", t.ID, "error", err)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO activity_log (project_id, task_id, action, detail, created_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
+		projectID, t.ID, model.ActionCreated, detail,
+	); err != nil {
+		return fmt.Errorf("CreateTask: activity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, 'task.create', 'ALLOWED', ?, datetime('now'))`,
+		projectID, projectID, t.ID, detail,
+	); err != nil {
+		return fmt.Errorf("CreateTask: audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("CreateTask: commit: %w", err)
 	}
 
 	safeEmit(s.eventEmitter, "task.created", projectID, map[string]string{"task_id": t.ID})
-	s.logAudit(ctx, projectID, "task.create", "ALLOWED", nil, &t.ID)
 
 	// Trigger feature status auto-transition if callback is set.
 	if s.OnFeatureStatusChange != nil {
@@ -203,23 +236,29 @@ func (s *TaskService) UpdateTask(ctx context.Context, projectID string, t *model
 		return fmt.Errorf("UpdateTask: %w", err)
 	}
 
-	// Validate allowed_directories: reject ".." path traversal (security).
-	if ad := t.AllowedDirectories; ad != "" && ad != "[]" && ad != "null" {
-		var dirs []string
-		if err := json.Unmarshal([]byte(ad), &dirs); err == nil {
-			for _, dir := range dirs {
-				if strings.Contains(dir, "..") {
-					return fmt.Errorf("UpdateTask: %w: allowed_directories must not contain '..': %s", store.ErrInvalidParameter, dir)
-				}
-			}
-		}
+	if _, err := parseAllowedDirectories(t.AllowedDirectories); err != nil {
+		return fmt.Errorf("UpdateTask: %w: %v", store.ErrInvalidParameter, err)
+	}
+	if _, err := parseForbiddenPatterns(string(t.ForbiddenPatterns)); err != nil {
+		return fmt.Errorf("UpdateTask: %w: %v", store.ErrInvalidParameter, err)
+	}
+	if err := ValidateTaskTestRequirements(t.TestRequirements); err != nil {
+		return fmt.Errorf("UpdateTask: %w: %v", store.ErrInvalidParameter, err)
+	}
+	if !validTaskRole(t.Role) {
+		return fmt.Errorf("UpdateTask: %w: invalid role %q", store.ErrInvalidParameter, t.Role)
+	}
+	if !validTaskPriority(t.Priority) {
+		return fmt.Errorf("UpdateTask: %w: invalid priority %q", store.ErrInvalidParameter, t.Priority)
 	}
 
 	// Status-based field edit restrictions.
 	switch existing.Status {
-	case model.TaskStatusPending, model.TaskStatusBlocked:
-		// All fields editable — no restrictions.
-	case model.TaskStatusInProgress:
+	case model.TaskStatusQueued, model.TaskStatusBlocked:
+		// Mutable planning fields are editable. Status and execution authority
+		// always remain server-owned and are not written by this use case.
+		t.Status = existing.Status
+	case model.TaskStatusExecuting:
 		// In progress: only description and summary are editable (PRD task-management.md).
 		t.Title = existing.Title
 		t.Role = existing.Role
@@ -232,13 +271,12 @@ func (s *TaskService) UpdateTask(ctx context.Context, projectID string, t *model
 		t.Dependencies = existing.Dependencies
 		// Keep status as-is (don't allow status changes through update).
 		t.Status = existing.Status
-	case model.TaskStatusSubmitted, model.TaskStatusVerifying,
-		model.TaskStatusReadyToMerge, model.TaskStatusDone:
+	case model.TaskStatusValidating, model.TaskStatusReadyForHumanMerge, model.TaskStatusDone:
 		return fmt.Errorf("UpdateTask: %w: cannot update task in status %q", store.ErrTaskStateInvalid, existing.Status)
 	case model.TaskStatusCancelled:
 		return fmt.Errorf("UpdateTask: %w: cannot update cancelled task", store.ErrTaskAlreadyCancelled)
-	case model.TaskStatusMergeConflicted:
-		return fmt.Errorf("UpdateTask: %w: cannot update merge_conflicted task, use resolve_merge_conflict", store.ErrTaskStateInvalid)
+	case model.TaskStatusNeedsHuman:
+		return fmt.Errorf("UpdateTask: %w: cannot update needs_human task without an authorized recovery action", store.ErrTaskStateInvalid)
 	default:
 		return fmt.Errorf("UpdateTask: %w: unknown status %q", store.ErrTaskStateInvalid, existing.Status)
 	}
@@ -263,163 +301,314 @@ func (s *TaskService) UpdateTask(ctx context.Context, projectID string, t *model
 		t.Dependencies = existing.Dependencies
 	}
 
-	if err := s.taskStore.Update(ctx, projectID, t); err != nil {
-		return fmt.Errorf("UpdateTask: %w", err)
-	}
-
+	queueChanged := queuedTaskOrderingChanged(existing, t)
 	detail := fmt.Sprintf(`{"title":%q,"priority":%q}`, t.Title, t.Priority)
-	if err := s.logActivity(ctx, projectID, nil, &t.ID, model.ActionUpdated, &detail); err != nil {
-		slog.Error("UpdateTask: failed to log activity", "task_id", t.ID, "error", err)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return fmt.Errorf("UpdateTask: begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET
+		title = ?, description = ?, role = ?, priority = ?, feature_id = ?,
+		allowed_directories = ?, forbidden_patterns = ?, required_apis = ?,
+		dependencies = ?, test_requirements = ?, parent_task_id = ?, relation_type = ?,
+		summary = ?, version = version + 1, updated_at = datetime('now')
+		WHERE project_id = ? AND id = ? AND status = ? AND version = ?`,
+		t.Title, t.Description, t.Role, t.Priority, t.FeatureID,
+		t.AllowedDirectories, t.ForbiddenPatterns, t.RequiredAPIs,
+		t.Dependencies, t.TestRequirements, t.ParentTaskID, t.RelationType,
+		t.Summary, projectID, t.ID, existing.Status, t.Version,
+	)
+	if err != nil {
+		return fmt.Errorf("UpdateTask: update: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("UpdateTask: rows affected: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("UpdateTask: %w", store.ErrConcurrentConflict)
+	}
+	if queueChanged {
+		if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+			return fmt.Errorf("UpdateTask: queue version: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO activity_log (project_id, task_id, action, detail, created_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
+		projectID, t.ID, model.ActionUpdated, detail,
+	); err != nil {
+		return fmt.Errorf("UpdateTask: activity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, 'task.update', 'ALLOWED', ?, datetime('now'))`,
+		projectID, projectID, t.ID,
+		fmt.Sprintf(`{"queue_changed":%t,"from_version":%d,"to_version":%d}`, queueChanged, t.Version, t.Version+1),
+	); err != nil {
+		return fmt.Errorf("UpdateTask: audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("UpdateTask: commit: %w", err)
+	}
+	t.Version++
 
 	return nil
 }
 
-// ClaimTask atomically claims a pending task. Uses the store's WHERE status='pending'
-// guard for optimistic concurrency. Returns ErrConcurrentConflict if already claimed,
-// or ErrTaskNotFound if the task doesn't exist.
+// ClaimTask leases a specific queued task. The queue-level API is preferred;
+// this compatibility method verifies that the requested task is still the next
+// eligible task before delegating to the same atomic Lease workflow.
 func (s *TaskService) ClaimTask(ctx context.Context, projectID, taskID, sessionID, workerID string) (*model.Task, error) {
-	if err := s.taskStore.Claim(ctx, projectID, taskID, sessionID, workerID); err != nil {
-		return nil, fmt.Errorf("ClaimTask: %w", err)
-	}
-
-	// Log activity.
-	detail := fmt.Sprintf(`{"worker_id":%q,"session_id":%q}`, workerID, sessionID)
-	if err := s.logActivity(ctx, projectID, &sessionID, &taskID, model.ActionClaimed, &detail); err != nil {
-		slog.Error("ClaimTask: failed to log activity", "task_id", taskID, "error", err)
-	}
-
-	// Update worker current task.
-	if err := s.workerStore.UpdateCurrentTask(ctx, projectID, sessionID, workerID, taskID); err != nil {
-		slog.Error("ClaimTask: failed to update worker current_task", "worker_id", workerID, "error", err)
-	}
-
-	safeEmit(s.eventEmitter, "task.claimed", projectID, map[string]string{"task_id": taskID})
-
-	// Return the full claimed task.
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("ClaimTask: get claimed task: %w", err)
+		return nil, fmt.Errorf("ClaimTask: %w", err)
 	}
-	return task, nil
+	if task.Status != model.TaskStatusQueued {
+		return nil, fmt.Errorf("ClaimTask: %w", store.ErrConcurrentConflict)
+	}
+	var queueVersion int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT version FROM project_queue_versions WHERE project_id = ?), 0)`,
+		projectID,
+	).Scan(&queueVersion); err != nil {
+		return nil, fmt.Errorf("ClaimTask: read queue version: %w", err)
+	}
+	claimed, err := s.claimNextTask(ctx, projectID, sessionID, task.Role, workerID, "", queueVersion, "", taskID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return claimed, nil
 }
 
 // ---------------------------------------------------------------------------
 // State transitions
 // ---------------------------------------------------------------------------
 
-// CancelTask cancels a task that is in pending, in_progress, or blocked status.
-// Releases worker and worktree resources. merge_conflicted cancellation is
-// handled by ResolveMergeConflict, not this method.
+// CancelTask requests cancellation of a cancellable task.
 func (s *TaskService) CancelTask(ctx context.Context, projectID, taskID, sessionID, reason string) error {
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
 		return fmt.Errorf("CancelTask: %w", err)
 	}
 
-	// Validate status is cancellable.
-	switch task.Status {
-	case model.TaskStatusPending, model.TaskStatusInProgress, model.TaskStatusBlocked:
-		// OK to cancel.
-	default:
+	if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusExecuting &&
+		task.Status != model.TaskStatusBlocked && task.Status != model.TaskStatusNeedsHuman {
 		return fmt.Errorf("CancelTask: %w: cannot cancel task in status %q", store.ErrTaskStateInvalid, task.Status)
 	}
-
-	// Update status and cancel reason within a transaction for atomicity.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("CancelTask: begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
+	toStatus := model.TaskStatusCancelled
+	if task.Status != model.TaskStatusQueued {
+		toStatus = model.TaskStatusCancelling
+	}
+	if task.Status == model.TaskStatusExecuting {
+		if task.ActiveLeaseID == nil {
+			return fmt.Errorf("CancelTask: executing task has no active lease: %w", store.ErrRecoveryIntegrity)
+		}
+		var active int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM task_leases WHERE project_id = ? AND task_id = ? AND id = ? AND status = 'active'`,
+			projectID, taskID, *task.ActiveLeaseID,
+		).Scan(&active); err != nil {
+			return fmt.Errorf("CancelTask: lease check: %w", err)
+		}
+		if active != 1 {
+			return fmt.Errorf("CancelTask: active lease missing: %w", store.ErrRecoveryIntegrity)
+		}
+	}
 	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, cancel_reason = ?, updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusCancelled, reason, taskID, projectID, task.Status)
+		`UPDATE tasks SET status = ?, cancel_reason = ?, version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = ? AND version = ?`,
+		toStatus, reason, taskID, projectID, task.Status, task.Version)
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("CancelTask: update: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("CancelTask: rows affected: %w", err)
-	}
-	if affected == 0 {
-		_ = tx.Rollback()
+	if affected, _ := result.RowsAffected(); affected != 1 {
 		return fmt.Errorf("CancelTask: %w", store.ErrConcurrentConflict)
 	}
-
-	// Log activity inside the transaction.
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID, task.Status, toStatus,
+		task.Version, task.Version+1, sessionID, "cancellation requested",
+		fmt.Sprintf("task.cancel:%s:v%d", taskID, task.Version)); err != nil {
+		return err
+	}
+	finalStatus := toStatus
+	finalVersion := task.Version + 1
+	// queued/blocked/needs_human have no running side effect. For stopped states
+	// the same transaction is the cancellation acknowledgement. Executing work
+	// remains cancelling until the lease expires or a Runner acknowledgement is
+	// introduced; it must never jump directly to cancelled.
+	if toStatus == model.TaskStatusCancelling && task.Status != model.TaskStatusExecuting {
+		result, err = tx.ExecContext(ctx,
+			`UPDATE tasks SET status = 'cancelled', assigned_session_id = NULL,
+			     assigned_worker_id = NULL, assigned_at = NULL, active_lease_id = NULL,
+			     lease_expires_at = NULL, version = version + 1, updated_at = datetime('now')
+			 WHERE project_id = ? AND id = ? AND status = 'cancelling' AND version = ?`,
+			projectID, taskID, task.Version+1,
+		)
+		if err != nil {
+			return fmt.Errorf("CancelTask: acknowledge stopped task: %w", err)
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return store.ErrConcurrentConflict
+		}
+		if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+			model.TaskStatusCancelling, model.TaskStatusCancelled,
+			task.Version+1, task.Version+2, sessionID, "stopped task cancellation acknowledged",
+			fmt.Sprintf("task.cancel:%s:v%d", taskID, task.Version)); err != nil {
+			return err
+		}
+		finalStatus, finalVersion = model.TaskStatusCancelled, task.Version+2
+	}
+	if finalStatus == model.TaskStatusCancelled {
+		if err := s.releaseTaskResourcesTx(ctx, tx, projectID, task, model.WorktreeStatusCleanupPending,
+			sessionID, "task cancellation released owned resources",
+			fmt.Sprintf("task.cancel:%s:v%d", taskID, task.Version)); err != nil {
+			return fmt.Errorf("CancelTask: release resources: %w", err)
+		}
+	}
+	if task.Status == model.TaskStatusQueued {
+		if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+			return fmt.Errorf("CancelTask: queue version: %w", err)
+		}
+	}
 	detail := fmt.Sprintf(`{"reason":%q,"previous_status":%q}`, reason, task.Status)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-		projectID, sessionID, taskID, model.ActionCancelled, detail); err != nil {
-		_ = tx.Rollback()
+		projectID, sessionID, taskID,
+		map[bool]string{true: model.ActionCancelled, false: "cancellation_requested"}[finalStatus == model.TaskStatusCancelled], detail); err != nil {
 		return fmt.Errorf("CancelTask: log activity: %w", err)
 	}
-
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(session_id, bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, ?, 'task.cancel', 'ALLOWED', ?, datetime('now'))`,
+		sessionID, projectID, projectID, taskID,
+		fmt.Sprintf(`{"to_status":%q,"version":%d}`, finalStatus, finalVersion)); err != nil {
+		return fmt.Errorf("CancelTask: audit: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("CancelTask: commit: %w", err)
 	}
-
-	// Release resources outside the transaction.
-	s.releaseResources(ctx, projectID, task)
-
 	if s.OnFeatureStatusChange != nil {
 		s.OnFeatureStatusChange(ctx, projectID, task.FeatureID)
 	}
-
-	safeEmit(s.eventEmitter, "task.cancelled", projectID, map[string]string{"task_id": taskID})
-	s.logAudit(ctx, projectID, "task.cancel", "ALLOWED", nil, &taskID)
-
+	safeEmit(s.eventEmitter, "task."+finalStatus, projectID, map[string]string{"task_id": taskID})
 	return nil
 }
 
-// ReportBlocker transitions a task from in_progress to blocked.
+// ReportBlocker transitions a task from executing to blocked.
 func (s *TaskService) ReportBlocker(ctx context.Context, projectID, taskID, sessionID, reason string) error {
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
 		return fmt.Errorf("ReportBlocker: %w", err)
 	}
 
-	if task.Status != model.TaskStatusInProgress {
-		return fmt.Errorf("ReportBlocker: %w: task must be in_progress, got %q", store.ErrTaskStateInvalid, task.Status)
+	if task.Status != model.TaskStatusExecuting {
+		return fmt.Errorf("ReportBlocker: %w: task must be executing, got %q", store.ErrTaskStateInvalid, task.Status)
 	}
-
-	// Update status and blocker reason atomically.
+	if task.AssignedSessionID == nil || *task.AssignedSessionID != sessionID ||
+		task.AssignedWorkerID == nil || task.ActiveLeaseID == nil {
+		return fmt.Errorf("ReportBlocker: %w", store.ErrTaskNotOwned)
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("ReportBlocker: begin tx: %w", err)
 	}
-
+	defer func() { _ = tx.Rollback() }()
+	var sessionKey string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM agent_sessions WHERE project_id = ? AND COALESCE(external_id, id) = ? AND status = 'online'`,
+		projectID, sessionID,
+	).Scan(&sessionKey); err != nil {
+		return fmt.Errorf("ReportBlocker: owning session: %w", store.ErrTaskNotOwned)
+	}
+	var leaseEpoch, leaseVersion, workerVersion int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT l.epoch, l.version, w.version FROM task_leases AS l
+		 JOIN agent_workers AS w ON w.project_id = l.project_id AND w.session_id = l.session_id
+		   AND w.id = l.worker_id
+		 WHERE l.project_id = ? AND l.task_id = ? AND l.id = ? AND l.session_id = ?
+		   AND l.worker_id = ? AND l.status = 'active' AND julianday(l.expires_at) > julianday('now')
+		   AND w.status = 'busy' AND w.current_task_id = l.task_id`,
+		projectID, taskID, *task.ActiveLeaseID, sessionKey, *task.AssignedWorkerID,
+	).Scan(&leaseEpoch, &leaseVersion, &workerVersion); err != nil || leaseEpoch != task.LeaseEpoch {
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("ReportBlocker: lease: %w", err)
+		}
+		return fmt.Errorf("ReportBlocker: %w", store.ErrLeaseExpired)
+	}
 	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, blocker_reason = ?, updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusBlocked, reason, taskID, projectID, model.TaskStatusInProgress)
+		`UPDATE tasks SET status = 'blocked', blocker_reason = ?, assigned_session_id = NULL,
+		     assigned_worker_id = NULL, assigned_at = NULL, active_lease_id = NULL,
+		     lease_expires_at = NULL, version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = 'executing' AND version = ? AND active_lease_id = ?`,
+		reason, taskID, projectID, task.Version, *task.ActiveLeaseID)
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ReportBlocker: update: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ReportBlocker: rows affected: %w", err)
-	}
-	if affected == 0 {
-		_ = tx.Rollback()
+	if affected, _ := result.RowsAffected(); affected != 1 {
 		return fmt.Errorf("ReportBlocker: %w", store.ErrConcurrentConflict)
 	}
-
+	result, err = tx.ExecContext(ctx,
+		`UPDATE task_leases SET status = 'released', version = version + 1, updated_at = datetime('now')
+		 WHERE project_id = ? AND task_id = ? AND id = ? AND session_id = ? AND worker_id = ?
+		   AND status = 'active' AND epoch = ? AND version = ?`,
+		projectID, taskID, *task.ActiveLeaseID, sessionKey, *task.AssignedWorkerID,
+		task.LeaseEpoch, leaseVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("ReportBlocker: release lease: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return store.ErrConcurrentConflict
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "lease", *task.ActiveLeaseID,
+		model.LeaseStatusActive, model.LeaseStatusReleased, leaseVersion, leaseVersion+1,
+		sessionID, "execution blocked and authority released", *task.ActiveLeaseID); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx,
+		`UPDATE agent_workers SET current_task_id = NULL, status = 'idle', version = version + 1,
+		     last_active = datetime('now')
+		 WHERE project_id = ? AND session_id = ? AND id = ? AND current_task_id = ?
+		   AND status = 'busy' AND version = ?`,
+		projectID, sessionKey, *task.AssignedWorkerID, taskID, workerVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("ReportBlocker: release worker: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("ReportBlocker: worker changed: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "worker", sessionKey+"/"+*task.AssignedWorkerID,
+		model.WorkerStatusBusy, model.WorkerStatusIdle, workerVersion, workerVersion+1,
+		sessionID, "execution blocked and worker released", *task.ActiveLeaseID); err != nil {
+		return err
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+		model.TaskStatusExecuting, model.TaskStatusBlocked, task.Version, task.Version+1,
+		sessionID, reason, *task.ActiveLeaseID); err != nil {
+		return err
+	}
 	detail := fmt.Sprintf(`{"reason":%q}`, reason)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, sessionID, taskID, model.ActionBlocked, detail); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ReportBlocker: log activity: %w", err)
 	}
-
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(session_id, bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, ?, 'task.block', 'ALLOWED', ?, datetime('now'))`,
+		sessionID, projectID, projectID, taskID, detail); err != nil {
+		return fmt.Errorf("ReportBlocker: audit: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("ReportBlocker: commit: %w", err)
 	}
@@ -430,8 +619,8 @@ func (s *TaskService) ReportBlocker(ctx context.Context, projectID, taskID, sess
 }
 
 // ResolveBlocker transitions a blocked task back to work.
-// If reassign is true, the task goes to in_progress keeping the current session/worker.
-// If reassign is false, the task goes back to pending with session/worker cleared.
+// A blocked task always returns to queued. Reusing an old execution assignment
+// would bypass a fresh lease, so reassign=true is rejected.
 func (s *TaskService) ResolveBlocker(ctx context.Context, projectID, taskID string, reassign bool, resolution string) error {
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
@@ -441,58 +630,44 @@ func (s *TaskService) ResolveBlocker(ctx context.Context, projectID, taskID stri
 	if task.Status != model.TaskStatusBlocked {
 		return fmt.Errorf("ResolveBlocker: %w: task must be blocked, got %q", store.ErrTaskStateInvalid, task.Status)
 	}
-
-	var newStatus string
-	if reassign {
-		newStatus = model.TaskStatusInProgress
-	} else {
-		newStatus = model.TaskStatusPending
+	if task.ActiveLeaseID != nil {
+		return fmt.Errorf("ResolveBlocker: blocked task still has active lease: %w", store.ErrRecoveryIntegrity)
 	}
+
+	if reassign {
+		return fmt.Errorf("ResolveBlocker: reassign requires a fresh lease: %w", store.ErrInvalidParameter)
+	}
+	newStatus := model.TaskStatusQueued
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("ResolveBlocker: begin tx: %w", err)
 	}
 
-	if reassign {
-		// Keep assigned_session_id and assigned_worker_id, just update status.
-		result, err := tx.ExecContext(ctx,
-			`UPDATE tasks SET status = ?, blocker_reason = NULL, updated_at = datetime('now')
-			 WHERE id = ? AND project_id = ? AND status = ?`,
-			newStatus, taskID, projectID, model.TaskStatusBlocked)
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: update (reassign): %w", err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: rows affected: %w", err)
-		}
-		if affected == 0 {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: %w", store.ErrConcurrentConflict)
-		}
-	} else {
-		// Clear session/worker assignment, go back to pending.
-		result, err := tx.ExecContext(ctx,
-			`UPDATE tasks SET status = ?, assigned_session_id = NULL, assigned_worker_id = NULL,
-			     assigned_at = NULL, blocker_reason = NULL, updated_at = datetime('now')
-			 WHERE id = ? AND project_id = ? AND status = ?`,
-			newStatus, taskID, projectID, model.TaskStatusBlocked)
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: update (clear): %w", err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: rows affected: %w", err)
-		}
-		if affected == 0 {
-			_ = tx.Rollback()
-			return fmt.Errorf("ResolveBlocker: %w", store.ErrConcurrentConflict)
-		}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.ensureTaskWorktreeRequeueableTx(ctx, tx, projectID, task); err != nil {
+		return fmt.Errorf("ResolveBlocker: workspace is not requeueable: %w", err)
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET status = ?, assigned_session_id = NULL, assigned_worker_id = NULL,
+		     assigned_at = NULL, blocker_reason = NULL, version = version + 1,
+		     updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = ? AND version = ? AND active_lease_id IS NULL`,
+		newStatus, taskID, projectID, model.TaskStatusBlocked, task.Version)
+	if err != nil {
+		return fmt.Errorf("ResolveBlocker: update: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("ResolveBlocker: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+		model.TaskStatusBlocked, model.TaskStatusQueued, task.Version, task.Version+1,
+		"coordinator", stateHistoryReason(resolution, "blocker resolved"),
+		fmt.Sprintf("task.resolve-blocker:%s:v%d", taskID, task.Version)); err != nil {
+		return err
+	}
+	if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+		return fmt.Errorf("ResolveBlocker: queue version: %w", err)
 	}
 
 	detail := fmt.Sprintf(`{"reassign":%v,"resolution":%q,"previous_blocker_reason":%q}`, reassign, resolution, ptrStr(task.BlockerReason))
@@ -500,17 +675,16 @@ func (s *TaskService) ResolveBlocker(ctx context.Context, projectID, taskID stri
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, task.AssignedSessionID, taskID, model.ActionUnblocked, detail); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ResolveBlocker: log activity: %w", err)
 	}
-
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, 'task.resolve_blocker', 'ALLOWED', ?, datetime('now'))`,
+		projectID, projectID, taskID, detail); err != nil {
+		return fmt.Errorf("ResolveBlocker: audit: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("ResolveBlocker: commit: %w", err)
-	}
-
-	// If not reassigning, release worker and worktree resources.
-	if !reassign {
-		s.releaseResources(ctx, projectID, task)
 	}
 
 	safeEmit(s.eventEmitter, "task.unblocked", projectID, map[string]string{"task_id": taskID})
@@ -519,327 +693,171 @@ func (s *TaskService) ResolveBlocker(ctx context.Context, projectID, taskID stri
 }
 
 // ---------------------------------------------------------------------------
-// Atomic claim — get_next_task
-// ---------------------------------------------------------------------------
-
-// GetNextTask is the atomic claim method with retry logic.
-// It finds the next available pending task for the given role and atomically
-// claims it using serializable transaction isolation. Retries up to maxClaimRetry
-// times on concurrent conflict.
-func (s *TaskService) GetNextTask(ctx context.Context, projectID, sessionID, role, workerID string) (*model.Task, error) {
-	return s.getNextTaskWithRetry(ctx, projectID, sessionID, role, workerID, 0)
-}
-
-func (s *TaskService) getNextTaskWithRetry(ctx context.Context, projectID, sessionID, role, workerID string, attempt int) (*model.Task, error) {
-	if attempt >= maxClaimRetry {
-		return nil, fmt.Errorf("GetNextTask: %w", store.ErrConcurrentConflict)
-	}
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return nil, fmt.Errorf("GetNextTask: begin tx: %w", err)
-	}
-
-	// 1. Find next available pending task with dynamic dependency check.
-	var taskID string
-	err = tx.QueryRowContext(ctx, `
-		SELECT id FROM tasks
-		WHERE project_id = ?
-		  AND role = ?
-		  AND status = 'pending'
-		  AND NOT EXISTS (
-		      SELECT 1 FROM json_each(tasks.dependencies) AS dep
-		      LEFT JOIN tasks AS dep_task
-		          ON dep_task.project_id = ?
-		          AND dep_task.id = json_extract(dep.value, '$.task_id')
-		      WHERE dep_task.id IS NULL
-		         OR (
-		             COALESCE(json_extract(dep.value, '$.require_state'), 'done') = 'submitted'
-		         AND dep_task.status NOT IN ('submitted','verifying','ready_to_merge','done','cancelled')
-		         )
-		         OR (
-		             COALESCE(json_extract(dep.value, '$.require_state'), 'done') != 'submitted'
-		         AND dep_task.status NOT IN ('done','cancelled')
-		         )
-		  )
-		ORDER BY
-		  CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
-		  created_at ASC
-		LIMIT 1`, projectID, role, projectID).Scan(&taskID)
-
-	if err != nil {
-		_ = tx.Rollback()
-		if err == sql.ErrNoRows {
-			return nil, store.ErrNoAvailableTask
-		}
-		return nil, fmt.Errorf("GetNextTask: query next task: %w", err)
-	}
-
-	// 2. Atomic UPDATE: only succeeds if status is still 'pending'.
-	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = 'in_progress',
-		     assigned_session_id = ?, assigned_worker_id = ?,
-		     assigned_at = datetime('now'), updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = 'pending'`,
-		sessionID, workerID, taskID, projectID)
-	if err != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("GetNextTask: update task: %w", err)
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("GetNextTask: rows affected: %w", err)
-	}
-	if affected == 0 {
-		_ = tx.Rollback()
-		// Another worker claimed this task; retry.
-		return s.getNextTaskWithRetry(ctx, projectID, sessionID, role, workerID, attempt+1)
-	}
-
-	// Log activity inside the transaction.
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
-		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-		projectID, sessionID, taskID, model.ActionClaimed,
-		fmt.Sprintf(`{"worker_id":%q,"role":%q}`, workerID, role)); err != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("GetNextTask: log activity: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("GetNextTask: commit: %w", err)
-	}
-
-	// Post-transaction: update worker and create worktree.
-	// These are outside the transaction; failures here are logged but not fatal
-	// to the claim itself (compensation would be complex).
-
-	// Implicit worker registration: if worker doesn't exist, auto-create it.
-	existingWorker, wErr := s.workerStore.GetByID(ctx, projectID, sessionID, workerID)
-	if wErr != nil {
-		// Worker not found — create it implicitly.
-		newWorker := &model.AgentWorker{
-			ID:             workerID,
-			SessionID:      sessionID,
-			ProjectID:      projectID,
-			CurrentTaskID:  nil,
-			Status:         "idle",
-			TasksCompleted: 0,
-			LastActive:     time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		}
-		if createErr := s.workerStore.Create(ctx, projectID, sessionID, newWorker); createErr != nil {
-			slog.Error("GetNextTask: failed to implicitly register worker", "worker_id", workerID, "error", createErr)
-		}
-	}
-	_ = existingWorker
-
-	if err := s.workerStore.UpdateCurrentTask(ctx, projectID, sessionID, workerID, taskID); err != nil {
-		slog.Error("GetNextTask: failed to update worker current_task", "worker_id", workerID, "task_id", taskID, "error", err)
-	}
-
-	// Create worktree for the task (best-effort, does not block claim).
-	s.createWorktreeForTask(ctx, projectID, taskID)
-
-	safeEmit(s.eventEmitter, "task.claimed", projectID, map[string]string{"task_id": taskID})
-
-	// Return the full task.
-	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("GetNextTask: get claimed task: %w", err)
-	}
-	return task, nil
-}
-
-// ---------------------------------------------------------------------------
 // Submit task result
 // ---------------------------------------------------------------------------
 
-// SubmitTaskResult handles an agent submitting work for a task.
-// Validates ownership and status, then updates to 'submitted' and upserts the
-// result. The full zero-trust validation (git diff, test execution, boundary
-// checks) will be added in validation_service.go.
-func (s *TaskService) SubmitTaskResult(ctx context.Context, projectID, taskID, sessionID, workerID string, result *model.TaskResult) error {
-	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
-	if err != nil {
-		return fmt.Errorf("SubmitTaskResult: %w", err)
-	}
-
-	// Validate status.
-	if task.Status != model.TaskStatusInProgress {
-		return fmt.Errorf("SubmitTaskResult: %w: task must be in_progress, got %q", store.ErrTaskStateInvalid, task.Status)
-	}
-
-	// Validate ownership: assigned_session_id must match.
-	if task.AssignedSessionID == nil || *task.AssignedSessionID != sessionID {
-		return fmt.Errorf("SubmitTaskResult: %w", store.ErrTaskNotOwned)
-	}
-
-	// Transactional: update status + upsert result + log activity.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return fmt.Errorf("SubmitTaskResult: begin tx: %w", err)
-	}
-
-	// Update task status to submitted.
-	res, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusSubmitted, taskID, projectID, model.TaskStatusInProgress)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("SubmitTaskResult: update status: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("SubmitTaskResult: rows affected: %w", err)
-	}
-	if affected == 0 {
-		_ = tx.Rollback()
-		return fmt.Errorf("SubmitTaskResult: %w", store.ErrConcurrentConflict)
-	}
-
-	// Upsert task result (server-populated fields come from validation later).
-	result.TaskID = taskID
-	result.ProjectID = projectID
-	if result.SubmittedAt == "" {
-		result.SubmittedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT OR REPLACE INTO task_results (
-			id, task_id, project_id, base_commit, changed_files,
-			test_command, test_output, coverage, summary,
-			submitted_at, validated_at, validation_errors, verifier_notes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		result.ID, result.TaskID, result.ProjectID, result.BaseCommit, result.ChangedFiles,
-		result.TestCommand, result.TestOutput, result.Coverage, result.Summary,
-		result.SubmittedAt, result.ValidatedAt, result.ValidationErrors, result.VerifierNotes); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("SubmitTaskResult: upsert result: %w", err)
-	}
-
-	// Log activity.
-	detail := fmt.Sprintf(`{"worker_id":%q,"base_commit":%q}`, workerID, result.BaseCommit)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
-		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-		projectID, sessionID, taskID, model.ActionSubmitted, detail); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("SubmitTaskResult: log activity: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("SubmitTaskResult: commit: %w", err)
-	}
-
-	return nil
+// SubmitTaskResult is retained only for source compatibility with the v2
+// in-process API. It is deliberately disabled because accepting caller-supplied
+// results would create a validating task without immutable Git/policy/profile
+// Evidence. All transports use ValidationService.SubmitAndValidate instead.
+func (s *TaskService) SubmitTaskResult(ctx context.Context, projectID, taskID, sessionID, _ string, _ *model.TaskResult) error {
+	s.logAudit(ctx, projectID, "task.submit_result", "DENIED", &sessionID, &taskID)
+	return fmt.Errorf("SubmitTaskResult: caller-supplied result path is disabled; use zero-trust validation: %w", store.ErrOperationDisabled)
 }
 
 // ---------------------------------------------------------------------------
 // Verification
 // ---------------------------------------------------------------------------
 
-// GetVerificationTask atomically claims a submitted task for verification.
-// Does not modify assigned_session_id/assigned_worker_id — those remain
-// pointing to the original executor.
+// GetVerificationTask atomically leases a validating task to an independent
+// verifier. The original execution assignment remains attribution only; the
+// active lease is the sole authority for submitting the verdict.
 func (s *TaskService) GetVerificationTask(ctx context.Context, projectID, verifierSessionID, verifierWorkerID string) (*model.Task, error) {
-	return s.getVerificationTaskWithRetry(ctx, projectID, verifierSessionID, verifierWorkerID, 0)
-}
-
-func (s *TaskService) getVerificationTaskWithRetry(ctx context.Context, projectID, verifierSessionID, verifierWorkerID string, attempt int) (*model.Task, error) {
-	if attempt >= maxClaimRetry {
-		return nil, fmt.Errorf("GetVerificationTask: %w", store.ErrConcurrentConflict)
-	}
-
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return nil, fmt.Errorf("GetVerificationTask: begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	// 1. Find next submitted task (not filtered by role, ordered by created_at).
+	var verifierKey, role, sessionStatus string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id, role, status FROM agent_sessions
+		 WHERE project_id = ? AND COALESCE(external_id, id) = ?`,
+		projectID, verifierSessionID,
+	).Scan(&verifierKey, &role, &sessionStatus); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, store.ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("GetVerificationTask: verifier session: %w", err)
+	}
+	if role != model.RoleVerifier || sessionStatus != model.SessionStatusOnline {
+		return nil, fmt.Errorf("GetVerificationTask: verifier identity/status: %w", store.ErrTaskNotOwned)
+	}
+
+	var workerVersion int64
+	var workerStatus string
+	var currentTask sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status, current_task_id, version FROM agent_workers
+		 WHERE project_id = ? AND session_id = ? AND id = ?`,
+		projectID, verifierKey, verifierWorkerID,
+	).Scan(&workerStatus, &currentTask, &workerVersion); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, store.ErrWorkerNotFound
+		}
+		return nil, fmt.Errorf("GetVerificationTask: verifier worker: %w", err)
+	}
+	if workerStatus != model.WorkerStatusIdle || currentTask.Valid {
+		return nil, fmt.Errorf("GetVerificationTask: verifier worker is not idle: %w", store.ErrConcurrentConflict)
+	}
+
 	var taskID string
-	err = tx.QueryRowContext(ctx, `
-		SELECT id FROM tasks
-		WHERE project_id = ?
-		  AND status = 'submitted'
+	var taskVersion, priorEpoch int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, version, lease_epoch FROM tasks
+		WHERE project_id = ? AND status = 'validating'
+		  AND verified_by IS NULL AND active_lease_id IS NULL
+		  AND (assigned_session_id IS NULL OR assigned_session_id <> ?)
 		ORDER BY created_at ASC
-		LIMIT 1`, projectID).Scan(&taskID)
-
-	if err != nil {
-		_ = tx.Rollback()
+		LIMIT 1`, projectID, verifierKey,
+	).Scan(&taskID, &taskVersion, &priorEpoch); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, store.ErrNoAvailableTask
 		}
-		return nil, fmt.Errorf("GetVerificationTask: query submitted task: %w", err)
+		return nil, fmt.Errorf("GetVerificationTask: select validating task: %w", err)
 	}
 
-	// 2. Atomic UPDATE: submitted → verifying. Do NOT modify assigned_session_id/assigned_worker_id.
+	leaseID := fmt.Sprintf("verify-%d-%s", time.Now().UTC().UnixNano(), verifierWorkerID)
+	leaseEpoch := priorEpoch + 1
+	expiresAt := time.Now().UTC().Add(taskLeaseDuration).Format("2006-01-02 15:04:05")
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO task_leases
+		 (id, project_id, task_id, session_id, worker_id, epoch, status, version, expires_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'active', 1, ?, datetime('now'), datetime('now'))`,
+		leaseID, projectID, taskID, verifierKey, verifierWorkerID, leaseEpoch, expiresAt,
+	); err != nil {
+		return nil, fmt.Errorf("GetVerificationTask: create verifier lease: %w", err)
+	}
+
 	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = 'verifying',
-		     verified_by = ?, verified_at = datetime('now'),
-		     updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = 'submitted'`,
-		verifierSessionID, taskID, projectID)
+		`UPDATE tasks SET verified_by = ?, verified_at = NULL, lease_epoch = ?, active_lease_id = ?,
+		     lease_expires_at = ?, version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = 'validating' AND version = ?
+		   AND verified_by IS NULL AND active_lease_id IS NULL`,
+		verifierKey, leaseEpoch, leaseID, expiresAt, taskID, projectID, taskVersion,
+	)
 	if err != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("GetVerificationTask: update to verifying: %w", err)
+		return nil, fmt.Errorf("GetVerificationTask: reserve task: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return nil, store.ErrConcurrentConflict
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+		model.TaskStatusValidating, model.TaskStatusValidating, taskVersion, taskVersion+1,
+		verifierSessionID, "verification lease accepted", leaseID); err != nil {
+		return nil, err
 	}
 
-	affected, err := result.RowsAffected()
+	result, err = tx.ExecContext(ctx,
+		`UPDATE agent_workers SET current_task_id = ?, status = 'busy', version = version + 1,
+		     last_active = datetime('now')
+		 WHERE project_id = ? AND session_id = ? AND id = ? AND status = 'idle'
+		   AND current_task_id IS NULL AND version = ?`,
+		taskID, projectID, verifierKey, verifierWorkerID, workerVersion,
+	)
 	if err != nil {
-		_ = tx.Rollback()
-		return nil, fmt.Errorf("GetVerificationTask: rows affected: %w", err)
+		return nil, fmt.Errorf("GetVerificationTask: reserve verifier worker: %w", err)
 	}
-	if affected == 0 {
-		_ = tx.Rollback()
-		// Another verifier claimed this task; retry.
-		return s.getVerificationTaskWithRetry(ctx, projectID, verifierSessionID, verifierWorkerID, attempt+1)
+	if n, _ := result.RowsAffected(); n != 1 {
+		return nil, store.ErrConcurrentConflict
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "worker", verifierKey+"/"+verifierWorkerID,
+		model.WorkerStatusIdle, model.WorkerStatusBusy, workerVersion, workerVersion+1,
+		verifierSessionID, "verification lease accepted", leaseID); err != nil {
+		return nil, err
 	}
 
-	// Log activity inside transaction.
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, verifierSessionID, taskID, model.ActionVerifying,
-		fmt.Sprintf(`{"verifier_worker_id":%q}`, verifierWorkerID)); err != nil {
-		_ = tx.Rollback()
+		fmt.Sprintf(`{"verifier_worker_id":%q,"lease_id":%q,"epoch":%d}`, verifierWorkerID, leaseID, leaseEpoch)); err != nil {
 		return nil, fmt.Errorf("GetVerificationTask: log activity: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("GetVerificationTask: commit: %w", err)
 	}
-
-	// Update verifier worker's current_task_id outside the transaction.
-	if err := s.workerStore.UpdateCurrentTask(ctx, projectID, verifierSessionID, verifierWorkerID, taskID); err != nil {
-		slog.Error("GetVerificationTask: failed to update verifier worker current_task", "worker_id", verifierWorkerID, "task_id", taskID, "error", err)
-	}
-
-	// Return the full task.
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("GetVerificationTask: get verifying task: %w", err)
+		return nil, fmt.Errorf("GetVerificationTask: get validating task: %w", err)
 	}
-
-	safeEmit(s.eventEmitter, "task.verifying", projectID, map[string]string{"task_id": taskID})
-
+	safeEmit(s.eventEmitter, "task.verifying", projectID, map[string]string{"task_id": taskID, "lease_id": leaseID})
 	return task, nil
 }
 
 // SubmitVerification handles a verifier submitting their verdict on a task.
-// If passed: task moves to ready_to_merge with verified_by/verified_at set.
-// If not passed: task returns to in_progress (rejected is a transient event,
-// immediately goes back to the executor).
+// A failed verdict is terminal for this attempt. Re-queueing requires an
+// explicit recovery operation that creates a fresh execution lease.
 func (s *TaskService) SubmitVerification(ctx context.Context, projectID, verifierSessionID, verifierWorkerID, taskID string, passed bool, notes string) error {
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
 		return fmt.Errorf("SubmitVerification: %w", err)
 	}
 
-	if task.Status != model.TaskStatusVerifying {
-		return fmt.Errorf("SubmitVerification: %w: task must be verifying, got %q", store.ErrTaskStateInvalid, task.Status)
+	if task.Status != model.TaskStatusValidating || task.VerifiedBy == nil || *task.VerifiedBy != verifierSessionID || task.ActiveLeaseID == nil {
+		return fmt.Errorf("SubmitVerification: %w: verifier does not own an active validating lease", store.ErrTaskNotOwned)
+	}
+
+	// A human/agent verdict can never manufacture missing quality evidence. For
+	// a passing verdict, recalculate the sealed workspace snapshot before the
+	// transaction and bind it to the latest immutable passed ValidationRun.
+	var workspaceEvidence *verificationWorkspaceEvidence
+	if passed {
+		workspaceEvidence, err = s.captureVerificationWorkspaceEvidence(ctx, projectID, taskID)
+		if err != nil {
+			return fmt.Errorf("SubmitVerification: passed evidence is missing or stale: %w", errors.Join(store.ErrValidationFailed, err))
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
@@ -847,50 +865,105 @@ func (s *TaskService) SubmitVerification(ctx context.Context, projectID, verifie
 		return fmt.Errorf("SubmitVerification: begin tx: %w", err)
 	}
 
-	var action string
+	defer func() { _ = tx.Rollback() }()
+	var verifierKey string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM agent_sessions WHERE project_id = ? AND COALESCE(external_id, id) = ?`,
+		projectID, verifierSessionID,
+	).Scan(&verifierKey); err != nil {
+		return fmt.Errorf("SubmitVerification: verifier scope: %w", err)
+	}
+	var leaseEpoch, leaseVersion, workerVersion int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT l.epoch, l.version, worker.version FROM task_leases AS l
+		 JOIN agent_sessions AS sess ON sess.project_id = l.project_id AND sess.id = l.session_id
+		 JOIN agent_workers AS worker ON worker.project_id = l.project_id
+		   AND worker.session_id = l.session_id AND worker.id = l.worker_id
+		 WHERE l.id = ? AND l.project_id = ? AND l.task_id = ?
+		   AND l.session_id = ? AND l.worker_id = ? AND l.status = 'active'
+		   AND sess.status = 'online' AND worker.status = 'busy' AND worker.current_task_id = l.task_id
+		   AND julianday(l.expires_at) > julianday('now')`,
+		*task.ActiveLeaseID, projectID, taskID, verifierKey, verifierWorkerID,
+	).Scan(&leaseEpoch, &leaseVersion, &workerVersion); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("SubmitVerification: %w", store.ErrLeaseExpired)
+		}
+		return fmt.Errorf("SubmitVerification: validate lease: %w", err)
+	}
+	if leaseEpoch != task.LeaseEpoch {
+		return fmt.Errorf("SubmitVerification: lease epoch mismatch: %w", store.ErrLeaseVersionMismatch)
+	}
 	if passed {
-		// verifying → ready_to_merge, set verified_by/verified_at.
-		result, err := tx.ExecContext(ctx,
-			`UPDATE tasks SET status = ?, verified_by = ?, verified_at = datetime('now'),
-			     updated_at = datetime('now')
-			 WHERE id = ? AND project_id = ? AND status = ?`,
-			model.TaskStatusReadyToMerge, verifierSessionID,
-			taskID, projectID, model.TaskStatusVerifying)
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: approve update: %w", err)
+		if err := requireLatestPassedValidationEvidence(ctx, tx, projectID, taskID, workspaceEvidence); err != nil {
+			return fmt.Errorf("SubmitVerification: passed evidence is missing or stale: %w", errors.Join(store.ErrValidationFailed, err))
 		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: approve rows affected: %w", err)
+	}
+
+	newStatus, action := model.TaskStatusFailed, model.ActionRejected
+	if passed {
+		newStatus, action = model.TaskStatusReadyForHumanMerge, model.ActionApproved
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET status = ?, verified_at = datetime('now'), active_lease_id = NULL,
+		     lease_expires_at = NULL, version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = 'validating' AND version = ?
+		   AND verified_by = ? AND active_lease_id = ?`,
+		newStatus, taskID, projectID, task.Version, verifierKey, *task.ActiveLeaseID,
+	)
+	if err != nil {
+		return fmt.Errorf("SubmitVerification: update verdict: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("SubmitVerification: %w", store.ErrConcurrentConflict)
+	}
+	result, err = tx.ExecContext(ctx,
+		`UPDATE task_leases SET status = 'completed', version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND task_id = ? AND session_id = ? AND worker_id = ?
+		   AND epoch = ? AND status = 'active' AND version = ?`,
+		*task.ActiveLeaseID, projectID, taskID, verifierKey, verifierWorkerID,
+		task.LeaseEpoch, leaseVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("SubmitVerification: complete lease: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("SubmitVerification: lease changed: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "lease", *task.ActiveLeaseID,
+		model.LeaseStatusActive, model.LeaseStatusCompleted, leaseVersion, leaseVersion+1,
+		verifierSessionID, "verification verdict submitted", *task.ActiveLeaseID); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx,
+		`UPDATE agent_workers SET current_task_id = NULL, status = 'idle', version = version + 1,
+		     tasks_completed = tasks_completed + 1, last_active = datetime('now')
+		 WHERE project_id = ? AND session_id = ? AND id = ? AND current_task_id = ?
+		   AND status = 'busy' AND version = ?`,
+		projectID, verifierKey, verifierWorkerID, taskID, workerVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("SubmitVerification: release verifier worker: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("SubmitVerification: verifier worker changed: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "worker", verifierKey+"/"+verifierWorkerID,
+		model.WorkerStatusBusy, model.WorkerStatusIdle, workerVersion, workerVersion+1,
+		verifierSessionID, "verification verdict submitted", *task.ActiveLeaseID); err != nil {
+		return err
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+		model.TaskStatusValidating, newStatus, task.Version, task.Version+1,
+		verifierSessionID, "verification verdict", *task.ActiveLeaseID); err != nil {
+		return err
+	}
+	if notes != "" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE task_results SET verifier_notes = ? WHERE project_id = ? AND task_id = ?`,
+			notes, projectID, taskID,
+		); err != nil {
+			return fmt.Errorf("SubmitVerification: store notes: %w", err)
 		}
-		if affected == 0 {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: %w", store.ErrTaskStateInvalid)
-		}
-		action = model.ActionApproved
-	} else {
-		// verifying → in_progress (rejected is transient, immediately back to executor).
-		result, err := tx.ExecContext(ctx,
-			`UPDATE tasks SET status = ?, updated_at = datetime('now')
-			 WHERE id = ? AND project_id = ? AND status = ?`,
-			model.TaskStatusInProgress,
-			taskID, projectID, model.TaskStatusVerifying)
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: reject update: %w", err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: reject rows affected: %w", err)
-		}
-		if affected == 0 {
-			_ = tx.Rollback()
-			return fmt.Errorf("SubmitVerification: %w", store.ErrTaskStateInvalid)
-		}
-		action = model.ActionRejected
 	}
 
 	// Log activity.
@@ -899,17 +972,11 @@ func (s *TaskService) SubmitVerification(ctx context.Context, projectID, verifie
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, verifierSessionID, taskID, action, detail); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("SubmitVerification: log activity: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("SubmitVerification: commit: %w", err)
-	}
-
-	// Clear verifier worker's current_task_id outside the transaction.
-	if err := s.workerStore.UpdateCurrentTask(ctx, projectID, verifierSessionID, verifierWorkerID, ""); err != nil {
-		slog.Error("SubmitVerification: failed to clear verifier worker current_task", "worker_id", verifierWorkerID, "error", err)
 	}
 
 	if s.OnFeatureStatusChange != nil {
@@ -925,22 +992,128 @@ func (s *TaskService) SubmitVerification(ctx context.Context, projectID, verifie
 	return nil
 }
 
+type verificationWorkspaceEvidence struct {
+	WorktreeID      int64
+	WorktreeVersion int64
+	BaseCommit      string
+	SourceCommit    string
+	ChangedFiles    string
+	WorkspaceDigest string
+}
+
+func (s *TaskService) captureVerificationWorkspaceEvidence(ctx context.Context, projectID, taskID string) (*verificationWorkspaceEvidence, error) {
+	project, err := s.projectStore.GetByID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	worktree, err := s.worktreeStore.GetByTaskID(ctx, projectID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if worktree.Status != model.WorktreeStatusSealed {
+		return nil, fmt.Errorf("worktree status is %q, expected %q", worktree.Status, model.WorktreeStatusSealed)
+	}
+	canonicalWorktree, sourceCommit, err := verifyWorktreeRepository(ctx, project.WorkspacePath, worktree.WorktreePath, worktree.BaseCommit)
+	if err != nil {
+		return nil, err
+	}
+	changedFiles, err := getChangedFiles(ctx, canonicalWorktree, worktree.BaseCommit)
+	if err != nil {
+		return nil, err
+	}
+	changedJSON, err := json.Marshal(changedFiles)
+	if err != nil {
+		return nil, err
+	}
+	workspaceDigest, err := digestWorkspaceSnapshot(canonicalWorktree, changedFiles)
+	if err != nil {
+		return nil, err
+	}
+	return &verificationWorkspaceEvidence{
+		WorktreeID:      worktree.ID,
+		WorktreeVersion: worktree.Version,
+		BaseCommit:      worktree.BaseCommit,
+		SourceCommit:    sourceCommit,
+		ChangedFiles:    string(changedJSON),
+		WorkspaceDigest: workspaceDigest,
+	}, nil
+}
+
+func requireLatestPassedValidationEvidence(ctx context.Context, tx *sql.Tx, projectID, taskID string, workspace *verificationWorkspaceEvidence) error {
+	if workspace == nil {
+		return fmt.Errorf("workspace evidence is absent")
+	}
+	var (
+		baseCommit, sourceCommit, changedFiles             string
+		profileRef, policyVersion, policyDigest            string
+		evidenceDigest, workspaceDigest, result, errorCode string
+		authority, producer                                string
+		boundaryOK, testOK, coverageOK, outputTruncated    int
+		worktreeStatus                                     string
+		worktreeVersion                                    int64
+	)
+	err := tx.QueryRowContext(ctx, `
+		SELECT vr.base_commit, vr.source_commit, vr.changed_files,
+		       vr.profile_ref, vr.policy_version, vr.policy_digest,
+		       vr.evidence_digest, vr.workspace_digest, vr.authority, vr.producer, vr.result,
+		       COALESCE(vr.error_code, ''), vr.boundary_ok, vr.test_ok,
+		       vr.coverage_ok, vr.output_truncated,
+		       wt.status, wt.version
+		FROM validation_runs AS vr
+		JOIN worktrees AS wt
+		  ON wt.project_id = vr.project_id AND wt.task_id = vr.task_id AND wt.id = ?
+		WHERE vr.id = (
+		  SELECT latest.id FROM validation_runs AS latest
+		  WHERE latest.project_id = ? AND latest.task_id = ?
+		  ORDER BY latest.attempt DESC, latest.id DESC LIMIT 1
+		) AND vr.project_id = ? AND vr.task_id = ?`,
+		workspace.WorktreeID, projectID, taskID, projectID, taskID,
+	).Scan(
+		&baseCommit, &sourceCommit, &changedFiles,
+		&profileRef, &policyVersion, &policyDigest,
+		&evidenceDigest, &workspaceDigest, &authority, &producer, &result, &errorCode,
+		&boundaryOK, &testOK, &coverageOK, &outputTruncated,
+		&worktreeStatus, &worktreeVersion,
+	)
+	if err != nil {
+		return err
+	}
+	if result != "passed" || errorCode != "" || boundaryOK != 1 || testOK != 1 || coverageOK != 1 || outputTruncated != 0 {
+		return fmt.Errorf("latest validation run is not a complete pass")
+	}
+	if authority != model.EvidenceAuthorityMergeGate || strings.TrimSpace(producer) == "" ||
+		producer == model.EvidenceProducerMaestroLocal {
+		return fmt.Errorf("latest validation evidence lacks merge authority: authority=%q producer=%q", authority, producer)
+	}
+	if !gitSHARe.MatchString(baseCommit) || !gitSHARe.MatchString(sourceCommit) ||
+		profileRef == "" || policyVersion == "" || !imageDigestRe.MatchString(policyDigest) ||
+		!imageDigestRe.MatchString(evidenceDigest) || !imageDigestRe.MatchString(workspaceDigest) {
+		return fmt.Errorf("latest validation evidence identity is incomplete or malformed")
+	}
+	if baseCommit != workspace.BaseCommit || sourceCommit != workspace.SourceCommit ||
+		changedFiles != workspace.ChangedFiles || workspaceDigest != workspace.WorkspaceDigest ||
+		worktreeStatus != model.WorktreeStatusSealed || worktreeVersion != workspace.WorktreeVersion {
+		return fmt.Errorf("sealed workspace no longer matches validation evidence")
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Merge conflict resolution
 // ---------------------------------------------------------------------------
 
-// ResolveMergeConflict handles a merge_conflicted task with one of three actions:
-//   - "reopen": keep session/worker/worktree, go back to in_progress
-//   - "cancel": cancel the task and release resources
-//   - "followup": keep the current task, create a new task for conflict resolution
+// ResolveMergeConflict handles a needs_human task with one of two deterministic
+// M0 actions: reopen it for a fresh Lease or cancel it. Creating follow-up work
+// is deliberately disabled until the v3 mutation contract can require a parent
+// version, an idempotency key, a unique relation, and an authenticated actor.
 func (s *TaskService) ResolveMergeConflict(ctx context.Context, projectID, taskID string, action string, reason string) error {
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
 		return fmt.Errorf("ResolveMergeConflict: %w", err)
 	}
 
-	if task.Status != model.TaskStatusMergeConflicted {
-		return fmt.Errorf("ResolveMergeConflict: %w: task must be merge_conflicted, got %q", store.ErrTaskStateInvalid, task.Status)
+	if task.Status != model.TaskStatusNeedsHuman {
+		return fmt.Errorf("ResolveMergeConflict: %w: task must be needs_human, got %q", store.ErrTaskStateInvalid, task.Status)
 	}
 
 	switch action {
@@ -949,9 +1122,10 @@ func (s *TaskService) ResolveMergeConflict(ctx context.Context, projectID, taskI
 	case "cancel":
 		return s.resolveMergeConflictCancel(ctx, projectID, task, reason)
 	case "followup":
-		return s.resolveMergeConflictFollowup(ctx, projectID, task, reason)
+		s.logAudit(ctx, projectID, "task.followup", "DENIED", nil, &taskID)
+		return fmt.Errorf("ResolveMergeConflict: followup requires the v3 idempotent workflow: %w", store.ErrOperationDisabled)
 	default:
-		return fmt.Errorf("ResolveMergeConflict: %w: unknown action %q, must be reopen/cancel/followup", store.ErrInvalidParameter, action)
+		return fmt.Errorf("ResolveMergeConflict: %w: unknown action %q, must be reopen/cancel", store.ErrInvalidParameter, action)
 	}
 }
 
@@ -961,22 +1135,37 @@ func (s *TaskService) resolveMergeConflictReopen(ctx context.Context, projectID 
 		return fmt.Errorf("ResolveMergeConflict: reopen: begin tx: %w", err)
 	}
 
+	defer func() { _ = tx.Rollback() }()
+	if task.ActiveLeaseID != nil {
+		return fmt.Errorf("ResolveMergeConflict: needs_human task has active lease: %w", store.ErrRecoveryIntegrity)
+	}
+	if err := s.ensureTaskWorktreeRequeueableTx(ctx, tx, projectID, task); err != nil {
+		return fmt.Errorf("ResolveMergeConflict: workspace is not requeueable: %w", err)
+	}
 	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusInProgress, task.ID, projectID, model.TaskStatusMergeConflicted)
+		`UPDATE tasks SET status = 'queued', assigned_session_id = NULL, assigned_worker_id = NULL,
+		     assigned_at = NULL, active_lease_id = NULL, lease_expires_at = NULL,
+		     version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = 'needs_human' AND version = ?`,
+		task.ID, projectID, task.Version)
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ResolveMergeConflict: reopen update: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ResolveMergeConflict: reopen rows affected: %w", err)
 	}
 	if affected == 0 {
-		_ = tx.Rollback()
 		return fmt.Errorf("ResolveMergeConflict: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", task.ID,
+		model.TaskStatusNeedsHuman, model.TaskStatusQueued, task.Version, task.Version+1,
+		"coordinator", stateHistoryReason(reason, "recovery approved for a fresh lease"),
+		fmt.Sprintf("task.reopen:%s:v%d", task.ID, task.Version)); err != nil {
+		return err
+	}
+	if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+		return fmt.Errorf("ResolveMergeConflict: queue version: %w", err)
 	}
 
 	detail := fmt.Sprintf(`{"resolution":"reopen","reason":%q}`, reason)
@@ -984,8 +1173,13 @@ func (s *TaskService) resolveMergeConflictReopen(ctx context.Context, projectID 
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, task.AssignedSessionID, task.ID, model.ActionReopened, detail); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ResolveMergeConflict: reopen log activity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, 'task.recover', 'ALLOWED', ?, datetime('now'))`,
+		projectID, projectID, task.ID, detail); err != nil {
+		return fmt.Errorf("ResolveMergeConflict: reopen audit: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -998,309 +1192,167 @@ func (s *TaskService) resolveMergeConflictReopen(ctx context.Context, projectID 
 }
 
 func (s *TaskService) resolveMergeConflictCancel(ctx context.Context, projectID string, task *model.Task, reason string) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return fmt.Errorf("ResolveMergeConflict: cancel: begin tx: %w", err)
-	}
-
-	result, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET status = ?, cancel_reason = 'merge conflict cancelled',
-		     updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusCancelled, task.ID, projectID, model.TaskStatusMergeConflicted)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: cancel update: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: cancel rows affected: %w", err)
-	}
-	if affected == 0 {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: %w", store.ErrConcurrentConflict)
-	}
-
-	detail := fmt.Sprintf(`{"resolution":"cancel","reason":%q}`, reason)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
-		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-		projectID, task.AssignedSessionID, task.ID, model.ActionCancelled, detail); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: cancel log activity: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ResolveMergeConflict: cancel commit: %w", err)
-	}
-
-	// Release resources.
-	s.releaseResources(ctx, projectID, task)
-
-	safeEmit(s.eventEmitter, "task.cancelled", projectID, map[string]string{"task_id": task.ID})
-
-	s.logAudit(ctx, projectID, "task.cancel", "ALLOWED", nil, &task.ID)
-	return nil
+	return s.CancelTask(ctx, projectID, task.ID, "coordinator", reason)
 }
 
-func (s *TaskService) resolveMergeConflictFollowup(ctx context.Context, projectID string, task *model.Task, reason string) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return fmt.Errorf("ResolveMergeConflict: followup: begin tx: %w", err)
-	}
-
-	// Create a new task for conflict resolution with parent_task_id pointing to
-	// the current task and relation_type='conflict_resolution'.
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	relationType := model.RelationConflictResolution
-	newTask := &model.Task{
-		ID:                 generateFollowupTaskID(task.ID),
-		ProjectID:          projectID,
-		FeatureID:          task.FeatureID,
-		Title:              fmt.Sprintf("Conflict resolution for %s", task.Title),
-		Description:        fmt.Sprintf("Resolve merge conflict for task %s: %s", task.ID, task.Title),
-		Role:               task.Role,
-		Status:             model.TaskStatusPending,
-		AllowedDirectories: task.AllowedDirectories,
-		ForbiddenPatterns:  task.ForbiddenPatterns,
-		RequiredAPIs:       task.RequiredAPIs,
-		Dependencies:       task.Dependencies,
-		ParentTaskID:       &task.ID,
-		RelationType:       &relationType,
-		TestRequirements:   task.TestRequirements,
-		Priority:           model.PriorityHigh,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO tasks (
-			id, project_id, feature_id, title, description, role, status,
-			allowed_directories, forbidden_patterns, required_apis, dependencies,
-			parent_task_id, relation_type, test_requirements,
-			assigned_session_id, assigned_worker_id, assigned_at,
-			blocker_reason, cancel_reason, merge_commit,
-			verified_by, verified_at,
-			priority, summary, created_at, updated_at
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
-			?, ?, ?,
-			?, ?, ?,
-			?, ?, ?,
-			?, ?,
-			?, ?, ?, ?
-		)`,
-		newTask.ID, projectID, newTask.FeatureID, newTask.Title, newTask.Description, newTask.Role, newTask.Status,
-		newTask.AllowedDirectories, newTask.ForbiddenPatterns, newTask.RequiredAPIs, newTask.Dependencies,
-		newTask.ParentTaskID, newTask.RelationType, newTask.TestRequirements,
-		newTask.AssignedSessionID, newTask.AssignedWorkerID, newTask.AssignedAt,
-		newTask.BlockerReason, newTask.CancelReason, newTask.MergeCommit,
-		newTask.VerifiedBy, newTask.VerifiedAt,
-		newTask.Priority, newTask.Summary, newTask.CreatedAt, newTask.UpdatedAt,
-	); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: followup create task: %w", err)
-	}
-
-	// Log activity on the original task.
-	detail := fmt.Sprintf(`{"resolution":"followup","new_task_id":%q,"reason":%q}`, newTask.ID, reason)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
-		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-		projectID, task.AssignedSessionID, task.ID, model.ActionFollowupCreated, detail); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("ResolveMergeConflict: followup log activity: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ResolveMergeConflict: followup commit: %w", err)
-	}
-
-	safeEmit(s.eventEmitter, "task.followup_created", projectID, map[string]string{"task_id": task.ID})
-
-	// Trigger Feature status auto-transition for the new task.
-	if s.OnFeatureStatusChange != nil {
-		s.OnFeatureStatusChange(ctx, projectID, task.FeatureID)
-	}
-
-	return nil
-}
-
-// MergeTask handles the merge of a ready_to_merge task.
-// Atomicity guarantee: DB state is committed first, then the git merge is executed.
-// If the git merge fails after DB commit, the task remains in ready_to_merge (rollback).
-// If the git merge has conflicts, status is updated to merge_conflicted.
-// If the git merge succeeds, the merge commit hash is recorded.
+// MergeTask is retained only as a compatibility symbol for old in-process
+// callers. M0 is fail-closed: Maestro cannot locally merge or infer completion.
 func (s *TaskService) MergeTask(ctx context.Context, projectID, taskID, sessionID string) error {
-	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
-	if err != nil {
-		return fmt.Errorf("MergeTask: %w", err)
-	}
-
-	if task.Status != model.TaskStatusReadyToMerge {
-		return fmt.Errorf("MergeTask: %w: task must be ready_to_merge, got %q", store.ErrTaskStateInvalid, task.Status)
-	}
-
-	// Load project to get the workspace path for the git merge.
-	project, projErr := s.projectStore.GetByID(ctx, projectID)
-	if projErr != nil {
-		return fmt.Errorf("MergeTask: load project: %w", projErr)
-	}
-
-	// Phase 1: DB transaction — optimistic lock + activity log.
-	// We keep the task at ready_to_merge so that if Phase 2 (git merge) fails,
-	// the task is still eligible for retry.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return fmt.Errorf("MergeTask: begin tx: %w", err)
-	}
-
-	// Log the merge attempt in the activity log within the transaction.
-	detail := fmt.Sprintf("session_id:%q", sessionID)
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
-		projectID, sessionID, taskID, "task.merge_attempt", detail); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("MergeTask: log activity: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("MergeTask: commit: %w", err)
-	}
-
-	// Phase 2: Execute the actual git merge AFTER the DB lock is acquired.
-	// If the workspace directory does not exist (e.g., E2E testing), transition directly to done.
-	var mergeCommit string
-	if _, statErr := os.Stat(project.WorkspacePath); statErr == nil {
-		mc, cf, mergeErr := mergeWorktree(ctx, project.WorkspacePath, taskID)
-		if mergeErr != nil {
-			slog.Error("MergeTask: git merge failed", "task_id", taskID, "error", mergeErr)
-			return fmt.Errorf("MergeTask: git merge failed: %w", mergeErr)
-		}
-		if cf {
-			// Merge conflict — update status to merge_conflicted.
-			_ = s.taskStore.UpdateStatus(ctx, projectID, taskID, model.TaskStatusMergeConflicted)
-			if wt, err := s.worktreeStore.GetByTaskID(ctx, projectID, taskID); err == nil {
-				_ = s.worktreeStore.UpdateStatus(ctx, projectID, wt.ID, model.WorktreeStatusAbandoned)
-			}
-			safeEmit(s.eventEmitter, "task.merge_conflicted", projectID, map[string]string{"task_id": taskID})
-			s.logAudit(ctx, projectID, "task.merge_conflict", "ALLOWED", nil, &taskID)
-			return nil
-		}
-		mergeCommit = mc
-	}
-
-	// Phase 3: Update task to done with merge commit.
-	finalStatus := model.TaskStatusDone
-	if err := s.taskStore.UpdateStatus(ctx, projectID, taskID, finalStatus); err != nil {
-		return fmt.Errorf("MergeTask: update status to done: %w", err)
-	}
-	if mergeCommit != "" {
-		_, _ = s.db.ExecContext(ctx,
-			"UPDATE tasks SET merge_commit = ?, updated_at = datetime('now') WHERE id = ? AND project_id = ?",
-			mergeCommit, taskID, projectID)
-	}
-
-	// Release worktree (mark as merged).
-	if wt, err := s.worktreeStore.GetByTaskID(ctx, projectID, taskID); err == nil {
-		_ = s.worktreeStore.UpdateStatus(ctx, projectID, wt.ID, model.WorktreeStatusMerged)
-	}
-
-	// Clear worker's current task.
-	if task.AssignedSessionID != nil && task.AssignedWorkerID != nil {
-		_ = s.workerStore.UpdateCurrentTask(ctx, projectID, *task.AssignedSessionID, *task.AssignedWorkerID, "")
-	}
-
-	// Trigger feature status auto-transition.
-	if s.OnFeatureStatusChange != nil {
-		s.OnFeatureStatusChange(ctx, projectID, task.FeatureID)
-	}
-
-	safeEmit(s.eventEmitter, "task.merged", projectID, map[string]string{"task_id": taskID, "merge_commit": mergeCommit})
-	safeEmit(s.eventEmitter, "task.done", projectID, map[string]string{"task_id": taskID})
-
-	s.logAudit(ctx, projectID, "task.merge", "ALLOWED", nil, &taskID)
-	return nil
+	s.logAudit(ctx, projectID, "task.merge", "DENIED", &sessionID, &taskID)
+	return fmt.Errorf("MergeTask: final merge is human-only: %w", store.ErrOperationDisabled)
 }
 
-// createWorktreeForTask attempts to create a physical git worktree and record it in the DB.
-// Failures are logged but do not block the task claim — the task is still valid without a worktree.
-func (s *TaskService) createWorktreeForTask(ctx context.Context, projectID, taskID string) {
-	// Load project to get workspace_path.
-	project, err := s.projectStore.GetByID(ctx, projectID)
-	if err != nil {
-		slog.Error("createWorktreeForTask: failed to load project", "project_id", projectID, "error", err)
-		return
-	}
-
-	baseCommit, err := getBaseCommit(ctx, project.WorkspacePath)
-	if err != nil {
-		slog.Error("createWorktreeForTask: failed to get base commit", "project_id", projectID, "error", err)
-		return
-	}
-
-	worktreePath, err := createWorktree(ctx, project.WorkspacePath, taskID)
-	if err != nil {
-		slog.Error("createWorktreeForTask: failed to create worktree", "task_id", taskID, "error", err)
-		return
-	}
-
-	// Record in database.
-	wt := &model.Worktree{
-		TaskID:       taskID,
-		ProjectID:    projectID,
-		WorktreePath: worktreePath,
-		BranchName:   fmt.Sprintf("task/%s", taskID),
-		BaseCommit:   baseCommit,
-		Status:       model.WorktreeStatusActive,
-	}
-	if _, err := s.worktreeStore.Create(ctx, projectID, wt); err != nil {
-		slog.Error("createWorktreeForTask: failed to record worktree", "task_id", taskID, "error", err)
-		// Attempt to clean up the physical worktree and git branch.
-		_ = removeWorktree(ctx, project.WorkspacePath, worktreePath)
-		_ = deleteBranch(ctx, project.WorkspacePath, fmt.Sprintf("task/%s", taskID))
-		return
-	}
-
-	slog.Info("createWorktreeForTask: created worktree", "worktree_path", worktreePath, "task_id", taskID)
+// ConfirmMergedFact is deliberately disabled in M0. A caller-supplied fact ID
+// and SHA are not proof that GitLab accepted a human merge. M2 may replace this
+// compatibility symbol only with a transaction that references a persisted,
+// signature-verified Webhook Inbox or reconciliation fact.
+func (s *TaskService) ConfirmMergedFact(ctx context.Context, projectID, taskID, _, _ string) error {
+	s.logAudit(ctx, projectID, "task.confirm_merged_fact", "DENIED", nil, &taskID)
+	return fmt.Errorf("ConfirmMergedFact: verified GitLab merge facts are unavailable in M0: %w", store.ErrOperationDisabled)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// releaseResources clears the worker assignment and marks the worktree as abandoned.
-// This is called after a task is cancelled or a blocker is resolved without reassign.
-func (s *TaskService) releaseResources(ctx context.Context, projectID string, task *model.Task) {
-	// Clear worker's current_task_id.
+// releaseTaskResourcesTx releases DB-owned worker/worktree state in the same
+// transaction as the task transition. Physical Git cleanup is a later,
+// idempotent cleanup_pending operation and is never claimed as complete here.
+func (s *TaskService) releaseTaskResourcesTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID string,
+	task *model.Task,
+	worktreeStatus, actor, reason, causationID string,
+) error {
+	if tx == nil || task == nil || strings.TrimSpace(actor) == "" ||
+		strings.TrimSpace(reason) == "" || strings.TrimSpace(causationID) == "" {
+		return fmt.Errorf("resource release authority is incomplete: %w", store.ErrInvalidParameter)
+	}
 	if task.AssignedWorkerID != nil && task.AssignedSessionID != nil {
-		if err := s.workerStore.UpdateCurrentTask(ctx, projectID, *task.AssignedSessionID, *task.AssignedWorkerID, ""); err != nil {
-			slog.Error("releaseResources: failed to clear worker current_task", "worker_id", *task.AssignedWorkerID, "error", err)
+		var sessionKey string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_sessions
+			WHERE project_id = ? AND COALESCE(external_id, id) = ?`,
+			projectID, *task.AssignedSessionID).Scan(&sessionKey); err != nil {
+			return fmt.Errorf("resolve assigned session: %w", err)
+		}
+		var workerStatus string
+		var currentTask sql.NullString
+		var workerVersion int64
+		if err := tx.QueryRowContext(ctx, `SELECT status, current_task_id, version FROM agent_workers
+			WHERE project_id = ? AND session_id = ? AND id = ?`,
+			projectID, sessionKey, *task.AssignedWorkerID,
+		).Scan(&workerStatus, &currentTask, &workerVersion); err != nil {
+			return fmt.Errorf("read assigned worker: %w", err)
+		}
+		if currentTask.Valid && currentTask.String == task.ID && workerStatus == model.WorkerStatusBusy {
+			result, err := tx.ExecContext(ctx,
+				`UPDATE agent_workers SET current_task_id = NULL, status = 'idle', version = version + 1,
+			     last_active = datetime('now')
+			 WHERE project_id = ? AND session_id = ? AND id = ? AND current_task_id = ?
+			   AND status = 'busy' AND version = ?`,
+				projectID, sessionKey, *task.AssignedWorkerID, task.ID, workerVersion,
+			)
+			if err != nil {
+				return err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+				return errors.Join(store.ErrConcurrentConflict, err)
+			}
+			if err := appendStateHistory(ctx, tx, projectID, "worker", sessionKey+"/"+*task.AssignedWorkerID,
+				model.WorkerStatusBusy, model.WorkerStatusIdle, workerVersion, workerVersion+1,
+				actor, reason, causationID); err != nil {
+				return err
+			}
+		} else if currentTask.Valid || (workerStatus != model.WorkerStatusIdle && workerStatus != model.WorkerStatusLost) {
+			return fmt.Errorf("assigned worker authority is inconsistent: %w", store.ErrRecoveryIntegrity)
 		}
 	}
-
-	// Mark worktree as abandoned.
-	wt, err := s.worktreeStore.GetByTaskID(ctx, projectID, task.ID)
-	if err == nil && wt != nil {
-		if err := s.worktreeStore.UpdateStatus(ctx, projectID, wt.ID, model.WorktreeStatusAbandoned); err != nil {
-			slog.Error("releaseResources: failed to abandon worktree", "worktree_id", wt.ID, "task_id", task.ID, "error", err)
+	if worktreeStatus != "" {
+		if !model.IsWorktreeStatus(worktreeStatus) {
+			return fmt.Errorf("invalid worktree release status %q: %w", worktreeStatus, store.ErrTaskStateInvalid)
+		}
+		var worktreeID, worktreeVersion, generation int64
+		var currentStatus string
+		err := tx.QueryRowContext(ctx, `SELECT id, status, version, generation FROM worktrees
+			WHERE project_id = ? AND task_id = ?`, projectID, task.ID).Scan(
+			&worktreeID, &currentStatus, &worktreeVersion, &generation)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			targetStatus := worktreeStatus
+			if currentStatus == model.WorktreeStatusSealed || currentStatus == model.WorktreeStatusSubmitted {
+				targetStatus = model.WorktreeStatusQuarantined
+			}
+			if currentStatus == model.WorktreeStatusQuarantined || currentStatus == targetStatus {
+				return nil
+			}
+			if !model.CanWorktreeTransition(currentStatus, targetStatus) {
+				return fmt.Errorf("cannot release worktree %s -> %s: %w", currentStatus, targetStatus, store.ErrTaskStateInvalid)
+			}
+			result, err := tx.ExecContext(ctx, `UPDATE worktrees SET status = ?, version = version + 1,
+				updated_at = datetime('now') WHERE project_id = ? AND task_id = ? AND id = ?
+				AND status = ? AND version = ? AND generation = ?`,
+				targetStatus, projectID, task.ID, worktreeID, currentStatus, worktreeVersion, generation)
+			if err != nil {
+				return err
+			}
+			if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+				return errors.Join(store.ErrConcurrentConflict, err)
+			}
+			if err := appendStateHistory(ctx, tx, projectID, "worktree", fmt.Sprint(worktreeID),
+				currentStatus, targetStatus, worktreeVersion, worktreeVersion+1,
+				actor, reason, causationID); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-// logActivity is a convenience helper for writing activity log entries.
-func (s *TaskService) logActivity(ctx context.Context, projectID string, sessionID, taskID *string, action string, detail *string) error {
-	entry := &model.ActivityLog{
-		ProjectID: projectID,
-		SessionID: sessionID,
-		TaskID:    taskID,
-		Action:    action,
-		Detail:    detail,
-		CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+// ensureTaskWorktreeRequeueableTx prevents an administrative action from
+// publishing a queued Task that a fresh claim can never safely execute. Only
+// an active workspace from a durably closed prior Lease may be rebound. A
+// cleanup intent must finish first; sealed, submitted, quarantined and other
+// evidence states require an explicit recovery workflow instead of requeue.
+func (s *TaskService) ensureTaskWorktreeRequeueableTx(ctx context.Context, tx *sql.Tx, projectID string, task *model.Task) error {
+	var worktreeID, generation int64
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT id, status, generation FROM worktrees
+		WHERE project_id = ? AND task_id = ?`, projectID, task.ID).Scan(&worktreeID, &status, &generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
-	return s.activityStore.Create(ctx, projectID, entry)
+	if err != nil {
+		return err
+	}
+	if status == model.WorktreeStatusCleanupPending {
+		return fmt.Errorf("worktree %d cleanup is pending; run GC before retry: %w", worktreeID, store.ErrConcurrentConflict)
+	}
+	if status != model.WorktreeStatusActive || generation <= 0 {
+		return fmt.Errorf("worktree %d in %s cannot be rebound: %w", worktreeID, status, store.ErrRecoveryIntegrity)
+	}
+	var priorLeaseStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM task_leases
+		WHERE project_id = ? AND task_id = ? AND epoch = ?`,
+		projectID, task.ID, generation).Scan(&priorLeaseStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("worktree %d has no generation lease: %w", worktreeID, store.ErrRecoveryIntegrity)
+		}
+		return err
+	}
+	if priorLeaseStatus == model.LeaseStatusActive {
+		return fmt.Errorf("worktree %d generation lease remains active: %w", worktreeID, store.ErrRecoveryIntegrity)
+	}
+	return nil
+}
+
+func stateHistoryReason(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 // ptrStr returns the dereferenced string value or empty string if nil.
@@ -1309,12 +1361,6 @@ func ptrStr(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-// generateFollowupTaskID creates a new task ID for a followup task based on
-// the parent task ID. Uses a simple scheme: append "-f" suffix plus a counter.
-func generateFollowupTaskID(parentID string) string {
-	return fmt.Sprintf("%s-conflict-%d", parentID, time.Now().UnixNano()%10000)
 }
 
 // logAudit writes a security audit entry for a task-level operation.
@@ -1336,7 +1382,7 @@ func (s *TaskService) logAudit(ctx context.Context, boundProject, action, result
 // Admin operations
 // ---------------------------------------------------------------------------
 
-// ForceRollback rolls back a task from any non-terminal state to pending.
+// ForceRollback re-queues only stopped/recoverable states.
 // This is an admin escape hatch that clears session/worker assignment and
 // marks the worktree as abandoned. Allowed states: in_progress, submitted,
 // verifying, ready_to_merge, blocked.
@@ -1348,39 +1394,49 @@ func (s *TaskService) ForceRollback(ctx context.Context, projectID, taskID, sess
 
 	// Validate status is rollbackable (non-terminal).
 	switch task.Status {
-	case model.TaskStatusInProgress, model.TaskStatusSubmitted,
-		model.TaskStatusVerifying, model.TaskStatusReadyToMerge,
-		model.TaskStatusBlocked:
+	case model.TaskStatusFailed, model.TaskStatusNeedsHuman, model.TaskStatusBlocked:
 		// OK to rollback.
 	default:
 		return fmt.Errorf("ForceRollback: %w: cannot rollback task in status %q", store.ErrTaskStateInvalid, task.Status)
 	}
 
 	previousStatus := task.Status
+	if task.ActiveLeaseID != nil {
+		return fmt.Errorf("ForceRollback: stopped task still has active lease: %w", store.ErrRecoveryIntegrity)
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("ForceRollback: begin tx: %w", err)
 	}
 
+	defer func() { _ = tx.Rollback() }()
+	if err := s.ensureTaskWorktreeRequeueableTx(ctx, tx, projectID, task); err != nil {
+		return fmt.Errorf("ForceRollback: workspace is not requeueable: %w", err)
+	}
 	result, err := tx.ExecContext(ctx,
 		`UPDATE tasks SET status = ?, assigned_session_id = NULL, assigned_worker_id = NULL,
 		     assigned_at = NULL, blocker_reason = NULL, verified_by = NULL, verified_at = NULL,
-		     updated_at = datetime('now')
-		 WHERE id = ? AND project_id = ? AND status = ?`,
-		model.TaskStatusPending, taskID, projectID, previousStatus)
+		     version = version + 1, updated_at = datetime('now')
+		 WHERE id = ? AND project_id = ? AND status = ? AND version = ? AND active_lease_id IS NULL`,
+		model.TaskStatusQueued, taskID, projectID, previousStatus, task.Version)
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ForceRollback: update: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ForceRollback: rows affected: %w", err)
 	}
 	if affected == 0 {
-		_ = tx.Rollback()
 		return fmt.Errorf("ForceRollback: %w", store.ErrConcurrentConflict)
+	}
+	if err := appendStateHistory(ctx, tx, projectID, "task", taskID,
+		previousStatus, model.TaskStatusQueued, task.Version, task.Version+1,
+		sessionID, "authorized recovery", fmt.Sprintf("task.force-rollback:%s:v%d", taskID, task.Version)); err != nil {
+		return err
+	}
+	if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
+		return fmt.Errorf("ForceRollback: queue version: %w", err)
 	}
 
 	// Log activity.
@@ -1389,19 +1445,20 @@ func (s *TaskService) ForceRollback(ctx context.Context, projectID, taskID, sess
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
 		projectID, sessionID, taskID, model.ActionReopened, detail); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("ForceRollback: log activity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(session_id, bound_project, target_project, target_task, action, result, detail, created_at)
+		 VALUES (?, ?, ?, ?, 'task.force_rollback', 'ALLOWED', ?, datetime('now'))`,
+		sessionID, projectID, projectID, taskID, detail); err != nil {
+		return fmt.Errorf("ForceRollback: audit: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("ForceRollback: commit: %w", err)
 	}
 
-	// Release resources outside the transaction.
-	s.releaseResources(ctx, projectID, task)
-
 	safeEmit(s.eventEmitter, "task.reopened", projectID, map[string]string{"task_id": taskID})
-	s.logAudit(ctx, projectID, "task.force_rollback", "ALLOWED", &sessionID, &taskID)
 
 	return nil
 }
@@ -1419,9 +1476,17 @@ func (s *TaskService) GetTaskDiff(ctx context.Context, projectID, taskID string)
 	if err != nil {
 		return "", fmt.Errorf("GetTaskDiff: no worktree for task %s: %w", taskID, err)
 	}
+	project, err := s.projectStore.GetByID(ctx, projectID)
+	if err != nil {
+		return "", fmt.Errorf("GetTaskDiff: project: %w", err)
+	}
+	canonicalWorktree, _, err := verifyWorktreeRepository(ctx, project.WorkspacePath, wt.WorktreePath, wt.BaseCommit)
+	if err != nil {
+		return "", fmt.Errorf("GetTaskDiff: untrusted worktree: %w", err)
+	}
 
 	// Run git diff.
-	files, err := getChangedFiles(ctx, wt.WorktreePath, wt.BaseCommit)
+	files, err := getChangedFiles(ctx, canonicalWorktree, wt.BaseCommit)
 	if err != nil {
 		return "", fmt.Errorf("GetTaskDiff: git diff failed: %w", err)
 	}

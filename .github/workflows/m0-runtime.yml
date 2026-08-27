@@ -1,0 +1,117 @@
+name: M0 Runtime
+
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "web/**"
+      - "tests/m0/**"
+      - "tests/e2e/**"
+      - "scripts/test-hygiene-check.rb"
+      - "scripts/core-coverage-check.rb"
+      - ".go-version"
+      - ".node-version"
+      - ".golangci.yml"
+      - ".dockerignore"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - "Dockerfile"
+      - "docker-compose.yaml"
+      - ".github/workflows/m0-runtime.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Pin npm
+        run: npm install --global npm@10.9.2
+
+      - name: Build clean source graph
+        run: make build
+
+      - name: Unit, protocol and race tests
+        run: |
+          make test
+          make coverage
+          make test-race
+          make vet
+          make lint
+
+      - name: Strict Playwright runtime and MCP smoke
+        run: make e2e
+
+      - name: Build non-root runtime image
+        run: make IMAGE=maestro-mcp:m0-ci docker-build
+
+      - name: Scan source and dependencies
+        run: make security-scan
+
+      - name: Smoke non-root runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id=$(docker run --detach --rm \
+            --read-only \
+            --tmpfs /tmp:size=64m,mode=1777 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --env MAESTRO_AUTH_TOKEN=m0-container-smoke \
+            --env MAESTRO_REMOTE_WRITE=false \
+            --publish 127.0.0.1::8080 \
+            maestro-mcp:m0-ci)
+          trap 'docker stop "$container_id" >/dev/null 2>&1 || true' EXIT
+          test "$(docker inspect --format '{{.Config.User}}' "$container_id")" = "10001:10001"
+          published=$(docker port "$container_id" 8080/tcp)
+          port=${published##*:}
+          for _ in $(seq 1 60); do
+            if curl --fail --silent "http://127.0.0.1:${port}/readyz" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent "http://127.0.0.1:${port}/readyz" >/dev/null
+          curl --fail --silent "http://127.0.0.1:${port}/livez" >/dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/dashboard")" = "401"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header 'Authorization: Bearer m0-container-smoke' \
+            --header 'Content-Type: application/json' \
+            --data '{"name":"blocked"}' \
+            "http://127.0.0.1:${port}/api/v1/projects")" = "403"
+
+      - name: Block High and Critical image findings
+        run: make IMAGE=maestro-mcp:m0-ci image-scan
+
+      - name: Generate pinned CycloneDX evidence
+        run: make sbom
+
+      - name: Upload binaries and SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-runtime-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            bin/maestro
+            dist/sbom/*.cdx.json

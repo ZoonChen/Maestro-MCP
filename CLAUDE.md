@@ -1,72 +1,73 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-Maestro-MCP is a local MCP (Model Context Protocol) server that orchestrates multiple AI coding agents (Claude Code, OpenClaw) working in parallel. It provides task scheduling, context de-noising, boundary enforcement, and test verification — plus a real-time Web dashboard for human developers.
-
-**Core design principles:**
-- **Single Go binary** — pure Go including MCP protocol (mcp-go), no Node.js bridge
-- **Zero-trust agents** — server-side verification via `git diff` + executing tests + reading coverage files, never trusts agent-reported results
-- **Physical isolation** — Git Worktree per task to prevent concurrent file conflicts
-- **Four-layer project isolation** — connection binding → API middleware → service enforcement → store scoping
-
-## Architecture
-
-Single Go binary with three protocol surfaces:
-- **MCP (stdio)** — for Claude Code local connections
-- **MCP (SSE :3000)** — for OpenClaw and remote MCP clients
-- **HTTP (:8080)** — REST API + WebSocket + embedded Web UI (Preact via `go:embed`)
-
-Key data model hierarchy: `Project → Feature → Task`, with `AgentSession → AgentWorker` for multi-level parallelism (cross-module, multi-session, sub-agent).
-
-## Documentation
-
-Documentation is modularized under `docs/` with a navigation index at `docs/README.md`.
-
-**PRD (product requirements):** `docs/prd/` — 11 files covering overview, roles, M1-M8 modules, NFRs, milestones.
-**Technical design:** `docs/technical/` — 12 files covering architecture, data model, core mechanisms, API spec, deployment.
-
-Key cross-references:
-- M1 multi-project → project isolation (four-layer defense)
-- M2 task management → data model (tasks table), concurrency model (atomic claim)
-- M4 validation → zero-trust validation, worktree model, test safety
-- M5 MCP protocol → API spec (REST + MCP Tools/Resources/Prompts)
-
-Legacy monolithic files `docs/PRD.md` and `docs/TECHNICAL.md` are retained for reference.
-
-## Planned Directory Layout
-
-```
-cmd/maestro/main.go          # Entry: serve / mcp / project subcommands
-internal/
-  mcp/                        # MCP protocol (mcp-go): tools, resources, prompts
-  handler/                    # Gin HTTP handlers + WebSocket
-  service/                    # Business logic: task state machine, worktree, test runner, boundary guard
-  store/                      # SQLite data access (all queries scoped by project_id)
-  model/model.go
-  ws/hub.go
-web/                          # Preact + Vite frontend → go:embed
-```
-
-## Tech Stack
-
-- Go 1.22+, Gin, SQLite (modernc.org/sqlite — pure Go, no CGO)
-- MCP: `github.com/mark3labs/mcp-go`
-- Git: `go-git` or CLI git for worktree management
-- Frontend: Preact + Vite, embedded via `go:embed`
-
-## Key Implementation Constraints
-
-- **Store layer**: Every query method MUST take `projectID` as first parameter. No method exists without it — this is the L4 isolation defense.
-- **submit_task_result**: Does NOT accept `changed_files` or `test_output` from agents. Server runs `git diff` and executes the test command itself. Each submission creates a `validation_runs` record (append-only history) and upserts `task_results` (current/latest).
-- **Coverage parsing**: Read structured files (Cobertura XML, go-cover, JaCoCo XML), never parse test stdout.
-- **Worker registration**: Implicit — if `get_next_task` receives an unknown `worker_id` and session capacity allows, auto-register. No explicit `register_worker` tool needed.
-- **Task state machine**: `pending → in_progress → submitted → verifying → ready_to_merge → done`，with `blocked` as escape state. `merge_conflicted` is resolvable (reopen→in_progress/pending, cancel→cancelled, followup→new task). `cancelled` is the only read-only terminal state. `rejected` is a transient event (immediately returns to `in_progress`). Cancelled dependency targets are treated as satisfied (never block downstream).
-- **Data consistency**: Task status changes + key audit trails (activity_log, validation_runs) must be atomic. Config snapshot principle: validation uses Task-level fields, not runtime Project config.
-- **Task ownership**: `assigned_session_id` always points to the executor (worker with worktree), never switches to verifier during verification.
+This file guides AI coding agents working in this repository.
 
 ## Language
 
-Respond in Chinese for all explanations and communications. Technical terms and code identifiers remain in English.
+所有解释、计划和交接使用中文；技术标识符、协议字段和代码符号保持 English。
+
+## Current State
+
+The checked-in Go code is the M0 local implementation candidate: `cmd/maestro` entrypoint (server/runner/migrate/doctor/version), SQLite storage (schema v5), REST + MCP (stdio and Streamable HTTP) + WebSocket runtime, an embedded read-only web dashboard, and real-binary integration tests are in place; the local gate (`make release`) passes. The v0 closure commit flips the M0 delivery book to `approved + implemented + passed` with a self-referential `last_verified_commit: HEAD` binding; remote CI evidence and sign-off live in the v0 closure PR and `docs/retrospective/v0-closure-retrospective.md`.
+
+Not yet implemented (planned in M1–M4): OIDC/RBAC identity, PostgreSQL + Outbox, remote Runner with rootless OCI sandbox, GitLab integration (MR/Pipeline/quality gates), the defect/agent remediation loop, and the governance console/eval harness.
+
+Never infer implementation completion from a v3 document. Read `spec_status`, `implementation_status` and `verification_status` separately.
+
+## Execution Pipeline
+
+Long-range execution is orchestrated in `plans/PIPELINE.md`: six parallel streams (S1–S6), a P1–P6 discipline axis (文档规划 → 实现方案 → 数据模型建设 → 代码工程建设 → 测试验证 → 质量工程) applied inside every milestone, and convergence points V0–V4 mapped to the M0–M4 exit gates. Before working on a stream, read its brief under `plans/streams/`; before a milestone starts, read its plan under `plans/stages/`; convergence rituals are defined under `plans/convergence/` with the audit program in `plans/QUALITY-AUDIT.md`.
+
+## v3 Target Architecture
+
+- Central Control Plane on company VM + Docker.
+- PostgreSQL is the control-plane source of truth; SQLite is migration input or local cache only.
+- Local Runner uses outbound HTTPS and a rootless OCI sandbox.
+- Remote MCP uses authenticated Streamable HTTP; local Runner may expose stdio MCP.
+- Self-managed GitLab provides remote baseline, task branches, MR, Pipeline and protected-branch governance.
+- Agent may diagnose, modify and create an MR; a human performs final merge in GitLab.
+
+## Source of Truth
+
+Start at `docs/README.md`.
+
+Authority order:
+
+1. `docs/decisions/` for locked architecture choices.
+2. `docs/prd/` for product behavior and interactions.
+3. `docs/security/` and `docs/quality/` for non-reducible controls.
+4. `docs/technical/` for implementation and recovery.
+5. `docs/specs/` for wire shapes and schemas.
+6. `docs/testing/` for verification.
+7. `docs/delivery/` for M0–M4 task order and exit gates.
+
+The v2.1 archive is historical and must not drive new implementation.
+
+## Mandatory Engineering Invariants
+
+- Default deny. Identity, role, project and session come from server-side authorization context.
+- REST, MCP, WebSocket and background work use the same application authorization and audit policy.
+- Control Plane never mounts or reads repository source.
+- Agent cannot provide arbitrary command strings; tasks reference versioned Command Profiles.
+- Missing, skipped, invalid or stale required Evidence blocks progress.
+- Local Runner Evidence is diagnostic; GitLab CI Evidence is authoritative.
+- Evidence binds source SHA, target SHA, Pipeline/Job and policy version.
+- Maestro never pushes or merges a protected branch.
+- Only the Runner host Git broker may push the server-generated `maestro/*` task branch with a member credential held in OS Keychain; the central GitLab Bot has no source-push capability.
+- `done` is confirmed only by merged Webhook or reconciliation.
+- State change, audit event and Outbox write are atomic.
+- Every LLM call checks budget before invocation and records actual provider usage.
+- High-risk actions and final merge require a human checkpoint.
+
+## Change Workflow
+
+Before implementation:
+
+1. Read the relevant `docs/delivery/m*.md` task.
+2. Follow linked Requirement, Rule, ADR and machine Schema.
+3. Update `docs/governance/traceability-matrix.csv`.
+4. Write or update the referenced Test IDs.
+
+An implementation is not complete until the document is approved, code is implemented, tests pass, runtime evidence exists and `last_verified_commit` is updated.
+
+Do not add hidden bypasses, permissive fallbacks, broad wildcard permissions, raw host execution, token passthrough or tests that return early on an unexpected state.

@@ -11,6 +11,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
+	"github.com/ZoonChen/Maestro-MCP/internal/service"
 )
 
 // validTaskRoles lists the roles allowed for task assignment.
@@ -134,7 +135,7 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("JSON array of dependency objects, e.g. [{\"task_id\":\"T-abcde\",\"require_state\":\"done\"}]"),
 			),
 			mcp.WithString("test_requirements",
-				mcp.Description("JSON object with test requirements: {\"command\":\"go test ./...\",\"coverage_format\":\"go-cover\",\"coverage_path\":\"coverage.out\",\"min_coverage\":80}"),
+				mcp.Description("JSON object referencing an approved profile: {\"profile_id\":\"go-unit\",\"profile_version\":\"3.0.0\",\"profile_digest\":\"sha256:...\",\"coverage_format\":\"go-cover\",\"coverage_path\":\"coverage.out\",\"min_coverage\":80}"),
 			),
 			mcp.WithString("priority",
 				mcp.Description("Task priority: low, normal, high, or urgent (default: normal)"),
@@ -171,7 +172,7 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 			if !validTaskRoles[role] {
 				return maestroToolError(MaestroError{
 					Code:    "INVALID_PARAMETER",
-					Message: fmt.Sprintf("invalid role %q: must be one of backend/frontend/devops/verifier", role),
+					Message: "role must be one of backend, frontend, devops, or verifier",
 				}), nil
 			}
 
@@ -228,30 +229,15 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 			// Validate allowed_directories: no ".." paths (security).
 			for _, dir := range allowedDirsArr {
 				if strings.Contains(dir, "..") {
-					return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("allowed_directories must not contain '..': %s", dir)}), nil
+					return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "allowed_directories contains an unsafe path"}), nil
 				}
 			}
 
-			// Validate test_requirements constraints (if provided).
+			// Reject arbitrary command material and require an immutable approved
+			// profile reference whenever task-level validation policy is provided.
 			if tr := req.GetString("test_requirements", ""); tr != "" && tr != "{}" {
-				var trMap map[string]interface{}
-				if err := json.Unmarshal([]byte(tr), &trMap); err == nil {
-					if cmd, ok := trMap["command"].(string); ok {
-						if strings.ContainsAny(cmd, "\n") || strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.Contains(cmd, ";") {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "test_requirements.command must not contain newlines, &&, ||, or ;"}), nil
-						}
-					}
-					if format, ok := trMap["coverage_format"].(string); ok {
-						validFormats := map[string]bool{"go-cover": true, "cobertura": true, "jacoco": true, "istanbul": true}
-						if !validFormats[format] {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("test_requirements.coverage_format must be one of go-cover/cobertura/jacoco/istanbul, got %q", format)}), nil
-						}
-					}
-					if minCov, ok := trMap["min_coverage"].(float64); ok {
-						if minCov < 0 || minCov > 100 {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("test_requirements.min_coverage must be 0-100, got %.1f", minCov)}), nil
-						}
-					}
+				if err := service.ValidateTaskTestRequirements([]byte(tr)); err != nil {
+					return errorResult(&service.ValidationError{Code: "VALIDATION_INPUT_INVALID", Cause: err}), nil //nolint:nilerr // MCP tool errors use a result payload with a nil transport error.
 				}
 			}
 
@@ -264,10 +250,10 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 						method, _ := ref["method"].(string)
 						path, _ := ref["path"].(string)
 						if !validMethods[method] {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("required_apis method must be GET/POST/PUT/DELETE/PATCH, got %q", method)}), nil
+							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "required_apis contains an unsupported method"}), nil
 						}
 						if !strings.HasPrefix(path, "/") {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("required_apis path must start with /, got %q", path)}), nil
+							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "required_apis contains an invalid path"}), nil
 						}
 					}
 				}
@@ -292,7 +278,7 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 				Title:              title,
 				Description:        description,
 				Role:               role,
-				Status:             model.TaskStatusPending,
+				Status:             model.TaskStatusQueued,
 				AllowedDirectories: allowedDirs,
 				ForbiddenPatterns:  forbiddenPatterns,
 				RequiredAPIs:       requiredAPIs,
@@ -318,7 +304,7 @@ func registerSplitTask(s *mcpserver.MCPServer, services *Services) {
 func registerUpdateTask(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("update_task",
-			mcp.WithDescription("Update mutable fields of an existing task. Only provided fields are changed. Field restrictions by status: pending/blocked=all fields editable; in_progress=description and summary only; submitted/verifying/ready_to_merge/done/merge_conflicted/cancelled=not editable."),
+			mcp.WithDescription("Update mutable fields of an existing task. Only provided fields are changed. Field restrictions by status: queued/blocked=all fields editable; executing=description and summary only; validating/ready_for_human_merge/done/needs_human/cancelled=read-only."), //nolint:misspell // "cancelled" is the canonical wire state.
 			mcp.WithString("project_id",
 				mcp.Required(),
 				mcp.Description("ID of the project"),
@@ -367,20 +353,19 @@ func registerUpdateTask(s *mcpserver.MCPServer, services *Services) {
 			// Status-based field restrictions (PRD task-management.md).
 			switch task.Status {
 			case model.TaskStatusCancelled:
-				return maestroToolError(MaestroError{Code: "TASK_ALREADY_CANCELLED", Message: "cancelled tasks are read-only"}), nil
-			case model.TaskStatusSubmitted, model.TaskStatusVerifying,
-				model.TaskStatusReadyToMerge, model.TaskStatusDone,
-				model.TaskStatusMergeConflicted:
-				return maestroToolError(MaestroError{Code: "TASK_STATE_INVALID", Message: fmt.Sprintf("tasks in '%s' status cannot be updated", task.Status)}), nil
-			case model.TaskStatusInProgress:
-				// Only description and summary can be updated for in_progress tasks.
+				return maestroToolError(MaestroError{Code: "TASK_ALREADY_CANCELLED", Message: "cancelled tasks are read-only"}), nil //nolint:misspell // Stable error code and canonical wire state.
+			case model.TaskStatusValidating, model.TaskStatusReadyForHumanMerge,
+				model.TaskStatusDone, model.TaskStatusNeedsHuman:
+				return maestroToolError(MaestroError{Code: "TASK_STATE_INVALID", Message: "Task state is invalid for this operation"}), nil
+			case model.TaskStatusExecuting:
+				// Only description and summary can be updated for executing tasks.
 				title := req.GetString("title", "")
 				allowedDirs := req.GetString("allowed_directories", "")
 				forbiddenPats := req.GetString("forbidden_patterns", "")
 				requiredAPIs := req.GetString("required_apis", "")
 				testReqs := req.GetString("test_requirements", "")
 				if title != "" || allowedDirs != "" || forbiddenPats != "" || requiredAPIs != "" || testReqs != "" {
-					return maestroToolError(MaestroError{Code: "TASK_STATE_INVALID", Message: "in_progress tasks only allow updating description and summary"}), nil
+					return maestroToolError(MaestroError{Code: "TASK_STATE_INVALID", Message: "executing tasks only allow updating description and summary"}), nil
 				}
 			}
 
@@ -403,7 +388,7 @@ func registerUpdateTask(s *mcpserver.MCPServer, services *Services) {
 				if err := json.Unmarshal([]byte(v), &dirs); err == nil {
 					for _, dir := range dirs {
 						if strings.Contains(dir, "..") {
-							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: fmt.Sprintf("allowed_directories must not contain '..': %s", dir)}), nil
+							return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "allowed_directories contains an unsafe path"}), nil
 						}
 					}
 				}
@@ -424,6 +409,9 @@ func registerUpdateTask(s *mcpserver.MCPServer, services *Services) {
 			if v := req.GetString("test_requirements", ""); v != "" {
 				if !json.Valid([]byte(v)) {
 					return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "test_requirements must be valid JSON"}), nil
+				}
+				if err := service.ValidateTaskTestRequirements([]byte(v)); err != nil {
+					return errorResult(&service.ValidationError{Code: "VALIDATION_INPUT_INVALID", Cause: err}), nil //nolint:nilerr // MCP tool errors use a result payload with a nil transport error.
 				}
 				task.TestRequirements = json.RawMessage(v)
 			}
@@ -446,7 +434,7 @@ func registerUpdateTask(s *mcpserver.MCPServer, services *Services) {
 func registerCancelTask(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("cancel_task",
-			mcp.WithDescription("Cancel a task that is in pending, in_progress, or blocked status."),
+			mcp.WithDescription("Request cancellation of a queued, executing, blocked, or needs_human task. Executing work remains cancelling until recovery confirms the Lease stopped."), //nolint:misspell // "cancelling" is the canonical wire state.
 			mcp.WithString("project_id",
 				mcp.Required(),
 				mcp.Description("ID of the project"),
@@ -480,8 +468,11 @@ func registerCancelTask(s *mcpserver.MCPServer, services *Services) {
 			if err := services.Task.CancelTask(ctx, projectID, taskID, sessionID, reason); err != nil {
 				return errorResult(fmt.Errorf("failed to cancel task: %w", err)), nil
 			}
-
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"cancelled"}`, taskID)), nil
+			updated, err := services.Task.GetTask(ctx, projectID, taskID)
+			if err != nil {
+				return errorResult(fmt.Errorf("read cancelled task: %w", err)), nil //nolint:misspell // "cancelled" is the canonical wire state.
+			}
+			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"%s"}`, taskID, updated.Status)), nil
 		},
 	)
 }
@@ -490,7 +481,7 @@ func registerCancelTask(s *mcpserver.MCPServer, services *Services) {
 func registerResolveBlocker(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("resolve_blocker",
-			mcp.WithDescription("Resolve a blocked task. If reassign is true, the task returns to in_progress with the same worker. Otherwise it goes back to pending for re-assignment."),
+			mcp.WithDescription("Resolve a blocked task back to queued for a fresh Lease. In M0, reassign=true is rejected because retaining a stopped Lease is unsafe."),
 			mcp.WithString("project_id",
 				mcp.Required(),
 				mcp.Description("ID of the project"),
@@ -504,7 +495,7 @@ func registerResolveBlocker(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("Description of how the blocker was resolved"),
 			),
 			mcp.WithBoolean("reassign",
-				mcp.Description("If true, keep the current worker assigned; if false, release and return to pending (default: false)"),
+				mcp.Description("Must be false in M0; true requires a future fresh-Lease reassignment workflow"),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -526,11 +517,11 @@ func registerResolveBlocker(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(fmt.Errorf("failed to resolve blocker: %w", err)), nil
 			}
 
-			newStatus := "pending"
-			if reassign {
-				newStatus = "in_progress"
+			updated, err := services.Task.GetTask(ctx, projectID, taskID)
+			if err != nil {
+				return errorResult(fmt.Errorf("read resolved task: %w", err)), nil
 			}
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"%s","resolution":%q}`, taskID, newStatus, resolution)), nil
+			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"%s","resolution":%q}`, taskID, updated.Status, resolution)), nil
 		},
 	)
 }
@@ -539,7 +530,7 @@ func registerResolveBlocker(s *mcpserver.MCPServer, services *Services) {
 func registerResolveMergeConflict(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("resolve_merge_conflict",
-			mcp.WithDescription("Resolve a merge_conflicted task with one of three actions: reopen (back to in_progress), cancel (cancel the task), or followup (create a new conflict-resolution task)."),
+			mcp.WithDescription("Resolve a needs_human conflict by reopening it for a fresh lease or cancelling it. Follow-up creation is disabled until the v3 idempotent workflow is available."), //nolint:misspell // "cancelling" follows the canonical state vocabulary.
 			mcp.WithString("project_id",
 				mcp.Required(),
 				mcp.Description("ID of the project"),
@@ -550,8 +541,8 @@ func registerResolveMergeConflict(s *mcpserver.MCPServer, services *Services) {
 			),
 			mcp.WithString("action",
 				mcp.Required(),
-				mcp.Description("Resolution action: reopen, cancel, or followup"),
-				mcp.Enum("reopen", "cancel", "followup"),
+				mcp.Description("Resolution action: reopen or cancel"),
+				mcp.Enum("reopen", "cancel"),
 			),
 			mcp.WithString("reason",
 				mcp.Description("Optional reason for the resolution choice"),
@@ -575,8 +566,11 @@ func registerResolveMergeConflict(s *mcpserver.MCPServer, services *Services) {
 			if err := services.Task.ResolveMergeConflict(ctx, projectID, taskID, action, reason); err != nil {
 				return errorResult(fmt.Errorf("failed to resolve merge conflict: %w", err)), nil
 			}
-
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","action":"%s","resolved":true}`, taskID, action)), nil
+			updated, err := services.Task.GetTask(ctx, projectID, taskID)
+			if err != nil {
+				return errorResult(fmt.Errorf("read conflict resolution result: %w", err)), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","action":"%s","status":"%s","resolved":true}`, taskID, action, updated.Status)), nil
 		},
 	)
 }

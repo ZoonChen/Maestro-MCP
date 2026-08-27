@@ -6,18 +6,16 @@
 db_path: "data/maestro.db"
 # Env override: MAESTRO_DB_PATH
 
-# HTTP server address (REST API + WebSocket + Web UI)
-http_addr: ":8080"
+# HTTP server address (REST API + WebSocket + Web UI + Streamable HTTP MCP).
+# M0 defaults to loopback. Bind 0.0.0.0 only inside an explicitly protected
+# container/network.
+http_addr: "127.0.0.1:8080"
 # Env override: MAESTRO_HTTP_ADDR
 
-# MCP SSE server address (for remote MCP clients like OpenClaw)
-sse_addr: ":3000"
-# Env override: MAESTRO_SSE_ADDR
+# Remote MCP is served at /mcp on the HTTP address. The local Runner uses
+# stdio via: maestro runner --config maestro.yaml --runner-id <id>
 
-# Default MCP transport mode: "stdio" or "sse"
-transport: "stdio"
-
-# Maximum concurrent connections (SSE + WebSocket combined)
+# Maximum concurrent HTTP/MCP/WebSocket connections.
 max_connections: 50
 
 # Logging configuration
@@ -30,16 +28,62 @@ stale_timeout_sec: 120
 
 # Garbage collection intervals
 worktree_gc_interval_sec: 600  # 10 minutes - cleans up abandoned/merged worktrees
-data_gc_interval_hours: 24     # 24 hours - purges old activity/audit logs
+data_gc_interval_hours: 24     # 24 hours - purges old activity and external validation logs
 
 # Data retention periods (in days)
 activity_log_retention_days: 90
-audit_log_retention_days:    180
+# Audit rows are append-only. This fixed value governs export/backup retention;
+# it never authorizes runtime deletion.
+audit_log_retention_days:    365
 
-# Authentication — Bearer token for REST API and WebSocket connections.
-# If empty, authentication is DISABLED (all requests are allowed).
-# RECOMMENDED: set via environment variable in production.
+# Authentication — Bearer token for REST, MCP, WebSocket and Web UI.
+# Do not put the token in this file. An empty token fails closed: only /livez,
+# /readyz and the deprecated /health compatibility probe remain reachable.
 #   export MAESTRO_AUTH_TOKEN="your-secure-random-token"
-auth_token: ""
-# Env override: MAESTRO_AUTH_TOKEN
-# The /health endpoint and /dashboard are always accessible without auth.
+
+# Browser and WebSocket Origins are exact matches. An empty allowlist permits
+# only same-origin requests.
+allowed_origins: ["http://127.0.0.1:8080"]
+# Env override (comma-separated): MAESTRO_ALLOWED_ORIGINS
+
+# Remote mutations are disabled throughout the M0 development baseline.
+remote_write: false
+# Env override: MAESTRO_REMOTE_WRITE (must remain false outside explicit tests)
+
+# Zero-trust validation runtime. The safe default has no approved profiles and
+# cannot execute on the host, so task submission fails closed. Unlike ordinary
+# runtime settings, these values intentionally have no environment overrides.
+validation:
+  allow_host_execution: false
+  default_timeout_sec: 120
+  max_output_bytes: 65536
+  policy_version: ""
+  policy_digest: ""
+  command_profiles: []
+
+# Transitional M0 local-only example (keep remote_write=false and bind an
+# explicit loopback IP). argv is an array passed directly to exec; shell
+# interpreters and arbitrary request-provided commands are rejected. Replace
+# both immutable digests with approved values before enabling.
+# validation:
+#   allow_host_execution: true
+#   default_timeout_sec: 120
+#   max_output_bytes: 65536
+#   policy_version: "3.0.0-m0-local"
+#   policy_digest: "sha256:<64 lowercase hex characters>"
+#   command_profiles:
+#     - id: "go-m0-test"
+#       version: "3.0.0"
+#       image_digest: "sha256:<64 lowercase hex characters>"
+#       argv: ["go", "test", "./..."]
+#       working_directory: "."
+#       network:
+#         mode: "none"
+#         allow_hosts: []
+#       resources:
+#         cpu_millis: 2000
+#         memory_mb: 2048
+#         disk_mb: 4096
+#         pids: 256
+#       output_limit_bytes: 65536
+#       timeout_seconds: 120

@@ -1,10 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
@@ -41,21 +44,42 @@ type apiRef struct {
 // GetTaskContext assembles the full context for a task by resolving its
 // dependency summaries and required API contracts.
 func (s *ContextService) GetTaskContext(ctx context.Context, projectID, taskID string) (*TaskContextResult, error) {
+	if s == nil || s.taskStore == nil || s.contractStore == nil {
+		return nil, NewContextBuildError(
+			ContextErrorBuildFailed,
+			"context service dependencies are unavailable",
+			nil,
+		)
+	}
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(taskID) == "" {
+		return nil, NewContextBuildError(
+			ContextErrorSourceInvalid,
+			"project_id and task_id are required",
+			store.ErrInvalidParameter,
+		)
+	}
 	task, err := s.taskStore.GetByID(ctx, projectID, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("get task context: get task %s: %w", taskID, err)
+		return nil, classifyContextSourceError("task "+taskID, err)
+	}
+	if task == nil || task.ProjectID != projectID || task.ID != taskID {
+		return nil, NewContextBuildError(
+			ContextErrorBuildFailed,
+			"task source identity does not match the requested scope",
+			store.ErrProjectScopeViolation,
+		)
 	}
 
 	// Resolve dependency summaries.
 	depSummaries, err := s.resolveDependencySummaries(ctx, projectID, task.Dependencies)
 	if err != nil {
-		return nil, fmt.Errorf("get task context: resolve dependencies: %w", err)
+		return nil, err
 	}
 
 	// Resolve required API contracts.
 	apiContracts, err := s.resolveRequiredAPIs(ctx, projectID, task.RequiredAPIs)
 	if err != nil {
-		return nil, fmt.Errorf("get task context: resolve required apis: %w", err)
+		return nil, err
 	}
 
 	return &TaskContextResult{
@@ -66,25 +90,68 @@ func (s *ContextService) GetTaskContext(ctx context.Context, projectID, taskID s
 }
 
 // GetDependencySummaries returns a map of taskID -> summary for the given dependency list.
-// If a dependency task is not found, its summary will be an empty string.
-// Other errors (database failures) are propagated.
+// Every listed dependency is a required source. Missing dependencies and
+// storage errors fail closed; an empty placeholder is never synthesized.
 // Summaries longer than maxDependencySummaryChars are truncated with [TRUNCATED] suffix.
 func (s *ContextService) GetDependencySummaries(ctx context.Context, projectID string, deps []model.Dependency) (map[string]string, error) {
+	if s == nil || s.taskStore == nil {
+		return nil, NewContextBuildError(ContextErrorBuildFailed, "task source is unavailable", nil)
+	}
 	summaries := make(map[string]string, len(deps))
+	seen := make(map[string]struct{}, len(deps))
 	for _, dep := range deps {
+		dep.TaskID = strings.TrimSpace(dep.TaskID)
+		if dep.TaskID == "" {
+			return nil, NewContextBuildError(
+				ContextErrorSourceInvalid,
+				"dependency task_id is required",
+				store.ErrInvalidParameter,
+			)
+		}
+		if dep.RequireState != "" && dep.RequireState != model.TaskStatusDone && dep.RequireState != model.TaskStatusValidating {
+			return nil, NewContextBuildError(
+				ContextErrorSourceInvalid,
+				fmt.Sprintf("dependency %s has unsupported require_state", dep.TaskID),
+				store.ErrInvalidParameter,
+			)
+		}
+		if _, duplicate := seen[dep.TaskID]; duplicate {
+			return nil, NewContextBuildError(
+				ContextErrorSourceInvalid,
+				fmt.Sprintf("dependency %s is duplicated", dep.TaskID),
+				store.ErrInvalidParameter,
+			)
+		}
+		seen[dep.TaskID] = struct{}{}
 		depTask, err := s.taskStore.GetByID(ctx, projectID, dep.TaskID)
 		if err != nil {
-			if errors.Is(err, store.ErrTaskNotFound) {
-				summaries[dep.TaskID] = ""
-				continue
-			}
-			return nil, fmt.Errorf("resolve dependency %s: %w", dep.TaskID, err)
+			return nil, classifyContextSourceError("dependency "+dep.TaskID, err)
+		}
+		if depTask == nil || depTask.ID != dep.TaskID || depTask.ProjectID != projectID {
+			return nil, NewContextBuildError(
+				ContextErrorBuildFailed,
+				fmt.Sprintf("dependency %s returned a mismatched source", dep.TaskID),
+				store.ErrProjectScopeViolation,
+			)
+		}
+		if !contextDependencyStateSatisfied(dep.RequireState, depTask.Status) {
+			return nil, NewContextBuildError(
+				ContextErrorRequiredSourceMissing,
+				fmt.Sprintf("dependency %s no longer satisfies required state", dep.TaskID),
+				store.ErrDependencyNotReady,
+			)
 		}
 		if depTask.Summary != nil && *depTask.Summary != "" {
 			summaries[dep.TaskID] = truncateSummary(*depTask.Summary, maxDependencySummaryChars)
-		} else {
+		} else if depTask.Title != "" {
 			// Fallback to title when no summary is available (PRD context-filtering.md).
 			summaries[dep.TaskID] = depTask.Title
+		} else {
+			return nil, NewContextBuildError(
+				ContextErrorRequiredSourceMissing,
+				fmt.Sprintf("dependency %s has no summary or title", dep.TaskID),
+				store.ErrTaskNotFound,
+			)
 		}
 	}
 	return summaries, nil
@@ -94,50 +161,145 @@ const maxDependencySummaryChars = 2000
 
 // truncateSummary truncates s to maxLen characters, appending "[TRUNCATED]" if needed.
 func truncateSummary(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "[TRUNCATED]"
+	return string(runes[:maxLen]) + "[TRUNCATED]"
 }
 
 // resolveDependencySummaries parses the dependencies JSON field and resolves
 // each dependency task's summary.
 func (s *ContextService) resolveDependencySummaries(ctx context.Context, projectID string, depsJSON json.RawMessage) (map[string]string, error) {
-	if len(depsJSON) == 0 {
-		return make(map[string]string), nil
-	}
-
-	var deps []model.Dependency
-	if err := json.Unmarshal(depsJSON, &deps); err != nil {
-		return nil, fmt.Errorf("parse dependencies json: %w", err)
+	deps, err := decodeContextJSONArray[model.Dependency](depsJSON, "dependencies")
+	if err != nil {
+		return nil, err
 	}
 
 	return s.GetDependencySummaries(ctx, projectID, deps)
 }
 
 // resolveRequiredAPIs parses the required_apis JSON field and queries the
-// contract store for each referenced API. Missing contracts are silently skipped;
-// other errors are propagated.
+// contract store for each referenced API. Every listed contract is a required
+// source; missing, malformed, cross-project, or mismatched sources fail closed.
 func (s *ContextService) resolveRequiredAPIs(ctx context.Context, projectID string, apisJSON json.RawMessage) ([]*model.APIContract, error) {
-	if len(apisJSON) == 0 {
-		return nil, nil
-	}
-
-	var refs []apiRef
-	if err := json.Unmarshal(apisJSON, &refs); err != nil {
-		return nil, fmt.Errorf("parse required_apis json: %w", err)
+	refs, err := decodeContextJSONArray[apiRef](apisJSON, "required_apis")
+	if err != nil {
+		return nil, err
 	}
 
 	contracts := make([]*model.APIContract, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
+		if !validContextAPIMethod(ref.Method) || !validContextAPIPath(ref.Path) {
+			return nil, NewContextBuildError(
+				ContextErrorSourceInvalid,
+				fmt.Sprintf("required API reference %q %q is invalid", ref.Method, ref.Path),
+				store.ErrInvalidParameter,
+			)
+		}
+		identity := ref.Method + " " + ref.Path
+		if _, duplicate := seen[identity]; duplicate {
+			return nil, NewContextBuildError(
+				ContextErrorSourceInvalid,
+				"required API reference "+identity+" is duplicated",
+				store.ErrInvalidParameter,
+			)
+		}
+		seen[identity] = struct{}{}
 		contract, err := s.contractStore.GetByMethodPath(ctx, projectID, ref.Method, ref.Path)
 		if err != nil {
-			if errors.Is(err, store.ErrContractNotFound) {
-				continue
-			}
-			return nil, fmt.Errorf("resolve api contract %s %s: %w", ref.Method, ref.Path, err)
+			return nil, classifyContextSourceError("required API "+identity, err)
+		}
+		if contract == nil || contract.ProjectID != projectID || contract.Method != ref.Method || contract.Path != ref.Path {
+			return nil, NewContextBuildError(
+				ContextErrorBuildFailed,
+				"required API "+identity+" returned a mismatched source",
+				store.ErrProjectScopeViolation,
+			)
 		}
 		contracts = append(contracts, contract)
 	}
 	return contracts, nil
+}
+
+func decodeContextJSONArray[T any](raw json.RawMessage, field string) ([]T, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return make([]T, 0), nil
+	}
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil, NewContextBuildError(
+			ContextErrorSourceInvalid,
+			field+" must be a JSON array, not null",
+			store.ErrInvalidParameter,
+		)
+	}
+	var values []T
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&values); err != nil {
+		return nil, NewContextBuildError(
+			ContextErrorSourceInvalid,
+			field+" must be a strict JSON array",
+			err,
+		)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = store.ErrInvalidParameter
+		}
+		return nil, NewContextBuildError(
+			ContextErrorSourceInvalid,
+			field+" contains trailing data",
+			err,
+		)
+	}
+	if values == nil {
+		values = make([]T, 0)
+	}
+	return values, nil
+}
+
+func classifyContextSourceError(source string, err error) error {
+	if errors.Is(err, store.ErrTaskNotFound) || errors.Is(err, store.ErrContractNotFound) {
+		return NewContextBuildError(
+			ContextErrorRequiredSourceMissing,
+			source+" is required but unavailable",
+			err,
+		)
+	}
+	return NewContextBuildError(
+		ContextErrorBuildFailed,
+		"failed to read "+source,
+		err,
+	)
+}
+
+func validContextAPIMethod(method string) bool {
+	switch method {
+	case "GET", "POST", "PUT", "DELETE", "PATCH":
+		return true
+	default:
+		return false
+	}
+}
+
+func validContextAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/") &&
+		!strings.ContainsRune(path, '\x00') &&
+		!strings.ContainsAny(path, "\r\n")
+}
+
+func contextDependencyStateSatisfied(requireState, currentState string) bool {
+	if requireState == model.TaskStatusValidating {
+		switch currentState {
+		case model.TaskStatusValidating, model.TaskStatusReadyForHumanMerge,
+			model.TaskStatusDone, model.TaskStatusCancelled:
+			return true
+		default:
+			return false
+		}
+	}
+	return currentState == model.TaskStatusDone || currentState == model.TaskStatusCancelled
 }

@@ -3,12 +3,20 @@ export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }
     <aside class="sidebar">
       <div class="sidebar-header">
         <h1>Maestro MCP</h1>
-        <button class="theme-toggle" onClick={onToggleTheme} title="Toggle theme">
+        <button
+          type="button"
+          class="theme-toggle"
+          onClick={onToggleTheme}
+          title="Toggle theme"
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        >
           {theme === 'dark' ? '☀' : '☾'}
         </button>
       </div>
       <div class="sidebar-selector">
+        <label class="sr-only" for="project-select">Select project</label>
         <select
+          id="project-select"
           class="project-select"
           value={selectedId || ''}
           onChange={(e) => onSelect(e.target.value || null)}
@@ -21,6 +29,7 @@ export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }
       </div>
       <nav class="sidebar-nav">
         <button
+          type="button"
           class={`sidebar-item ${!selectedId ? 'active' : ''}`}
           onClick={() => onSelect(null)}
         >
@@ -30,6 +39,7 @@ export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }
         <div class="sidebar-section">Projects</div>
         {projects.map((p) => (
           <button
+            type="button"
             key={p.id}
             class={`sidebar-item ${selectedId === p.id ? 'active' : ''}`}
             onClick={() => onSelect(p.id)}

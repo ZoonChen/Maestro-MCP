@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/config-v3.json",
+  "title": "Maestro v3 Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["server", "database", "oidc", "security", "runner", "gitlab", "backup", "observability"],
+  "properties": {
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listen_address", "public_url", "allowed_origins"],
+      "properties": {
+        "listen_address": {"type": "string", "default": "127.0.0.1:8080"},
+        "public_url": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "allowed_origins": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uri"}
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dsn_secret_ref", "max_open_connections"],
+      "properties": {
+        "dsn_secret_ref": {"type": "string", "minLength": 1},
+        "max_open_connections": {"type": "integer", "minimum": 2, "maximum": 100}
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "client_id", "client_secret_ref", "audience"],
+      "properties": {
+        "issuer": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "client_id": {"type": "string", "minLength": 1},
+        "client_secret_ref": {"type": "string", "minLength": 1},
+        "audience": {"type": "string", "minLength": 1},
+        "access_token_ttl_seconds": {"type": "integer", "const": 900}
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_closed", "secret_store"],
+      "properties": {
+        "fail_closed": {"const": true},
+        "secret_store": {"enum": ["vault", "docker_secret", "file_reference"]}
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enrollment_ttl_seconds", "lease_ttl_seconds", "long_poll_seconds", "heartbeat_seconds", "suspect_seconds", "offline_seconds"],
+      "properties": {
+        "enrollment_ttl_seconds": {"type": "integer", "const": 600},
+        "lease_ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 600},
+        "long_poll_seconds": {"type": "integer", "minimum": 1, "maximum": 30},
+        "heartbeat_seconds": {"type": "integer", "const": 15},
+        "suspect_seconds": {"type": "integer", "const": 45},
+        "offline_seconds": {"type": "integer", "const": 90}
+      }
+    },
+    "gitlab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_hosts", "verify_tls", "allow_cross_host_redirects", "webhook_max_bytes"],
+      "properties": {
+        "allowed_hosts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "hostname"}
+        },
+        "verify_tls": {"const": true},
+        "allow_cross_host_redirects": {"const": false},
+        "webhook_max_bytes": {"type": "integer", "minimum": 1024, "maximum": 10485760}
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_backup_interval_hours", "wal_archive", "rpo_minutes", "rto_minutes"],
+      "properties": {
+        "full_backup_interval_hours": {"type": "integer", "maximum": 24, "minimum": 1},
+        "wal_archive": {"const": true},
+        "rpo_minutes": {"type": "integer", "maximum": 15, "minimum": 1},
+        "rto_minutes": {"type": "integer", "maximum": 240, "minimum": 1}
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_retention_days", "audit_retention_days"],
+      "properties": {
+        "trace_retention_days": {"type": "integer", "const": 30},
+        "audit_retention_days": {"type": "integer", "const": 365},
+        "otlp_endpoint": {"type": "string", "format": "uri"}
+      }
+    }
+  },
+  "examples": [
+    {
+      "server": {
+        "listen_address": "127.0.0.1:8080",
+        "public_url": "https://maestro.internal.example.com",
+        "allowed_origins": ["https://maestro.internal.example.com"]
+      },
+      "database": {"dsn_secret_ref": "docker-secret://maestro-postgres-dsn", "max_open_connections": 20},
+      "oidc": {
+        "issuer": "https://idp.internal.example.com",
+        "client_id": "maestro-control-plane",
+        "client_secret_ref": "docker-secret://maestro-oidc-client-secret",
+        "audience": "maestro",
+        "access_token_ttl_seconds": 900
+      },
+      "security": {"fail_closed": true, "secret_store": "docker_secret"},
+      "runner": {
+        "enrollment_ttl_seconds": 600,
+        "lease_ttl_seconds": 90,
+        "long_poll_seconds": 25,
+        "heartbeat_seconds": 15,
+        "suspect_seconds": 45,
+        "offline_seconds": 90
+      },
+      "gitlab": {
+        "allowed_hosts": ["gitlab.internal.example.com"],
+        "verify_tls": true,
+        "allow_cross_host_redirects": false,
+        "webhook_max_bytes": 1048576
+      },
+      "backup": {"full_backup_interval_hours": 24, "wal_archive": true, "rpo_minutes": 15, "rto_minutes": 240},
+      "observability": {"trace_retention_days": 30, "audit_retention_days": 365, "otlp_endpoint": "https://otel.internal.example.com"}
+    }
+  ]
+}

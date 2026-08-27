@@ -34,7 +34,7 @@ func (h *FeatureHandler) CreateFeature(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *FeatureHandler) UpdateFeature(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 

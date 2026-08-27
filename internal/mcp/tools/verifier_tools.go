@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-// RegisterVerifierTools registers tools used by verifier agents to review and merge tasks.
+// RegisterVerifierTools registers review tools. Final merge remains human-only
+// in GitLab and is deliberately absent from the public MCP surface.
 func RegisterVerifierTools(s *mcpserver.MCPServer, services *Services) {
 	registerGetVerificationTask(s, services)
 	registerSubmitVerification(s, services)
-	registerMergeTask(s, services)
 }
 
 // registerGetVerificationTask adds the get_verification_task tool.
@@ -64,7 +65,7 @@ func registerGetVerificationTask(s *mcpserver.MCPServer, services *Services) {
 func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("submit_verification",
-			mcp.WithDescription("Submit a verification verdict for a task. If passed, the task moves to ready_to_merge. If not passed, it returns to in_progress for the original executor."),
+			mcp.WithDescription("Submit a verification verdict. A pass requires the latest exact immutable Evidence and moves to ready_for_human_merge; a rejection moves to failed for explicit recovery."),
 			mcp.WithString("project_id",
 				mcp.Required(),
 				mcp.Description("ID of the project"),
@@ -105,56 +106,11 @@ func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(fmt.Errorf("verification failed: %w", err)), nil
 			}
 
-			newStatus := "in_progress"
+			newStatus := model.TaskStatusFailed
 			if passed {
-				newStatus = "ready_to_merge"
+				newStatus = model.TaskStatusReadyForHumanMerge
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","passed":%v,"status":"%s"}`, taskID, passed, newStatus)), nil
-		},
-	)
-}
-
-// registerMergeTask adds the merge_task tool.
-func registerMergeTask(s *mcpserver.MCPServer, services *Services) {
-	s.AddTool(
-		mcp.NewTool("merge_task",
-			mcp.WithDescription("Merge a verified, ready_to_merge task. Performs a real git merge of the task branch into the main branch. Transitions the task to 'done' on success or 'merge_conflicted' on conflict."),
-			mcp.WithString("project_id",
-				mcp.Required(),
-				mcp.Description("ID of the project"),
-			),
-			mcp.WithString("task_id",
-				mcp.Required(),
-				mcp.Description("ID of the ready_to_merge task"),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Session ID performing the merge (defaults to 'coordinator')"),
-			),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return errorResult(err), nil
-			}
-			taskID, err := req.RequireString("task_id")
-			if err != nil {
-				return errorResult(err), nil
-			}
-
-			// session_id defaults to "coordinator" for merge operations.
-			sessionID := req.GetString("session_id", "coordinator")
-
-			if err := services.Task.MergeTask(ctx, projectID, taskID, sessionID); err != nil {
-				return errorResult(fmt.Errorf("merge failed: %w", err)), nil
-			}
-
-			// Fetch the task to report its actual post-merge status.
-			task, getErr := services.Task.GetTask(ctx, projectID, taskID)
-			resultStatus := "done"
-			if getErr == nil {
-				resultStatus = task.Status
-			}
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"%s"}`, taskID, resultStatus)), nil
 		},
 	)
 }

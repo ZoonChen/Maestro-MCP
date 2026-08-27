@@ -1,0 +1,112 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "scripts/docs-check.rb"
+      - "scripts/schema-check.rb"
+      - "scripts/mermaid-check.mjs"
+      - "scripts/asyncapi-check.mjs"
+      - "scripts/spec-consistency-check.rb"
+      - ".markdownlint-cli2.yaml"
+      - ".spectral.yaml"
+      - ".lychee.toml"
+      - ".node-version"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "scripts/docs-check.rb"
+      - "scripts/schema-check.rb"
+      - "scripts/mermaid-check.mjs"
+      - "scripts/asyncapi-check.mjs"
+      - "scripts/spec-consistency-check.rb"
+      - ".markdownlint-cli2.yaml"
+      - ".spectral.yaml"
+      - ".lychee.toml"
+      - ".node-version"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install isolated schema and Mermaid tooling
+        shell: bash
+        run: |
+          tool_root="${RUNNER_TEMP}/maestro-doc-tools"
+          npm install --prefix "${tool_root}" --no-audit --no-fund \
+            ajv-cli@5.0.0 ajv-formats@3.0.1 @asyncapi/parser@3.6.3 \
+            mermaid@11.12.0 jsdom@26.1.0
+          echo "DOC_TOOL_ROOT=${tool_root}" >> "${GITHUB_ENV}"
+
+      - name: Check metadata, IDs, traceability and local links
+        run: ruby scripts/docs-check.rb
+
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.18.1
+
+      - name: Validate JSON Schema and examples with AJV
+        env:
+          AJV_BIN: ${{ env.DOC_TOOL_ROOT }}/node_modules/.bin/ajv
+        run: ruby scripts/schema-check.rb
+
+      - name: Check API, MCP and RBAC consistency
+        run: ruby scripts/spec-consistency-check.rb
+
+      - name: Lint OpenAPI and AsyncAPI with Spectral
+        run: >-
+          npx --yes @stoplight/spectral-cli@6.15.0 lint
+          docs/specs/openapi/control-plane.yaml
+          docs/specs/openapi/runner.yaml
+          docs/specs/asyncapi/events.yaml
+          --fail-severity error
+
+      - name: Validate OpenAPI references
+        run: >-
+          npx --yes @redocly/cli@2.47.0 lint
+          docs/specs/openapi/control-plane.yaml
+          docs/specs/openapi/runner.yaml
+
+      - name: Validate AsyncAPI 3.0 catalog
+        run: node scripts/asyncapi-check.mjs "${DOC_TOOL_ROOT}"
+
+      - name: Parse Mermaid diagrams
+        run: node scripts/mermaid-check.mjs "${DOC_TOOL_ROOT}"
+
+      - name: Check external links with Lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --config .lychee.toml
+            README.md
+            docs/**/*.md
+          fail: true
+          jobSummary: true

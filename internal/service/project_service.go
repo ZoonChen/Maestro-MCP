@@ -34,8 +34,16 @@ func NewProjectService(projectStore store.ProjectStore, auditStore store.AuditLo
 // CreateProject registers a new project after validating workspace_path.
 // It rejects relative paths, path traversal (".."), and non-existent directories.
 func (s *ProjectService) CreateProject(ctx context.Context, p *model.Project) error {
-	if err := validateWorkspacePath(p.WorkspacePath); err != nil {
+	if p == nil {
+		return fmt.Errorf("create project: %w: project is required", store.ErrInvalidParameter)
+	}
+	canonicalWorkspace, err := validateWorkspacePath(p.WorkspacePath)
+	if err != nil {
 		return fmt.Errorf("create project %s: %w", p.ID, err)
+	}
+	p.WorkspacePath = canonicalWorkspace
+	if err := ValidateProjectConfig(p.Config); err != nil {
+		return fmt.Errorf("create project %s: %w: %v", p.ID, store.ErrInvalidParameter, err)
 	}
 	if err := s.projectStore.Create(ctx, p); err != nil {
 		return fmt.Errorf("create project %s: %w", p.ID, err)
@@ -43,30 +51,51 @@ func (s *ProjectService) CreateProject(ctx context.Context, p *model.Project) er
 	return nil
 }
 
-// validateWorkspacePath ensures the path has no traversal and is not obviously relative.
-// It checks for ".." patterns and verifies the path exists as a directory if on the
-// native filesystem. Cross-platform test paths (e.g., Unix paths on Windows) are allowed
-// to pass existence checks since the store layer uses test doubles.
-func validateWorkspacePath(p string) error {
-	if p == "" {
-		return fmt.Errorf("workspace_path is required")
+// validateWorkspacePath returns one stable, existing canonical directory.
+// Registration is the trust-boundary: storing a relative, missing, or unresolved
+// symlink path would let the process resolve a different repository later.
+func validateWorkspacePath(raw string) (string, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return "", fmt.Errorf("%w: workspace_path is required", store.ErrInvalidParameter)
 	}
-
-	// Check for path traversal — always reject.
-	if strings.Contains(p, "..") {
-		return fmt.Errorf("%w: workspace_path must not contain '..': %s", store.ErrInvalidParameter, p)
+	if strings.IndexByte(path, 0) >= 0 {
+		return "", fmt.Errorf("%w: workspace_path contains NUL", store.ErrInvalidParameter)
 	}
-
-	// If the path is native-absolute for this OS, verify it exists and is a directory.
-	if filepath.IsAbs(p) {
-		info, err := os.Stat(p)
-		if err == nil && !info.IsDir() {
-			return fmt.Errorf("%w: workspace_path is not a directory: %s", store.ErrInvalidParameter, p)
+	for _, component := range strings.FieldsFunc(filepath.ToSlash(path), func(r rune) bool { return r == '/' }) {
+		if component == ".." {
+			return "", fmt.Errorf("%w: workspace_path must not contain '..': %s", store.ErrInvalidParameter, raw)
 		}
-		// If path doesn't exist, we allow it — will fail later when worktree is created.
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%w: workspace_path must be absolute: %s", store.ErrInvalidParameter, raw)
 	}
 
-	return nil
+	canonical, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve workspace_path %s: %v", store.ErrInvalidParameter, raw, err)
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", fmt.Errorf("%w: canonicalize workspace_path %s: %v", store.ErrInvalidParameter, raw, err)
+	}
+	volumeRoot := filepath.Clean(filepath.VolumeName(canonical) + string(filepath.Separator))
+	if canonical == volumeRoot {
+		return "", fmt.Errorf("%w: filesystem root cannot be a project workspace", store.ErrInvalidParameter)
+	}
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		if resolvedHome, resolveErr := filepath.EvalSymlinks(home); resolveErr == nil && canonical == filepath.Clean(resolvedHome) {
+			return "", fmt.Errorf("%w: user home cannot be a project workspace", store.ErrInvalidParameter)
+		}
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", fmt.Errorf("%w: stat workspace_path %s: %v", store.ErrInvalidParameter, canonical, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%w: workspace_path is not a directory: %s", store.ErrInvalidParameter, canonical)
+	}
+	return canonical, nil
 }
 
 // GetProject retrieves a project by ID. Returns ErrProjectNotFound if the ID does not exist.
@@ -89,6 +118,9 @@ func (s *ProjectService) ListProjects(ctx context.Context, includeArchived bool)
 
 // UpdateProject updates mutable project fields (name, description, config, etc.).
 func (s *ProjectService) UpdateProject(ctx context.Context, p *model.Project) error {
+	if err := ValidateProjectConfig(p.Config); err != nil {
+		return fmt.Errorf("update project %s: %w: %v", p.ID, store.ErrInvalidParameter, err)
+	}
 	if err := s.projectStore.Update(ctx, p); err != nil {
 		return fmt.Errorf("update project %s: %w", p.ID, err)
 	}

@@ -4,8 +4,10 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -114,6 +116,11 @@ type Hub struct {
 
 	// unregister is the inbound channel for client disconnections.
 	unregister chan *Client
+
+	// stopped is closed after the event loop has disconnected all clients.
+	// It prevents producers from blocking during runtime shutdown.
+	stopped     chan struct{}
+	stoppedOnce sync.Once
 }
 
 // Client represents a single WebSocket connection.
@@ -140,6 +147,7 @@ func NewHub() *Hub {
 		register:         make(chan *Client),
 		unregister:       make(chan *Client),
 		clients:          make(map[*Client]bool),
+		stopped:          make(chan struct{}),
 	}
 }
 
@@ -150,8 +158,23 @@ func NewHub() *Hub {
 //   - broadcast: sends a message to all active clients
 //   - broadcastProject: sends a message to clients filtered by project subscription
 func (h *Hub) Run() {
+	h.RunContext(context.Background())
+}
+
+// RunContext starts the hub event loop and drains all clients when ctx is
+// cancelled. The method is synchronous so the composition root can account for
+// it in its WaitGroup.
+func (h *Hub) RunContext(ctx context.Context) {
+	defer h.stoppedOnce.Do(func() { close(h.stopped) })
 	for {
 		select {
+		case <-ctx.Done():
+			for client := range h.clients {
+				delete(h.clients, client)
+				close(client.Send)
+				_ = client.Conn.Close()
+			}
+			return
 		case client := <-h.register:
 			h.clients[client] = true
 			slog.Info("ws hub: client registered", "total_clients", len(h.clients))
@@ -191,24 +214,38 @@ func (h *Hub) Run() {
 
 // RegisterClient enqueues a client for registration with the hub.
 func (h *Hub) RegisterClient(c *Client) {
-	h.register <- c
+	select {
+	case h.register <- c:
+	case <-h.stopped:
+		close(c.Send)
+		_ = c.Conn.Close()
+	}
 }
 
 // UnregisterClient enqueues a client for unregistration from the hub.
 func (h *Hub) UnregisterClient(c *Client) {
-	h.unregister <- c
+	select {
+	case h.unregister <- c:
+	case <-h.stopped:
+	}
 }
 
 // Broadcast sends a message to all connected clients.
 func (h *Hub) Broadcast(event []byte) {
-	h.broadcast <- event
+	select {
+	case h.broadcast <- event:
+	case <-h.stopped:
+	}
 }
 
 // BroadcastProject sends a message only to clients that have subscribed to
 // the given projectID. Clients with empty filters receive all messages.
 // All map access is delegated to the Run goroutine via a channel to avoid data races.
 func (h *Hub) BroadcastProject(projectID string, event []byte) {
-	h.broadcastProject <- projectBroadcast{projectID: projectID, event: event}
+	select {
+	case h.broadcastProject <- projectBroadcast{projectID: projectID, event: event}:
+	case <-h.stopped:
+	}
 }
 
 // ReadPump reads messages from the WebSocket connection.
@@ -266,7 +303,7 @@ func (c *Client) WritePump() {
 
 			// Drain any queued messages to batch them into the same frame.
 			n := len(c.Send)
-			for i := 0; i < n; i++ {
+			for range n {
 				_, _ = w.Write([]byte{'\n'})
 				_, _ = w.Write(<-c.Send)
 			}

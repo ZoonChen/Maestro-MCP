@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -103,6 +104,28 @@ func newTestTask(id, projectID, featureID string) *model.Task {
 func mustCreateTask(t *testing.T, ts TaskStore, task *model.Task) {
 	t.Helper()
 	ctx := context.Background()
+	if task.Status == model.TaskStatusDone {
+		sqliteStore, ok := ts.(*SQLiteTaskStore)
+		if !ok {
+			t.Fatalf("historical done fixture requires SQLiteTaskStore, got %T", ts)
+		}
+		var triggerSQL string
+		err := sqliteStore.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
+			WHERE type = 'trigger' AND name = 'trg_tasks_m0_no_done_insert'`).Scan(&triggerSQL)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("read M0 done trigger: %v", err)
+		}
+		if err == nil {
+			if _, err := sqliteStore.db.ExecContext(ctx, `DROP TRIGGER trg_tasks_m0_no_done_insert`); err != nil {
+				t.Fatalf("open historical done fixture: %v", err)
+			}
+			defer func() {
+				if _, restoreErr := sqliteStore.db.ExecContext(context.Background(), triggerSQL); restoreErr != nil {
+					t.Errorf("restore M0 done trigger: %v", restoreErr)
+				}
+			}()
+		}
+	}
 	if err := ts.Create(ctx, task.ProjectID, task); err != nil {
 		t.Fatalf("Failed to create task %s: %v", task.ID, err)
 	}
@@ -282,10 +305,19 @@ func TestTaskStore_UpdateStatus(t *testing.T) {
 	task.Status = model.TaskStatusPending
 	mustCreateTask(t, ts, task)
 
-	// Update from pending to in_progress
-	err := ts.UpdateStatus(ctx, testProjectID, "T-00201", model.TaskStatusInProgress)
+	// Skipping the durable leased state is rejected.
+	err := ts.UpdateStatus(ctx, testProjectID, "T-00201", model.TaskStatusExecuting)
+	if err == nil {
+		t.Fatal("queued -> executing must be rejected")
+	}
+	// The legal domain path is queued -> leased -> executing.
+	err = ts.UpdateStatus(ctx, testProjectID, "T-00201", model.TaskStatusLeased)
 	if err != nil {
 		t.Fatalf("UpdateStatus returned error: %v", err)
+	}
+	err = ts.UpdateStatus(ctx, testProjectID, "T-00201", model.TaskStatusExecuting)
+	if err != nil {
+		t.Fatalf("UpdateStatus leased -> executing returned error: %v", err)
 	}
 
 	// Verify the status was updated
@@ -293,8 +325,8 @@ func TestTaskStore_UpdateStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID returned error: %v", err)
 	}
-	if got.Status != model.TaskStatusInProgress {
-		t.Errorf("Status after UpdateStatus: got %q, want %q", got.Status, model.TaskStatusInProgress)
+	if got.Status != model.TaskStatusExecuting {
+		t.Errorf("Status after UpdateStatus: got %q, want %q", got.Status, model.TaskStatusExecuting)
 	}
 
 	// Verify updated_at was set by the database (non-empty). SQLite's datetime('now')
@@ -317,8 +349,8 @@ func TestTaskStore_UpdateStatus(t *testing.T) {
 	}
 }
 
-// TestTaskStore_Claim verifies that Claim atomically transitions a pending task
-// to in_progress, sets session/worker IDs, and handles conflict cases.
+// TestTaskStore_Claim verifies that aggregate-unsafe store-level claiming is
+// disabled. TaskService owns the task+lease+worker+history transaction.
 func TestTaskStore_Claim(t *testing.T) {
 	db, ts := setupTestDB(t)
 	seedProjectAndFeature(t, db)
@@ -331,10 +363,10 @@ func TestTaskStore_Claim(t *testing.T) {
 	task.Status = model.TaskStatusPending
 	mustCreateTask(t, ts, task)
 
-	// Claim the pending task
+	// Store-level Claim must fail closed without modifying the task.
 	err := ts.Claim(ctx, testProjectID, "T-00301", "session-001", "worker-001")
-	if err != nil {
-		t.Fatalf("Claim returned error: %v", err)
+	if !errors.Is(err, ErrOperationDisabled) {
+		t.Fatalf("Claim error = %v, want ErrOperationDisabled", err)
 	}
 
 	// Verify the task state after claim
@@ -342,29 +374,23 @@ func TestTaskStore_Claim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID returned error: %v", err)
 	}
-	if got.Status != model.TaskStatusInProgress {
-		t.Errorf("Status after Claim: got %q, want %q", got.Status, model.TaskStatusInProgress)
+	if got.Status != model.TaskStatusQueued {
+		t.Errorf("Status after denied Claim: got %q, want %q", got.Status, model.TaskStatusQueued)
 	}
-	if got.AssignedSessionID == nil || *got.AssignedSessionID != "session-001" {
-		t.Errorf("AssignedSessionID after Claim: got %v, want %q", got.AssignedSessionID, "session-001")
+	if got.AssignedSessionID != nil {
+		t.Errorf("AssignedSessionID after denied Claim: got %v, want nil", got.AssignedSessionID)
 	}
-	if got.AssignedWorkerID == nil || *got.AssignedWorkerID != "worker-001" {
-		t.Errorf("AssignedWorkerID after Claim: got %v, want %q", got.AssignedWorkerID, "worker-001")
+	if got.AssignedWorkerID != nil {
+		t.Errorf("AssignedWorkerID after denied Claim: got %v, want nil", got.AssignedWorkerID)
 	}
-	if got.AssignedAt == nil {
-		t.Error("AssignedAt should not be nil after Claim")
-	}
-
-	// Claim again on the same task should fail with ErrConcurrentConflict
-	err = ts.Claim(ctx, testProjectID, "T-00301", "session-002", "worker-002")
-	if err != ErrConcurrentConflict {
-		t.Errorf("Second Claim: got error %v, want ErrConcurrentConflict", err)
+	if got.AssignedAt != nil {
+		t.Error("AssignedAt should remain nil after denied Claim")
 	}
 
 	// Claim a non-existent task should return ErrTaskNotFound
 	err = ts.Claim(ctx, testProjectID, "T-NONEXIST", "session-001", "worker-001")
-	if err != ErrTaskNotFound {
-		t.Errorf("Claim non-existent task: got error %v, want ErrTaskNotFound", err)
+	if !errors.Is(err, ErrOperationDisabled) {
+		t.Errorf("Claim non-existent task: got error %v, want ErrOperationDisabled", err)
 	}
 }
 
@@ -405,7 +431,7 @@ func TestTaskStore_FindNextAvailable(t *testing.T) {
 	// has a SQL correlation bug.
 	var count int
 	db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tasks WHERE project_id = ? AND role = ? AND status = 'pending'`,
+		`SELECT COUNT(*) FROM tasks WHERE project_id = ? AND role = ? AND status = 'queued'`,
 		testProjectID, model.RoleBackend,
 	).Scan(&count) //nolint:errcheck // test assertion
 	if count != 3 {
@@ -417,7 +443,7 @@ func TestTaskStore_FindNextAvailable(t *testing.T) {
 	var topID string
 	err := db.QueryRowContext(ctx, `
 		SELECT id FROM tasks
-		WHERE project_id = ? AND role = ? AND status = 'pending'
+		WHERE project_id = ? AND role = ? AND status = 'queued'
 		ORDER BY
 		  CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
 		  created_at ASC
@@ -494,7 +520,7 @@ func TestTaskStore_DependencyCheck(t *testing.T) {
 
 	// Check dependency on a pending task requiring "submitted" -> should fail
 	ok, err = ts.CheckDependencies(ctx, testProjectID, []model.Dependency{
-		{TaskID: "T-00501", RequireState: model.TaskStatusSubmitted},
+		{TaskID: "T-00501", RequireState: model.TaskStatusValidating},
 	})
 	if err != nil {
 		t.Fatalf("CheckDependencies returned error: %v", err)
@@ -503,10 +529,14 @@ func TestTaskStore_DependencyCheck(t *testing.T) {
 		t.Error("CheckDependencies for pending task (require submitted): got true, want false")
 	}
 
-	// Update task to done and check again -> should pass
-	if err := ts.UpdateStatus(ctx, testProjectID, "T-00501", model.TaskStatusDone); err != nil {
-		t.Fatalf("UpdateStatus returned error: %v", err)
+	// This test is about dependency evaluation. Replace the fixture with an
+	// already-terminal imported row; generic UpdateStatus is intentionally
+	// forbidden from manufacturing a merged fact.
+	if _, err := db.ExecContext(ctx, `DELETE FROM tasks WHERE project_id = ? AND id = ?`, testProjectID, "T-00501"); err != nil {
+		t.Fatalf("remove queued dependency fixture: %v", err)
 	}
+	task.Status = model.TaskStatusDone
+	mustCreateTask(t, ts, task)
 	ok, err = ts.CheckDependencies(ctx, testProjectID, []model.Dependency{
 		{TaskID: "T-00501", RequireState: model.TaskStatusDone},
 	})

@@ -21,8 +21,10 @@ func NewWorkerStore(db *sql.DB) *SQLiteWorkerStore {
 // workerColumns is the ordered column list for SELECT queries on agent_workers.
 // Order matches DDL: id, session_id, project_id, current_task_id, status,
 // tasks_completed, last_active.
-const workerColumns = `id, session_id, project_id, current_task_id, status,
-	tasks_completed, last_active`
+const workerColumns = `w.id,
+	(SELECT COALESCE(s.external_id, s.id) FROM agent_sessions AS s
+	 WHERE s.id = w.session_id AND s.project_id = w.project_id),
+	w.project_id, w.current_task_id, w.status, w.tasks_completed, w.version, w.last_active`
 
 // scanWorker scans a single row into an AgentWorker struct.
 func scanWorker(scanner interface {
@@ -38,6 +40,7 @@ func scanWorker(scanner interface {
 		&currentTaskID,
 		&w.Status,
 		&w.TasksCompleted,
+		&w.Version,
 		&w.LastActive,
 	)
 	if err != nil {
@@ -55,17 +58,28 @@ func scanWorker(scanner interface {
 // The DDL PRIMARY KEY is (id, session_id). sessionID comes from the method
 // parameter; w.ID maps to the DDL's `id` column.
 func (s *SQLiteWorkerStore) Create(ctx context.Context, projectID, sessionID string, w *model.AgentWorker) error {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return fmt.Errorf("worker create session: %w", err)
+	}
+	if w.Status == "" {
+		w.Status = model.WorkerStatusIdle
+	}
+	if !model.IsWorkerStatus(w.Status) {
+		return fmt.Errorf("worker create: %w: invalid status %q", ErrTaskStateInvalid, w.Status)
+	}
 	const query = `INSERT INTO agent_workers
-		(id, session_id, project_id, current_task_id, status, tasks_completed, last_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
+		(id, session_id, project_id, current_task_id, status, tasks_completed, version, last_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := s.db.ExecContext(ctx, query,
+	_, err = s.db.ExecContext(ctx, query,
 		w.ID,
-		sessionID,
+		sessionKey,
 		projectID,
 		w.CurrentTaskID,
 		w.Status,
 		w.TasksCompleted,
+		w.Version,
 		w.LastActive,
 	)
 	if err != nil {
@@ -77,11 +91,15 @@ func (s *SQLiteWorkerStore) Create(ctx context.Context, projectID, sessionID str
 // GetByID retrieves a worker by its id, scoped to projectID and sessionID.
 // The DDL PRIMARY KEY is (id, session_id).
 func (s *SQLiteWorkerStore) GetByID(ctx context.Context, projectID, sessionID, workerID string) (*model.AgentWorker, error) {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("worker get session: %w", err)
+	}
 	query := fmt.Sprintf(`
-		SELECT %s FROM agent_workers
-		WHERE id = ? AND session_id = ? AND project_id = ?`, workerColumns)
+		SELECT %s FROM agent_workers AS w
+		WHERE w.id = ? AND w.session_id = ? AND w.project_id = ?`, workerColumns)
 
-	row := s.db.QueryRowContext(ctx, query, workerID, sessionID, projectID)
+	row := s.db.QueryRowContext(ctx, query, workerID, sessionKey, projectID)
 	w, err := scanWorker(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -94,12 +112,16 @@ func (s *SQLiteWorkerStore) GetByID(ctx context.Context, projectID, sessionID, w
 
 // ListBySession returns all workers belonging to a session.
 func (s *SQLiteWorkerStore) ListBySession(ctx context.Context, projectID, sessionID string) ([]*model.AgentWorker, error) {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("worker list session: %w", err)
+	}
 	query := fmt.Sprintf(`
-		SELECT %s FROM agent_workers
-		WHERE project_id = ? AND session_id = ?
-		ORDER BY last_active ASC`, workerColumns)
+		SELECT %s FROM agent_workers AS w
+		WHERE w.project_id = ? AND w.session_id = ?
+		ORDER BY w.last_active ASC`, workerColumns)
 
-	rows, err := s.db.QueryContext(ctx, query, projectID, sessionID)
+	rows, err := s.db.QueryContext(ctx, query, projectID, sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("worker list by session: %w", err)
 	}
@@ -122,8 +144,15 @@ func (s *SQLiteWorkerStore) ListBySession(ctx context.Context, projectID, sessio
 // UpdateCurrentTask sets the worker's current_task_id. Pass empty taskID to
 // clear the assignment. Also refreshes last_active.
 func (s *SQLiteWorkerStore) UpdateCurrentTask(ctx context.Context, projectID, sessionID, workerID, taskID string) error {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return fmt.Errorf("worker update current task session: %w", err)
+	}
 	const query = `UPDATE agent_workers
-		SET current_task_id = ?, last_active = datetime('now')
+		SET current_task_id = ?,
+		    status = CASE WHEN ? IS NULL THEN 'idle' ELSE 'busy' END,
+		    version = version + 1,
+		    last_active = datetime('now')
 		WHERE id = ? AND session_id = ? AND project_id = ?`
 
 	var taskIDVal *string
@@ -131,7 +160,7 @@ func (s *SQLiteWorkerStore) UpdateCurrentTask(ctx context.Context, projectID, se
 		taskIDVal = &taskID
 	}
 
-	result, err := s.db.ExecContext(ctx, query, taskIDVal, workerID, sessionID, projectID)
+	result, err := s.db.ExecContext(ctx, query, taskIDVal, taskIDVal, workerID, sessionKey, projectID)
 	if err != nil {
 		return fmt.Errorf("worker update current task: %w", err)
 	}
@@ -147,8 +176,12 @@ func (s *SQLiteWorkerStore) UpdateCurrentTask(ctx context.Context, projectID, se
 
 // Delete removes a worker record.
 func (s *SQLiteWorkerStore) Delete(ctx context.Context, projectID, sessionID, workerID string) error {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return fmt.Errorf("worker delete session: %w", err)
+	}
 	const query = `DELETE FROM agent_workers WHERE id = ? AND session_id = ? AND project_id = ?`
-	result, err := s.db.ExecContext(ctx, query, workerID, sessionID, projectID)
+	result, err := s.db.ExecContext(ctx, query, workerID, sessionKey, projectID)
 	if err != nil {
 		return fmt.Errorf("worker delete: %w", err)
 	}
@@ -164,13 +197,17 @@ func (s *SQLiteWorkerStore) Delete(ctx context.Context, projectID, sessionID, wo
 
 // GetByIdle retrieves an idle worker from the given session (status='idle', no current_task_id).
 func (s *SQLiteWorkerStore) GetByIdle(ctx context.Context, projectID, sessionID string) (*model.AgentWorker, error) {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("worker get idle session: %w", err)
+	}
 	query := fmt.Sprintf(`
-		SELECT %s FROM agent_workers
-		WHERE project_id = ? AND session_id = ? AND status = 'idle' AND current_task_id IS NULL
-		ORDER BY last_active ASC
+		SELECT %s FROM agent_workers AS w
+		WHERE w.project_id = ? AND w.session_id = ? AND w.status = 'idle' AND w.current_task_id IS NULL
+		ORDER BY w.last_active ASC
 		LIMIT 1`, workerColumns)
 
-	row := s.db.QueryRowContext(ctx, query, projectID, sessionID)
+	row := s.db.QueryRowContext(ctx, query, projectID, sessionKey)
 	w, err := scanWorker(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -183,13 +220,21 @@ func (s *SQLiteWorkerStore) GetByIdle(ctx context.Context, projectID, sessionID 
 
 // Update updates a worker's status, tasks_completed, and last_active timestamp.
 func (s *SQLiteWorkerStore) Update(ctx context.Context, projectID, sessionID string, w *model.AgentWorker) error {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return fmt.Errorf("worker update session: %w", err)
+	}
+	if !model.IsWorkerStatus(w.Status) {
+		return fmt.Errorf("worker update: %w: invalid status %q", ErrTaskStateInvalid, w.Status)
+	}
 	const query = `UPDATE agent_workers
-		SET status = ?, tasks_completed = ?, current_task_id = ?, last_active = datetime('now')
-		WHERE id = ? AND session_id = ? AND project_id = ?`
+		SET status = ?, tasks_completed = ?, current_task_id = ?,
+		    version = version + 1, last_active = datetime('now')
+		WHERE id = ? AND session_id = ? AND project_id = ? AND version = ?`
 
 	result, err := s.db.ExecContext(ctx, query,
 		w.Status, w.TasksCompleted, w.CurrentTaskID,
-		w.ID, sessionID, projectID,
+		w.ID, sessionKey, projectID, w.Version,
 	)
 	if err != nil {
 		return fmt.Errorf("worker update: %w", err)
@@ -199,16 +244,21 @@ func (s *SQLiteWorkerStore) Update(ctx context.Context, projectID, sessionID str
 		return fmt.Errorf("worker update rows affected: %w", err)
 	}
 	if n == 0 {
-		return ErrWorkerNotFound
+		return ErrConcurrentConflict
 	}
+	w.Version++
 	return nil
 }
 
 // CountBySession returns the number of workers under a session (for capacity checks).
 func (s *SQLiteWorkerStore) CountBySession(ctx context.Context, projectID, sessionID string) (int, error) {
+	sessionKey, err := resolveSessionKey(ctx, s.db, projectID, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("worker count session: %w", err)
+	}
 	const query = `SELECT COUNT(*) FROM agent_workers WHERE project_id = ? AND session_id = ?`
 	var count int
-	err := s.db.QueryRowContext(ctx, query, projectID, sessionID).Scan(&count)
+	err = s.db.QueryRowContext(ctx, query, projectID, sessionKey).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("worker count by session: %w", err)
 	}
