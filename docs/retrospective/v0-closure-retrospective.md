@@ -6,8 +6,8 @@
 ## 1. 目标提交与 CI Evidence
 
 - 收口分支：`m0/target-candidate`（单一收口提交：代码 + 测试 + 文档状态翻转 + 矩阵翻转 + 门禁脚本修正）。
-- 目标提交（PR head）：`<PENDING：PR 创建后回填>`
-- PR 链接：`<PENDING：PR 创建后回填>`
+- 目标提交（PR head）：`76bfcf7095e75660f288c5beb3e7e385c00b319a`（本复盘回填提交之上的 head 以 PR 页面为准）
+- PR 链接：https://github.com/ZoonChen/Maestro-MCP/pull/1
 - 远程 CI Evidence：三个工作流（`ci.yml` / `docs.yml` / `m0-runtime.yml`）在 PR head 全绿；M0 运行时 Evidence = artifact `m0-runtime-<PR head SHA>`（binary + SBOM，30 天保留，关键结论以本文与 PR 描述留档）。
 - `last_verified_commit: HEAD` 为自引用绑定字面量：文档声称的验证提交即携带该文档的收口提交本身；实际 SHA 以本节 PR head 记录为准（矩阵 `Verified Commit` 同语义）。
 
