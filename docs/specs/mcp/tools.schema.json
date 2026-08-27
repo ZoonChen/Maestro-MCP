@@ -1,0 +1,1305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
+  "title": "Maestro MCP v3 Tool Catalog",
+  "description": "Authoritative catalog for the fourteen public Maestro MCP tools. Principal and resource scope are derived from the authenticated server context.",
+  "type": "object",
+  "required": ["version", "work_item_states", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "3.0"
+    },
+    "work_item_states": {
+      "$ref": "#/$defs/workItemStates"
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "items": {
+        "$ref": "#/$defs/tool"
+      },
+      "allOf": [
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "list_work_items"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_work_item"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_task_context"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_next_task"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "heartbeat_task"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "submit_task_result"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "report_blocker"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_quality_status"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_gitlab_status"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "create_work_item"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "cancel_work_item"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "retry_work_item"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_verification_task"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "submit_verification"}}},
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "workItemStates": {
+      "const": [
+        "draft",
+        "queued",
+        "leased",
+        "executing",
+        "validating",
+        "ready_for_human_merge",
+        "done",
+        "blocked",
+        "cancelling",
+        "cancelled",
+        "failed",
+        "needs_human"
+      ]
+    },
+    "toolName": {
+      "enum": [
+        "list_work_items",
+        "get_work_item",
+        "get_task_context",
+        "get_next_task",
+        "heartbeat_task",
+        "submit_task_result",
+        "report_blocker",
+        "get_quality_status",
+        "get_gitlab_status",
+        "create_work_item",
+        "cancel_work_item",
+        "retry_work_item",
+        "get_verification_task",
+        "submit_verification"
+      ]
+    },
+    "idempotency": {
+      "type": "object",
+      "required": [
+        "required",
+        "key_field",
+        "scope",
+        "ttl_seconds",
+        "replay_semantics",
+        "payload_mismatch_error"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "required": {"const": true},
+        "key_field": {"const": "idempotency_key"},
+        "scope": {
+          "enum": [
+            "principal_project_tool",
+            "principal_project_queue",
+            "principal_work_item_tool",
+            "principal_lease_tool",
+            "principal_verification_lease_tool"
+          ]
+        },
+        "ttl_seconds": {
+          "type": "integer",
+          "minimum": 300,
+          "maximum": 604800
+        },
+        "replay_semantics": {"const": "return_original_result"},
+        "payload_mismatch_error": {"const": "IDEMPOTENCY_KEY_REUSED"}
+      }
+    },
+    "concurrency": {
+      "type": "object",
+      "required": ["strategy", "token_field", "conflict_error"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": ["expected_absent", "expected_version", "lease_version", "queue_version"]
+        },
+        "token_field": {
+          "enum": ["expected_absent", "expected_version", "lease_version", "queue_version"]
+        },
+        "conflict_error": {"const": "CONCURRENCY_CONFLICT"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "expected_absent"}}},
+          "then": {"properties": {"token_field": {"const": "expected_absent"}}}
+        },
+        {
+          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "expected_version"}}},
+          "then": {"properties": {"token_field": {"const": "expected_version"}}}
+        },
+        {
+          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "lease_version"}}},
+          "then": {"properties": {"token_field": {"const": "lease_version"}}}
+        },
+        {
+          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "queue_version"}}},
+          "then": {"properties": {"token_field": {"const": "queue_version"}}}
+        }
+      ]
+    },
+    "readOnlyTool": {
+      "type": "object",
+      "required": ["name", "description", "mutating", "required_permission", "input_schema"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/toolName"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 500},
+        "mutating": {"const": false},
+        "required_permission": {"type": "string", "minLength": 1, "maxLength": 128},
+        "input_schema": {"type": "object"}
+      }
+    },
+    "mutatingTool": {
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "mutating",
+        "required_permission",
+        "audit_event",
+        "idempotency",
+        "concurrency",
+        "input_schema"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/toolName"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 500},
+        "mutating": {"const": true},
+        "required_permission": {"type": "string", "minLength": 1, "maxLength": 128},
+        "audit_event": {
+          "type": "string",
+          "pattern": "^mcp\\.[a-z0-9_]+\\.(requested|recorded)$"
+        },
+        "idempotency": {"$ref": "#/$defs/idempotency"},
+        "concurrency": {"$ref": "#/$defs/concurrency"},
+        "input_schema": {"type": "object"}
+      }
+    },
+    "listWorkItems": {
+      "allOf": [
+        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "properties": {
+            "name": {"const": "list_work_items"},
+            "required_permission": {"const": "work_item.read"},
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "states": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 12,
+                    "items": {
+                      "enum": [
+                        "draft",
+                        "queued",
+                        "leased",
+                        "executing",
+                        "validating",
+                        "ready_for_human_merge",
+                        "done",
+                        "blocked",
+                        "cancelling",
+                        "cancelled",
+                        "failed",
+                        "needs_human"
+                      ]
+                    }
+                  },
+                  "cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
+                  "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getWorkItem": {
+      "allOf": [
+        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "properties": {
+            "name": {"const": "get_work_item"},
+            "required_permission": {"const": "work_item.read"},
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"}
+                },
+                "required": ["work_item_id"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getTaskContext": {
+      "allOf": [
+        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "properties": {
+            "name": {"const": "get_task_context"},
+            "required_permission": {"const": "work_item.read"},
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"}
+                },
+                "required": ["work_item_id"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getNextTask": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "get_next_task"},
+            "required_permission": {"const": "work_item.claim"},
+            "audit_event": {"const": "mcp.get_next_task.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_project_queue"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "queue_version"},
+                "token_field": {"const": "queue_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "capabilities": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 32,
+                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "queue_version": {"type": "integer", "minimum": 0}
+                },
+                "required": ["idempotency_key", "queue_version"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "heartbeatTask": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "heartbeat_task"},
+            "required_permission": {"const": "work_item.heartbeat"},
+            "audit_event": {"const": "mcp.heartbeat_task.recorded"},
+            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "lease_version"},
+                "token_field": {"const": "lease_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": ["work_item_id", "lease_id", "lease_version", "idempotency_key"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "submitTaskResult": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "submit_task_result"},
+            "required_permission": {"const": "work_item.submit"},
+            "audit_event": {"const": "mcp.submit_task_result.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "lease_version"},
+                "token_field": {"const": "lease_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "commit_sha": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "evidence_refs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "work_item_id",
+                  "lease_id",
+                  "lease_version",
+                  "commit_sha",
+                  "evidence_refs",
+                  "idempotency_key"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reportBlocker": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "report_blocker"},
+            "required_permission": {"const": "work_item.block"},
+            "audit_event": {"const": "mcp.report_blocker.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "lease_version"},
+                "token_field": {"const": "lease_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "evidence_refs": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "work_item_id",
+                  "lease_id",
+                  "lease_version",
+                  "reason",
+                  "idempotency_key"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getQualityStatus": {
+      "allOf": [
+        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "properties": {
+            "name": {"const": "get_quality_status"},
+            "required_permission": {"const": "quality.read"},
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"}
+                },
+                "required": ["work_item_id"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getGitLabStatus": {
+      "allOf": [
+        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "properties": {
+            "name": {"const": "get_gitlab_status"},
+            "required_permission": {"const": "gitlab.status.read"},
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"}
+                },
+                "required": ["work_item_id"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "createWorkItem": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "create_work_item"},
+            "required_permission": {"const": "work_item.create"},
+            "audit_event": {"const": "mcp.create_work_item.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_project_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "expected_absent"},
+                "token_field": {"const": "expected_absent"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "client_work_item_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"
+                  },
+                  "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                  "description": {"type": "string", "minLength": 1, "maxLength": 20000},
+                  "kind": {
+                    "enum": ["feature", "bugfix", "test", "integration", "security", "maintenance"]
+                  },
+                  "priority": {"enum": ["low", "normal", "high", "critical"]},
+                  "repository_id": {"type": "string", "format": "uuid"},
+                  "target_branch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*[~^:?*\\[\\]\\\\])[ -~]+$"
+                  },
+                  "depends_on": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "format": "uuid"}
+                  },
+                  "expected_absent": {"const": true},
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "client_work_item_key",
+                  "title",
+                  "description",
+                  "kind",
+                  "priority",
+                  "repository_id",
+                  "target_branch",
+                  "expected_absent",
+                  "idempotency_key"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cancelWorkItem": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "cancel_work_item"},
+            "required_permission": {"const": "work_item.cancel"},
+            "audit_event": {"const": "mcp.cancel_work_item.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_work_item_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "expected_version"},
+                "token_field": {"const": "expected_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "expected_version": {"type": "integer", "minimum": 0},
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "retryWorkItem": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "retry_work_item"},
+            "required_permission": {"const": "work_item.retry"},
+            "audit_event": {"const": "mcp.retry_work_item.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_work_item_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "expected_version"},
+                "token_field": {"const": "expected_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "expected_version": {"type": "integer", "minimum": 0},
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "getVerificationTask": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "get_verification_task"},
+            "required_permission": {"const": "verification.claim"},
+            "audit_event": {"const": "mcp.get_verification_task.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_project_queue"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "queue_version"},
+                "token_field": {"const": "queue_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "capabilities": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 32,
+                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "queue_version": {"type": "integer", "minimum": 0}
+                },
+                "required": ["idempotency_key", "queue_version"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "submitVerification": {
+      "allOf": [
+        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "properties": {
+            "name": {"const": "submit_verification"},
+            "required_permission": {"const": "verification.submit"},
+            "audit_event": {"const": "mcp.submit_verification.requested"},
+            "idempotency": {"properties": {"scope": {"const": "principal_verification_lease_tool"}}},
+            "concurrency": {
+              "properties": {
+                "strategy": {"const": "lease_version"},
+                "token_field": {"const": "lease_version"}
+              }
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "verification_lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "decision": {"enum": ["approved", "rejected", "needs_human"]},
+                  "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "evidence_refs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "work_item_id",
+                  "verification_lease_id",
+                  "lease_version",
+                  "decision",
+                  "summary",
+                  "evidence_refs",
+                  "idempotency_key"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tool": {
+      "oneOf": [
+        {"$ref": "#/$defs/listWorkItems"},
+        {"$ref": "#/$defs/getWorkItem"},
+        {"$ref": "#/$defs/getTaskContext"},
+        {"$ref": "#/$defs/getNextTask"},
+        {"$ref": "#/$defs/heartbeatTask"},
+        {"$ref": "#/$defs/submitTaskResult"},
+        {"$ref": "#/$defs/reportBlocker"},
+        {"$ref": "#/$defs/getQualityStatus"},
+        {"$ref": "#/$defs/getGitLabStatus"},
+        {"$ref": "#/$defs/createWorkItem"},
+        {"$ref": "#/$defs/cancelWorkItem"},
+        {"$ref": "#/$defs/retryWorkItem"},
+        {"$ref": "#/$defs/getVerificationTask"},
+        {"$ref": "#/$defs/submitVerification"}
+      ]
+    }
+  },
+  "examples": [
+    {
+      "version": "3.0",
+      "work_item_states": [
+        "draft",
+        "queued",
+        "leased",
+        "executing",
+        "validating",
+        "ready_for_human_merge",
+        "done",
+        "blocked",
+        "cancelling",
+        "cancelled",
+        "failed",
+        "needs_human"
+      ],
+      "tools": [
+        {
+          "name": "list_work_items",
+          "description": "List visible work items with optional state filtering and cursor pagination.",
+          "mutating": false,
+          "required_permission": "work_item.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "states": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 12,
+                "items": {
+                  "enum": [
+                    "draft",
+                    "queued",
+                    "leased",
+                    "executing",
+                    "validating",
+                    "ready_for_human_merge",
+                    "done",
+                    "blocked",
+                    "cancelling",
+                    "cancelled",
+                    "failed",
+                    "needs_human"
+                  ]
+                }
+              },
+              "cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
+              "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+            },
+            "required": []
+          }
+        },
+        {
+          "name": "get_work_item",
+          "description": "Read one visible work item by its opaque identifier.",
+          "mutating": false,
+          "required_permission": "work_item.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"}
+            },
+            "required": ["work_item_id"]
+          }
+        },
+        {
+          "name": "get_task_context",
+          "description": "Read the filtered, policy-bounded context for one work item.",
+          "mutating": false,
+          "required_permission": "work_item.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"}
+            },
+            "required": ["work_item_id"]
+          }
+        },
+        {
+          "name": "get_next_task",
+          "description": "Atomically lease the next eligible execution task from the authorized queue.",
+          "mutating": true,
+          "required_permission": "work_item.claim",
+          "audit_event": "mcp.get_next_task.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_queue",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "queue_version",
+            "token_field": "queue_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "capabilities": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 32,
+                "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "queue_version": {"type": "integer", "minimum": 0}
+            },
+            "required": ["idempotency_key", "queue_version"]
+          }
+        },
+        {
+          "name": "heartbeat_task",
+          "description": "Renew an active execution lease without changing its ownership.",
+          "mutating": true,
+          "required_permission": "work_item.heartbeat",
+          "audit_event": "mcp.heartbeat_task.recorded",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_lease_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "lease_version",
+            "token_field": "lease_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": ["work_item_id", "lease_id", "lease_version", "idempotency_key"]
+          }
+        },
+        {
+          "name": "submit_task_result",
+          "description": "Submit an execution result for fail-closed validation against the leased work item.",
+          "mutating": true,
+          "required_permission": "work_item.submit",
+          "audit_event": "mcp.submit_task_result.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_lease_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "lease_version",
+            "token_field": "lease_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "commit_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+              "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "work_item_id",
+              "lease_id",
+              "lease_version",
+              "commit_sha",
+              "evidence_refs",
+              "idempotency_key"
+            ]
+          }
+        },
+        {
+          "name": "report_blocker",
+          "description": "Record an evidenced blocker against the currently leased work item.",
+          "mutating": true,
+          "required_permission": "work_item.block",
+          "audit_event": "mcp.report_blocker.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_lease_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "lease_version",
+            "token_field": "lease_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": ["work_item_id", "lease_id", "lease_version", "reason", "idempotency_key"]
+          }
+        },
+        {
+          "name": "get_quality_status",
+          "description": "Read required gates and exact-SHA evidence status for one work item.",
+          "mutating": false,
+          "required_permission": "quality.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"}
+            },
+            "required": ["work_item_id"]
+          }
+        },
+        {
+          "name": "get_gitlab_status",
+          "description": "Read synchronized branch, merge request, pipeline, and reconciliation status.",
+          "mutating": false,
+          "required_permission": "gitlab.status.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"}
+            },
+            "required": ["work_item_id"]
+          }
+        },
+        {
+          "name": "create_work_item",
+          "description": "Create one project-scoped work item from a caller-stable key.",
+          "mutating": true,
+          "required_permission": "work_item.create",
+          "audit_event": "mcp.create_work_item.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_absent",
+            "token_field": "expected_absent",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "client_work_item_key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+              "title": {"type": "string", "minLength": 1, "maxLength": 240},
+              "description": {"type": "string", "minLength": 1, "maxLength": 20000},
+              "kind": {"enum": ["feature", "bugfix", "test", "integration", "security", "maintenance"]},
+              "priority": {"enum": ["low", "normal", "high", "critical"]},
+              "repository_id": {"type": "string", "format": "uuid"},
+              "target_branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*[~^:?*\\[\\]\\\\])[ -~]+$"
+              },
+              "depends_on": {
+                "type": "array",
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {"type": "string", "format": "uuid"}
+              },
+              "expected_absent": {"const": true},
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "client_work_item_key",
+              "title",
+              "description",
+              "kind",
+              "priority",
+              "repository_id",
+              "target_branch",
+              "expected_absent",
+              "idempotency_key"
+            ]
+          }
+        },
+        {
+          "name": "cancel_work_item",
+          "description": "Request cancellation of one work item at an expected aggregate version.",
+          "mutating": true,
+          "required_permission": "work_item.cancel",
+          "audit_event": "mcp.cancel_work_item.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_work_item_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "expected_version": {"type": "integer", "minimum": 0},
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+          }
+        },
+        {
+          "name": "retry_work_item",
+          "description": "Queue a permitted retry of one terminal or human-held work item.",
+          "mutating": true,
+          "required_permission": "work_item.retry",
+          "audit_event": "mcp.retry_work_item.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_work_item_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "expected_version": {"type": "integer", "minimum": 0},
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+          }
+        },
+        {
+          "name": "get_verification_task",
+          "description": "Atomically lease the next eligible verification task for an independent verifier.",
+          "mutating": true,
+          "required_permission": "verification.claim",
+          "audit_event": "mcp.get_verification_task.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_queue",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "queue_version",
+            "token_field": "queue_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "capabilities": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 32,
+                "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "queue_version": {"type": "integer", "minimum": 0}
+            },
+            "required": ["idempotency_key", "queue_version"]
+          }
+        },
+        {
+          "name": "submit_verification",
+          "description": "Submit an independent verification decision with immutable evidence references.",
+          "mutating": true,
+          "required_permission": "verification.submit",
+          "audit_event": "mcp.submit_verification.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_verification_lease_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "lease_version",
+            "token_field": "lease_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          },
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "verification_lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "decision": {"enum": ["approved", "rejected", "needs_human"]},
+              "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "work_item_id",
+              "verification_lease_id",
+              "lease_version",
+              "decision",
+              "summary",
+              "evidence_refs",
+              "idempotency_key"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

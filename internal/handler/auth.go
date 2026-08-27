@@ -10,56 +10,65 @@ import (
 )
 
 // AuthMiddleware returns a Gin middleware that validates Bearer tokens.
-// If authToken is empty, all requests are allowed (auth disabled).
-// Exempt paths: /dashboard, /dashboard/assets/*, and the root redirect.
+// Only liveness/readiness endpoints are anonymous. An empty server token is a
+// fail-closed configuration: every non-health request is rejected.
 func AuthMiddleware(authToken string) gin.HandlerFunc {
-	enabled := authToken != ""
 	return func(c *gin.Context) {
-		if !enabled {
+		path := c.Request.URL.Path
+		if isAnonymousHealthPath(path) {
 			c.Next()
 			return
 		}
 
-		// Exempt static assets and dashboard from auth.
-		path := c.Request.URL.Path
-		if path == "/" || strings.HasPrefix(path, "/dashboard") {
-			c.Next()
+		if authToken == "" {
+			c.Header("WWW-Authenticate", `Bearer realm="maestro"`)
+			c.Abort()
+			staticErrorReply(c, http.StatusUnauthorized, "AUTH_NOT_CONFIGURED", "Authentication is not configured")
 			return
 		}
 
 		// Extract Bearer token from Authorization header.
 		header := c.GetHeader("Authorization")
 		if header == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error":      "missing Authorization header",
-				"error_code": "AUTH_REQUIRED",
-			})
+			c.Header("WWW-Authenticate", `Bearer realm="maestro"`)
+			c.Abort()
+			staticErrorReply(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Authentication is required")
 			return
 		}
 
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error":      "invalid Authorization header format, expected: Bearer <token>",
-				"error_code": "AUTH_INVALID_FORMAT",
-			})
+			c.Header("WWW-Authenticate", `Bearer realm="maestro", error="invalid_request"`)
+			c.Abort()
+			staticErrorReply(c, http.StatusUnauthorized, "AUTH_INVALID_FORMAT", "Authorization header format is invalid")
 			return
 		}
 
 		// Constant-time comparison to prevent timing attacks.
 		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(authToken)) != 1 {
+			route := c.FullPath()
+			if route == "" {
+				route = "<unmatched>"
+			}
 			slog.Warn("auth: invalid token",
-				"remote_addr", c.ClientIP(),
-				"path", path,
+				"route", route,
 				"method", c.Request.Method,
 			)
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error":      "invalid or expired token",
-				"error_code": "AUTH_INVALID_TOKEN",
-			})
+			c.Header("WWW-Authenticate", `Bearer realm="maestro", error="invalid_token"`)
+			c.Abort()
+			staticErrorReply(c, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "Authentication token is invalid or expired")
 			return
 		}
 
 		c.Next()
+	}
+}
+
+func isAnonymousHealthPath(path string) bool {
+	switch path {
+	case "/health", "/livez", "/readyz":
+		return true
+	default:
+		return false
 	}
 }

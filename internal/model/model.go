@@ -11,10 +11,12 @@ import "encoding/json"
 
 // TestRequirements corresponds to tasks.test_requirements JSON field.
 type TestRequirements struct {
-	Command        string  `json:"command"`
-	CoverageFormat string  `json:"coverage_format"`
-	CoveragePath   string  `json:"coverage_path"`
-	MinCoverage    float64 `json:"min_coverage"`
+	ProfileID      string   `json:"profile_id"`
+	ProfileVersion string   `json:"profile_version"`
+	ProfileDigest  string   `json:"profile_digest"`
+	CoverageFormat string   `json:"coverage_format"`
+	CoveragePath   string   `json:"coverage_path"`
+	MinCoverage    *float64 `json:"min_coverage"`
 }
 
 // Dependency corresponds to an element in the tasks.dependencies JSON array.
@@ -25,34 +27,50 @@ type Dependency struct {
 
 // ProjectConfig corresponds to projects.config JSON field.
 type ProjectConfig struct {
-	DefaultTestCommand    *string  `json:"default_test_command,omitempty"`
-	DefaultCoverageFormat *string  `json:"default_coverage_format,omitempty"`
-	DefaultCoveragePath   *string  `json:"default_coverage_path,omitempty"`
-	DefaultMinCoverage    *float64 `json:"default_min_coverage,omitempty"`
-	DefaultTestTimeout    *int     `json:"default_test_timeout,omitempty"`
-	MaxWorktrees          *int     `json:"max_worktrees,omitempty"`
-	MergeTargetBranch     *string  `json:"merge_target_branch,omitempty"`
-	ContractPaths         []string `json:"contract_paths,omitempty"`
-	ContractProvider      *string  `json:"contract_provider,omitempty"`
-	ContractWatch         *bool    `json:"contract_watch,omitempty"`
-	AllowedTestCommands   []string `json:"allowed_test_commands,omitempty"`
+	DefaultCommandProfileID      *string  `json:"default_command_profile_id,omitempty"`
+	DefaultCommandProfileVersion *string  `json:"default_command_profile_version,omitempty"`
+	DefaultCommandProfileDigest  *string  `json:"default_command_profile_digest,omitempty"`
+	DefaultCoverageFormat        *string  `json:"default_coverage_format,omitempty"`
+	DefaultCoveragePath          *string  `json:"default_coverage_path,omitempty"`
+	DefaultMinCoverage           *float64 `json:"default_min_coverage,omitempty"`
+	DefaultTestTimeout           *int     `json:"default_test_timeout,omitempty"`
+	MaxWorktrees                 *int     `json:"max_worktrees,omitempty"`
+	MergeTargetBranch            *string  `json:"merge_target_branch,omitempty"`
+	ContractPaths                []string `json:"contract_paths,omitempty"`
+	ContractProvider             *string  `json:"contract_provider,omitempty"`
+	ContractWatch                *bool    `json:"contract_watch,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
 // Status constants
 // ---------------------------------------------------------------------------
 
-// Task status constants — used in tasks.status column.
+// Canonical WorkItem status constants — used in tasks.status and v3 wire data.
+// The deprecated Go names below are aliases only so the M0 migration can be
+// landed without an all-at-once transport rewrite. Their values are canonical;
+// legacy strings are accepted only by LegacyTaskStatusToCanonical during DB
+// migration and must never be persisted by new writes.
 const (
-	TaskStatusPending         = "pending"
-	TaskStatusInProgress      = "in_progress"
-	TaskStatusSubmitted       = "submitted"
-	TaskStatusVerifying       = "verifying"
-	TaskStatusReadyToMerge    = "ready_to_merge"
-	TaskStatusMergeConflicted = "merge_conflicted"
-	TaskStatusDone            = "done"
-	TaskStatusBlocked         = "blocked"
-	TaskStatusCancelled       = "cancelled"
+	TaskStatusDraft              = "draft"
+	TaskStatusQueued             = "queued"
+	TaskStatusLeased             = "leased"
+	TaskStatusExecuting          = "executing"
+	TaskStatusValidating         = "validating"
+	TaskStatusReadyForHumanMerge = "ready_for_human_merge"
+	TaskStatusDone               = "done"
+	TaskStatusBlocked            = "blocked"
+	TaskStatusCancelling         = "cancelling"
+	TaskStatusCancelled          = "cancelled"
+	TaskStatusFailed             = "failed"
+	TaskStatusNeedsHuman         = "needs_human"
+
+	// Deprecated compatibility identifiers. Do not use in new code.
+	TaskStatusPending         = TaskStatusQueued
+	TaskStatusInProgress      = TaskStatusExecuting
+	TaskStatusSubmitted       = TaskStatusValidating
+	TaskStatusVerifying       = TaskStatusValidating
+	TaskStatusReadyToMerge    = TaskStatusReadyForHumanMerge
+	TaskStatusMergeConflicted = TaskStatusNeedsHuman
 )
 
 // Project status constants.
@@ -75,14 +93,35 @@ const (
 	SessionStatusOffline = "offline"
 )
 
+// AgentWorker status constants.
+const (
+	WorkerStatusIdle     = "idle"
+	WorkerStatusReserved = "reserved"
+	WorkerStatusBusy     = "busy"
+	WorkerStatusLost     = "lost"
+)
+
 // Worktree status constants.
 const (
-	WorktreeStatusAllocated = "allocated"
-	WorktreeStatusActive    = "active"
-	WorktreeStatusSubmitted = "submitted"
-	WorktreeStatusStale     = "stale"
-	WorktreeStatusMerged    = "merged"
-	WorktreeStatusAbandoned = "abandoned"
+	WorktreeStatusAllocated      = "allocated"
+	WorktreeStatusActive         = "active"
+	WorktreeStatusSubmitted      = "submitted"
+	WorktreeStatusStale          = "stale"
+	WorktreeStatusMerged         = "merged"
+	WorktreeStatusAbandoned      = "abandoned"
+	WorktreeStatusSealed         = "sealed"
+	WorktreeStatusQuarantined    = "quarantined"
+	WorktreeStatusCleanupPending = "cleanup_pending"
+)
+
+// Task lease status constants. A lease is the durable authority for a worker
+// to mutate an executing task. Historical leases are never overwritten.
+const (
+	LeaseStatusActive    = "active"
+	LeaseStatusCompleted = "completed"
+	LeaseStatusReleased  = "released"
+	LeaseStatusExpired   = "expired"
+	LeaseStatusCancelled = "cancelled"
 )
 
 // Role constants — used in agent_sessions.role and tasks.role.
@@ -184,6 +223,11 @@ type Task struct {
 	VerifiedAt         *string         `db:"verified_at"         json:"verified_at"`
 	Priority           string          `db:"priority"            json:"priority"`
 	Summary            *string         `db:"summary"             json:"summary"`
+	Version            int64           `db:"version"             json:"version"`
+	LeaseEpoch         int64           `db:"lease_epoch"         json:"lease_epoch"`
+	ActiveLeaseID      *string         `db:"active_lease_id"     json:"active_lease_id,omitempty"`
+	LeaseExpiresAt     *string         `db:"lease_expires_at"    json:"lease_expires_at,omitempty"`
+	MergedFactID       *string         `db:"merged_fact_id"      json:"merged_fact_id,omitempty"`
 	CreatedAt          string          `db:"created_at"          json:"created_at"`
 	UpdatedAt          string          `db:"updated_at"          json:"updated_at"`
 }
@@ -207,27 +251,47 @@ type TaskResult struct {
 	VerifierNotes    *string  `db:"verifier_notes"    json:"verifier_notes,omitempty"`
 }
 
+// Evidence authority and producer identities are server-generated facts.
+// Local Runner validation is diagnostic only; merge_gate is reserved for the
+// authenticated CI ingestion path introduced with GitLab integration.
+const (
+	EvidenceAuthorityDiagnostic  = "diagnostic"
+	EvidenceAuthorityMergeGate   = "merge_gate"
+	EvidenceProducerMaestroLocal = "maestro-local"
+)
+
 // ValidationRun maps to the validation_runs table (append-only history).
 type ValidationRun struct {
-	ID           int64    `db:"id"              json:"id"`
-	TaskID       string   `db:"task_id"         json:"task_id"`
-	ProjectID    string   `db:"project_id"      json:"project_id"`
-	Attempt      int      `db:"attempt"         json:"attempt"`
-	BaseCommit   string   `db:"base_commit"     json:"base_commit"`
-	ChangedFiles string   `db:"changed_files"   json:"changed_files"` // JSON array TEXT
-	TestCommand  string   `db:"test_command"    json:"test_command"`
-	TestExitCode *int     `db:"test_exit_code"  json:"test_exit_code,omitempty"`
-	TestOutput   *string  `db:"test_output"     json:"test_output,omitempty"`
-	Coverage     *float64 `db:"coverage"        json:"coverage,omitempty"`
-	BoundaryOK   bool     `db:"boundary_ok"     json:"boundary_ok"`
-	TestOK       bool     `db:"test_ok"         json:"test_ok"`
-	CoverageOK   bool     `db:"coverage_ok"     json:"coverage_ok"`
-	Summary      *string  `db:"summary"         json:"summary,omitempty"` // JSON TEXT
-	Result       string   `db:"result"          json:"result"`
-	ErrorCode    *string  `db:"error_code"      json:"error_code,omitempty"`
-	DurationMs   int      `db:"duration_ms"     json:"duration_ms"`
-	LogPath      *string  `db:"log_path"        json:"log_path,omitempty"`
-	CreatedAt    string   `db:"created_at"      json:"created_at"`
+	ID              int64    `db:"id"              json:"id"`
+	TaskID          string   `db:"task_id"         json:"task_id"`
+	ProjectID       string   `db:"project_id"      json:"project_id"`
+	Attempt         int      `db:"attempt"         json:"attempt"`
+	BaseCommit      string   `db:"base_commit"     json:"base_commit"`
+	SourceCommit    string   `db:"source_commit"   json:"source_commit"`
+	ChangedFiles    string   `db:"changed_files"   json:"changed_files"` // JSON array TEXT
+	TestCommand     string   `db:"test_command"    json:"test_command"`
+	ProfileRef      string   `db:"profile_ref"     json:"profile_ref"`
+	PolicyVersion   string   `db:"policy_version"  json:"policy_version"`
+	PolicyDigest    string   `db:"policy_digest"   json:"policy_digest"`
+	EvidenceDigest  string   `db:"evidence_digest" json:"evidence_digest"`
+	WorkspaceDigest string   `db:"workspace_digest" json:"workspace_digest"`
+	Authority       string   `db:"authority"        json:"authority"`
+	Producer        string   `db:"producer"         json:"producer"`
+	PipelineID      *string  `db:"pipeline_id"      json:"pipeline_id,omitempty"`
+	JobID           *string  `db:"job_id"           json:"job_id,omitempty"`
+	TestExitCode    *int     `db:"test_exit_code"  json:"test_exit_code,omitempty"`
+	TestOutput      *string  `db:"test_output"      json:"test_output,omitempty"`
+	OutputTruncated bool     `db:"output_truncated" json:"output_truncated"`
+	Coverage        *float64 `db:"coverage"        json:"coverage,omitempty"`
+	BoundaryOK      bool     `db:"boundary_ok"     json:"boundary_ok"`
+	TestOK          bool     `db:"test_ok"         json:"test_ok"`
+	CoverageOK      bool     `db:"coverage_ok"     json:"coverage_ok"`
+	Summary         *string  `db:"summary"         json:"summary,omitempty"` // JSON TEXT
+	Result          string   `db:"result"          json:"result"`
+	ErrorCode       *string  `db:"error_code"      json:"error_code,omitempty"`
+	DurationMs      int      `db:"duration_ms"     json:"duration_ms"`
+	LogPath         *string  `db:"log_path"        json:"log_path,omitempty"`
+	CreatedAt       string   `db:"created_at"      json:"created_at"`
 }
 
 // Worktree maps to the worktrees table.
@@ -240,7 +304,10 @@ type Worktree struct {
 	BranchName   string  `db:"branch_name"   json:"branch_name"`
 	BaseCommit   string  `db:"base_commit"   json:"base_commit"`
 	Status       string  `db:"status"        json:"status"`
+	Generation   int64   `db:"generation"    json:"generation"`
+	Version      int64   `db:"version"       json:"version"`
 	CreatedAt    string  `db:"created_at"    json:"created_at"`
+	UpdatedAt    string  `db:"updated_at"    json:"updated_at"`
 }
 
 // APIContract maps to the api_contracts table.
@@ -264,6 +331,7 @@ type AgentSession struct {
 	ClientType    string `db:"client_type"    json:"client_type"`
 	Capacity      int    `db:"capacity"       json:"capacity"`
 	Status        string `db:"status"         json:"status"`
+	Version       int64  `db:"version"        json:"version"`
 	LastHeartbeat string `db:"last_heartbeat" json:"last_heartbeat"`
 	CreatedAt     string `db:"created_at"     json:"created_at"`
 }
@@ -276,7 +344,25 @@ type AgentWorker struct {
 	CurrentTaskID  *string `db:"current_task_id" json:"current_task_id,omitempty"`
 	Status         string  `db:"status"          json:"status"`
 	TasksCompleted int     `db:"tasks_completed" json:"tasks_completed"`
+	Version        int64   `db:"version"         json:"version"`
 	LastActive     string  `db:"last_active"     json:"last_active"`
+}
+
+// TaskLease is the append-preserving execution authority for a task attempt.
+// Lease tokens are represented by the opaque ID at this prototype stage; the
+// v3 Runner stores and transports a nonce hash in addition to these fields.
+type TaskLease struct {
+	ID        string `db:"id"          json:"id"`
+	ProjectID string `db:"project_id"  json:"project_id"`
+	TaskID    string `db:"task_id"     json:"task_id"`
+	SessionID string `db:"session_id"  json:"session_id"`
+	WorkerID  string `db:"worker_id"   json:"worker_id"`
+	Epoch     int64  `db:"epoch"       json:"epoch"`
+	Status    string `db:"status"      json:"status"`
+	Version   int64  `db:"version"     json:"version"`
+	ExpiresAt string `db:"expires_at"  json:"expires_at"`
+	CreatedAt string `db:"created_at"  json:"created_at"`
+	UpdatedAt string `db:"updated_at"  json:"updated_at"`
 }
 
 // ActivityLog maps to the activity_log table.

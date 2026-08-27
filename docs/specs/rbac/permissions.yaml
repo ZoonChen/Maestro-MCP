@@ -1,0 +1,241 @@
+version: "3.0"
+default_effect: deny
+resource_hiding:
+  unauthenticated: 401
+  authenticated_undiscoverable: 404
+  authenticated_forbidden: 403
+roles:
+  platform_admin:
+    allow:
+      - platform.configure
+      - oidc.configure
+      - gitlab_instance.configure
+      - company_policy.manage
+      - security.emergency_stop
+      - audit.export
+    deny:
+      - project.code.read_by_role_only
+  project_admin:
+    allow:
+      - project.read
+      - project.create
+      - project.update
+      - project.member.manage
+      - project.repository.manage
+      - runner.registration_code.create
+      - runner.approve
+      - runner.revoke
+      - project_policy.strengthen
+      - waiver.request
+      - waiver.revoke
+      - gitlab.reconcile
+    conditions:
+      project.create:
+        all:
+          - active_team_membership_required: true
+          - team_role: project_admin
+      "*":
+        all:
+          - scope_from_route_and_authorization_context: true
+    deny:
+      - waiver.approve_own
+      - protected_branch.merge
+  coordinator:
+    allow:
+      - project.read
+      - work_item.read
+      - work_item.create
+      - work_item.dispatch
+      - work_item.cancel
+      - work_item.retry
+      - defect.triage
+      - integration_run.create
+      - integration_run.cancel
+      - remediation_run.create
+      - remediation_run.stop
+      - gitlab.merge_request.create
+    deny:
+      - quality_policy.modify
+      - protected_branch.merge
+  developer:
+    allow:
+      - project.read
+      - work_item.read
+      - work_item.claim
+      - work_item.heartbeat
+      - work_item.submit
+      - work_item.block
+      - quality.read
+      - gitlab.status.read
+      - gitlab.merge_request.create
+    deny:
+      - verification.submit_own
+      - waiver.approve
+      - protected_branch.merge
+  verifier:
+    allow:
+      - project.read
+      - work_item.read
+      - quality.read
+      - verification.claim
+      - verification.submit
+    conditions:
+      verification.submit:
+        all:
+          - subject_id_not_equal: change_author_id
+          - subject_id_not_equal: remediation_requester_id
+    deny:
+      - protected_branch.merge
+  viewer:
+    allow:
+      - project.read
+      - work_item.read
+      - quality.read
+      - gitlab.status.read
+    deny:
+      - "*.write"
+functional_approvers:
+  security_owner:
+    allow:
+      - waiver.approve
+      - waiver.revoke
+      - waiver.approve.security
+      - security.finding.triage
+      - security.audit.read
+      - audit.export
+    conditions:
+      waiver.approve:
+        all:
+          - project_membership_required: true
+          - approver_authority_matches_gate_category: security
+          - subject_id_not_equal: waiver_requester_id
+          - subject_id_not_equal: change_author_id
+          - delegation_owner_not_equal: waiver_requester_id
+      waiver.approve.security:
+        all:
+          - project_membership_required: true
+          - subject_id_not_equal: waiver_requester_id
+          - subject_id_not_equal: change_author_id
+          - delegation_owner_not_equal: waiver_requester_id
+  qa_owner:
+    allow:
+      - waiver.approve
+      - waiver.revoke
+      - waiver.approve.quality
+      - quality_policy.review
+      - quality.audit.read
+      - remediation_run.create
+      - remediation_run.stop
+    conditions:
+      waiver.approve:
+        all:
+          - project_membership_required: true
+          - approver_authority_matches_gate_category: quality
+          - subject_id_not_equal: waiver_requester_id
+          - subject_id_not_equal: change_author_id
+          - delegation_owner_not_equal: waiver_requester_id
+      waiver.approve.quality:
+        all:
+          - project_membership_required: true
+          - subject_id_not_equal: waiver_requester_id
+          - subject_id_not_equal: change_author_id
+          - delegation_owner_not_equal: waiver_requester_id
+service_identities:
+  runner_device:
+    allow:
+      - runner.lease.claim
+      - runner.lease.heartbeat
+      - runner.evidence.upload_diagnostic
+      - runner.execution.complete
+    conditions:
+      "*":
+        all:
+          - runner_status: online
+          - project_binding: active
+          - token_runner_matches_context: true
+          - lease_epoch_matches: true
+    deny:
+      - project.admin
+      - quality_policy.modify
+      - waiver.approve
+      - gitlab.api.call
+      - protected_branch.merge
+  gitlab_bot:
+    allow:
+      - gitlab.project.read
+      - gitlab.merge_request.create
+      - gitlab.merge_request.update
+      - gitlab.pipeline.read
+      - gitlab.job.read
+      - gitlab.status.read
+    conditions:
+      "*":
+        all:
+          - configured_instance_matches: true
+          - numeric_project_mapping_matches: true
+    deny:
+      - git.repository.push
+      - gitlab.branch.create
+      - gitlab.merge
+      - protected_branch.merge
+  background_worker:
+    allow:
+      - outbox.dispatch
+      - inbox.consume
+      - gitlab.reconcile
+      - quality.evaluate
+      - audit.export
+    conditions:
+      "*":
+        all:
+          - service_identity_authenticated: true
+          - project_scope_from_persisted_job: true
+          - same_policy_decision_point: true
+    deny:
+      - principal_context.from_payload
+      - authorization.bypass
+  gitlab_webhook_receiver:
+    allow:
+      - webhook.gitlab.ingest
+    conditions:
+      "*":
+        all:
+          - configured_instance_matches: true
+          - raw_body_signature_verified: true
+          - timestamp_fresh: true
+          - inbox_persisted_before_success_response: true
+    deny:
+      - authorization.context.override
+      - webhook.unverified.apply
+      - protected_branch.merge
+bootstrap_identities:
+  enrollment_code:
+    allow:
+      - runner.enroll_with_one_time_code
+    conditions:
+      "*":
+        all:
+          - code_single_use: true
+          - code_unexpired: true
+          - code_project_binding_matches: true
+          - source_rate_limit_passed: true
+    deny:
+      - project.read
+      - project.code.read
+      - runner.approve
+      - runner.lease.claim
+      - authorization.context.override
+delegation:
+  agent_effective_permissions: intersection(human_principal, project_membership, runner_capability, tool_policy)
+  service_accounts_inherit_human_roles: false
+  agent_may_define_command_network_or_secret: false
+  agent_may_self_review_waive_or_merge: false
+protected_actions:
+  final_merge:
+    executor: human_in_gitlab
+    maestro_allowed: false
+  non_waivable:
+    - identity_isolation
+    - sha_integrity
+    - policy_integrity
+    - webhook_authenticity

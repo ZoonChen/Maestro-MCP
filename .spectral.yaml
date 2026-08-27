@@ -1,0 +1,21 @@
+extends:
+  - spectral:oas
+  - spectral:asyncapi
+
+rules:
+  info-contact: off
+  info-license: warn
+  operation-tags: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-success-response: error
+  oas3-api-servers: error
+  oas3-valid-media-example: error
+  oas3-valid-schema-example: error
+  asyncapi-info-contact: off
+  asyncapi-info-license: warn
+  # v3 deliberately uses PostgreSQL Outbox/Inbox rather than exposing a broker
+  # connection; this AsyncAPI document is the durable event catalog.
+  asyncapi-servers: off
+  # The v3.0 documentation baseline intentionally locks AsyncAPI 3.0.0.
+  asyncapi-latest-version: off

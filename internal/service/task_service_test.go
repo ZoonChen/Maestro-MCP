@@ -90,6 +90,16 @@ func TestCreateTask_InvalidRole(t *testing.T) {
 	assert.True(t, errors.Is(err, store.ErrInvalidParameter))
 }
 
+func TestCreateTaskRejectsCallerManufacturedTerminalState(t *testing.T) {
+	svc := setupTestEnv(t)
+	task := newTestTask("T-forged-done")
+	task.Status = model.TaskStatusDone
+	err := svc.taskSvc.CreateTask(context.Background(), testProjectID, task)
+	require.ErrorIs(t, err, store.ErrTaskStateInvalid)
+	_, getErr := svc.stores.taskStore.GetByID(context.Background(), testProjectID, task.ID)
+	require.ErrorIs(t, getErr, store.ErrTaskNotFound)
+}
+
 func TestCreateTask_MissingFeatureID(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
@@ -166,17 +176,19 @@ func TestCancelTask_FromInProgress(t *testing.T) {
 
 	seedTestSession(t, svc.stores, "session-1")
 	task := newTestTask("T-cip")
-	task.Status = model.TaskStatusInProgress
-	sid := "session-1"
-	wid := "worker-1"
-	task.AssignedSessionID = &sid
-	task.AssignedWorkerID = &wid
-	mustCreateTask(t, svc.stores.taskStore, task)
+	seedTaskWithActiveLease(t, svc.stores, task, "session-1", "worker-1")
 
 	err := svc.taskSvc.CancelTask(ctx, testProjectID, "T-cip", "session-1", "stuck")
 	require.NoError(t, err)
 
 	got, _ := svc.stores.taskStore.GetByID(ctx, testProjectID, "T-cip")
+	assert.Equal(t, model.TaskStatusCancelling, got.Status)
+	_, err = svc.stores.db.ExecContext(ctx,
+		`UPDATE task_leases SET expires_at = datetime('now', '-1 second') WHERE project_id = ? AND task_id = ?`,
+		testProjectID, task.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.sessSvc.RecoverExpiredLeases(ctx))
+	got, _ = svc.stores.taskStore.GetByID(ctx, testProjectID, "T-cip")
 	assert.Equal(t, model.TaskStatusCancelled, got.Status)
 }
 
@@ -203,7 +215,7 @@ func TestCancelTask_FromDone_Fails(t *testing.T) {
 
 	task := newTestTask("T-cd")
 	task.Status = model.TaskStatusDone
-	mustCreateTask(t, svc.stores.taskStore, task)
+	mustSeedHistoricalDoneTask(t, svc.stores, task)
 
 	err := svc.taskSvc.CancelTask(ctx, testProjectID, "T-cd", "session-1", "oops")
 	require.Error(t, err)
@@ -234,6 +246,37 @@ func TestCancelTask_NonexistentTask(t *testing.T) {
 	assert.True(t, errors.Is(err, store.ErrTaskNotFound))
 }
 
+func TestResolveMergeConflictFollowupFailsClosed(t *testing.T) {
+	svc := setupTestEnv(t)
+	ctx := context.Background()
+	task := newTestTask("T-followup-disabled")
+	task.Status = model.TaskStatusNeedsHuman
+	mustCreateTask(t, svc.stores.taskStore, task)
+
+	err := svc.taskSvc.ResolveMergeConflict(ctx, testProjectID, task.ID, "followup", "create another task")
+	require.ErrorIs(t, err, store.ErrOperationDisabled)
+
+	var children int
+	require.NoError(t, svc.stores.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tasks WHERE project_id = ? AND parent_task_id = ?`,
+		testProjectID, task.ID,
+	).Scan(&children))
+	assert.Zero(t, children, "disabled followup must not create work")
+
+	unchanged, getErr := svc.taskSvc.GetTask(ctx, testProjectID, task.ID)
+	require.NoError(t, getErr)
+	assert.Equal(t, model.TaskStatusNeedsHuman, unchanged.Status)
+	assert.Equal(t, task.Version, unchanged.Version)
+
+	var denied int
+	require.NoError(t, svc.stores.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE bound_project = ? AND target_task = ?
+		 AND action = 'task.followup' AND result = 'DENIED'`,
+		testProjectID, task.ID,
+	).Scan(&denied))
+	assert.Equal(t, 1, denied)
+}
+
 // ---------------------------------------------------------------------------
 // ReportBlocker
 // ---------------------------------------------------------------------------
@@ -244,8 +287,7 @@ func TestReportBlocker_FromInProgress(t *testing.T) {
 
 	seedTestSession(t, svc.stores, "session-1")
 	task := newTestTask("T-bip")
-	task.Status = model.TaskStatusInProgress
-	mustCreateTask(t, svc.stores.taskStore, task)
+	seedTaskWithActiveLease(t, svc.stores, task, "session-1", "worker-1")
 
 	err := svc.taskSvc.ReportBlocker(ctx, testProjectID, "T-bip", "session-1", "blocked by external API")
 	require.NoError(t, err)
@@ -274,7 +316,7 @@ func TestReportBlocker_FromDone_Fails(t *testing.T) {
 
 	task := newTestTask("T-bd")
 	task.Status = model.TaskStatusDone
-	mustCreateTask(t, svc.stores.taskStore, task)
+	mustSeedHistoricalDoneTask(t, svc.stores, task)
 
 	err := svc.taskSvc.ReportBlocker(ctx, testProjectID, "T-bd", "session-1", "reason")
 	require.Error(t, err)
@@ -285,7 +327,7 @@ func TestReportBlocker_FromDone_Fails(t *testing.T) {
 // ResolveBlocker
 // ---------------------------------------------------------------------------
 
-func TestResolveBlocker_ReassignTrue_ToInProgress(t *testing.T) {
+func TestResolveBlocker_ReassignTrue_RequiresFreshLease(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
 
@@ -302,12 +344,12 @@ func TestResolveBlocker_ReassignTrue_ToInProgress(t *testing.T) {
 	mustCreateTask(t, svc.stores.taskStore, task)
 
 	err := svc.taskSvc.ResolveBlocker(ctx, testProjectID, "T-rbt", true, "resolved by restart")
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, store.ErrInvalidParameter))
 
 	got, _ := svc.stores.taskStore.GetByID(ctx, testProjectID, "T-rbt")
-	assert.Equal(t, model.TaskStatusInProgress, got.Status)
-	assert.Nil(t, got.BlockerReason, "blocker_reason should be cleared")
-	// Session and worker should remain assigned.
+	assert.Equal(t, model.TaskStatusBlocked, got.Status)
+	assert.NotNil(t, got.BlockerReason)
 	assert.NotNil(t, got.AssignedSessionID)
 	assert.Equal(t, "session-1", *got.AssignedSessionID)
 }
@@ -354,7 +396,7 @@ func TestResolveBlocker_NotBlocked_Fails(t *testing.T) {
 // ForceRollback
 // ---------------------------------------------------------------------------
 
-func TestForceRollback_FromInProgress(t *testing.T) {
+func TestForceRollback_FromExecuting_FailsWithoutStopEvidence(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
 
@@ -366,14 +408,15 @@ func TestForceRollback_FromInProgress(t *testing.T) {
 	mustCreateTask(t, svc.stores.taskStore, task)
 
 	err := svc.taskSvc.ForceRollback(ctx, testProjectID, "T-rip", "admin-session")
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, store.ErrTaskStateInvalid))
 
 	got, _ := svc.stores.taskStore.GetByID(ctx, testProjectID, "T-rip")
-	assert.Equal(t, model.TaskStatusPending, got.Status)
-	assert.Nil(t, got.AssignedSessionID)
+	assert.Equal(t, model.TaskStatusExecuting, got.Status)
+	assert.NotNil(t, got.AssignedSessionID)
 }
 
-func TestForceRollback_FromSubmitted(t *testing.T) {
+func TestForceRollback_FromValidating_FailsWithoutEvidenceReset(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
 
@@ -382,13 +425,13 @@ func TestForceRollback_FromSubmitted(t *testing.T) {
 	mustCreateTask(t, svc.stores.taskStore, task)
 
 	err := svc.taskSvc.ForceRollback(ctx, testProjectID, "T-rsub", "admin-session")
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	got, _ := svc.stores.taskStore.GetByID(ctx, testProjectID, "T-rsub")
-	assert.Equal(t, model.TaskStatusPending, got.Status)
+	assert.Equal(t, model.TaskStatusValidating, got.Status)
 }
 
-func TestForceRollback_FromVerifying(t *testing.T) {
+func TestForceRollback_FromLegacyVerifyingAlias_Fails(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
 
@@ -397,10 +440,10 @@ func TestForceRollback_FromVerifying(t *testing.T) {
 	mustCreateTask(t, svc.stores.taskStore, task)
 
 	err := svc.taskSvc.ForceRollback(ctx, testProjectID, "T-rvfy", "admin-session")
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	got, _ := svc.stores.taskStore.GetByID(ctx, testProjectID, "T-rvfy")
-	assert.Equal(t, model.TaskStatusPending, got.Status)
+	assert.Equal(t, model.TaskStatusValidating, got.Status)
 }
 
 func TestForceRollback_FromBlocked(t *testing.T) {
@@ -426,7 +469,7 @@ func TestForceRollback_FromDone_Fails(t *testing.T) {
 
 	task := newTestTask("T-rdone")
 	task.Status = model.TaskStatusDone
-	mustCreateTask(t, svc.stores.taskStore, task)
+	mustSeedHistoricalDoneTask(t, svc.stores, task)
 
 	err := svc.taskSvc.ForceRollback(ctx, testProjectID, "T-rdone", "admin-session")
 	require.Error(t, err)

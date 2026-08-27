@@ -1,18 +1,25 @@
 const COLUMNS = [
-  { key: 'pending', label: 'Pending', statuses: ['pending', 'blocked'] },
-  { key: 'in_progress', label: 'In Progress', statuses: ['in_progress'] },
-  { key: 'review', label: 'Review', statuses: ['submitted', 'verifying', 'ready_to_merge'] },
+  { key: 'draft', label: 'Draft', statuses: ['draft'] },
+  { key: 'queued', label: 'Queued', statuses: ['queued'] },
+  { key: 'active', label: 'In Progress', statuses: ['leased', 'executing'] },
+  { key: 'review', label: 'Review', statuses: ['validating', 'ready_for_human_merge'] },
   { key: 'done', label: 'Done', statuses: ['done'] },
-  { key: 'conflicts', label: 'Conflicts', statuses: ['merge_conflicted'] },
+  { key: 'attention', label: 'Needs Attention', statuses: ['blocked', 'failed', 'needs_human', 'cancelling'] },
 ];
+const KNOWN_STATUSES = new Set([...COLUMNS.flatMap((column) => column.statuses), 'cancelled']);
+
+function needsAttention(status) {
+  return ['blocked', 'failed', 'needs_human', 'cancelling'].includes(status) || !KNOWN_STATUSES.has(status);
+}
 
 function TaskCard({ task, onClick }) {
+  const displayStatus = String(task.status || 'unknown');
   const statusClass = task.status === 'blocked' ? 'blocked'
-    : task.status === 'merge_conflicted' ? 'conflicted'
+    : needsAttention(task.status) ? 'conflicted'
     : '';
 
   return (
-    <div class={`task-card ${statusClass}`} title={task.description} onClick={() => onClick(task)}>
+    <button type="button" class={`task-card ${statusClass}`} title={task.description} onClick={() => onClick(task)}>
       <div class="task-card-header">
         <span class="task-id">{task.id}</span>
         <span class="task-role">{task.role}</span>
@@ -21,8 +28,8 @@ function TaskCard({ task, onClick }) {
       {task.status === 'blocked' && task.blocker_reason && (
         <p class="task-blocker">⚠ {task.blocker_reason}</p>
       )}
-      {task.status === 'merge_conflicted' && (
-        <p class="task-conflict">⚡ Merge conflict</p>
+      {needsAttention(task.status) && (
+        <p class="task-conflict">⚡ {displayStatus.replaceAll('_', ' ')}</p>
       )}
       {task.assigned_worker_id && (
         <span class="task-worker">{task.assigned_worker_id}</span>
@@ -30,7 +37,7 @@ function TaskCard({ task, onClick }) {
       {task.priority && task.priority !== 'normal' && (
         <span class={`task-priority ${task.priority}`}>{task.priority}</span>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -44,9 +51,9 @@ export function TaskBoard({ tasks, showCancelled, onTaskClick, featureFilter }) 
   return (
     <div class="task-board">
       {COLUMNS.map((col) => {
-        const colTasks = filteredTasks.filter((t) =>
-          col.statuses.includes(t.status)
-        );
+        const colTasks = filteredTasks.filter((t) => (
+          col.statuses.includes(t.status) || (col.key === 'attention' && !KNOWN_STATUSES.has(t.status))
+        ));
         return (
           <div key={col.key} class="board-column">
             <div class="column-header">

@@ -1,0 +1,466 @@
+asyncapi: 3.0.0
+info:
+  title: Maestro Event Catalog
+  version: 3.0.0-draft
+  description: GitLab webhook-derived and internal durable events.
+  license:
+    name: Internal Use Only
+  tags:
+    - name: gitlab
+      description: Verified GitLab ingress and reconciled object changes.
+    - name: workflow
+      description: Durable workflow, quality, defect, Runner, and Agent state changes.
+defaultContentType: application/json
+channels:
+  gitlabWebhookReceived:
+    address: gitlab.webhook.received
+    messages:
+      event:
+        $ref: "#/components/messages/GitLabWebhookReceived"
+  workItemStateChanged:
+    address: work_item.state.changed
+    messages:
+      event:
+        $ref: "#/components/messages/WorkItemStateChanged"
+  gateEvaluated:
+    address: quality.gate.evaluated
+    messages:
+      event:
+        $ref: "#/components/messages/GateEvaluated"
+  defectDetected:
+    address: defect.detected
+    messages:
+      event:
+        $ref: "#/components/messages/DefectDetected"
+  defectStateChanged:
+    address: defect.state.changed
+    messages:
+      event:
+        $ref: "#/components/messages/DefectStateChanged"
+  runnerPresenceChanged:
+    address: runner.presence.changed
+    messages:
+      event:
+        $ref: "#/components/messages/RunnerPresenceChanged"
+  gitlabObjectSynced:
+    address: gitlab.object.synced
+    messages:
+      event:
+        $ref: "#/components/messages/GitLabObjectSynced"
+  waiverChanged:
+    address: quality.waiver.changed
+    messages:
+      event:
+        $ref: "#/components/messages/WaiverChanged"
+  integrationRunChanged:
+    address: integration_run.state.changed
+    messages:
+      event:
+        $ref: "#/components/messages/IntegrationRunChanged"
+  agentExecutionChanged:
+    address: agent.execution.changed
+    messages:
+      event:
+        $ref: "#/components/messages/AgentExecutionChanged"
+operations:
+  consumeGitLabWebhook:
+    action: receive
+    description: Receives a verified and durably persisted GitLab webhook event.
+    channel:
+      $ref: "#/channels/gitlabWebhookReceived"
+  publishWorkItemState:
+    action: send
+    description: Publishes an audited WorkItem state transition.
+    channel:
+      $ref: "#/channels/workItemStateChanged"
+  publishGateEvaluation:
+    action: send
+    description: Publishes the result of evaluating an exact-SHA quality Gate.
+    channel:
+      $ref: "#/channels/gateEvaluated"
+  publishDefectDetection:
+    action: send
+    description: Publishes a newly normalized or reopened Defect occurrence.
+    channel:
+      $ref: "#/channels/defectDetected"
+  publishDefectStateChange:
+    action: send
+    description: Publishes an audited Defect lifecycle transition.
+    channel:
+      $ref: "#/channels/defectStateChanged"
+  publishRunnerPresence:
+    action: send
+    description: Publishes a change in the observed availability of a Runner.
+    channel:
+      $ref: "#/channels/runnerPresenceChanged"
+  publishGitLabObjectSync:
+    action: send
+    description: Publishes a reconciled GitLab object projection change.
+    channel:
+      $ref: "#/channels/gitlabObjectSynced"
+  publishWaiverChange:
+    action: send
+    description: Publishes an audited Gate Waiver lifecycle change.
+    channel:
+      $ref: "#/channels/waiverChanged"
+  publishIntegrationRunChange:
+    action: send
+    description: Publishes an IntegrationRun state or phase change.
+    channel:
+      $ref: "#/channels/integrationRunChanged"
+  publishAgentExecutionChange:
+    action: send
+    description: Publishes an Agent remediation execution state change.
+    channel:
+      $ref: "#/channels/agentExecutionChanged"
+components:
+  schemas:
+    Envelope:
+      type: object
+      additionalProperties: false
+      required:
+        - event_id
+        - event_type
+        - event_version
+        - source
+        - project_id
+        - subject
+        - occurred_at
+        - correlation_id
+        - causation_id
+        - payload_digest
+        - sensitivity
+        - payload
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          pattern: "^[a-z][a-z0-9_.]+$"
+        event_version:
+          type: integer
+          minimum: 1
+        source:
+          type: string
+          minLength: 1
+        project_id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+          minLength: 1
+        occurred_at:
+          type: string
+          format: date-time
+        correlation_id:
+          type: string
+          minLength: 1
+        causation_id:
+          type: string
+          minLength: 1
+        payload_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        sensitivity:
+          enum: [public, internal, confidential, restricted]
+        payload:
+          type: object
+    GitLabWebhookPayload:
+      type: object
+      additionalProperties: false
+      required: [instance_id, event_kind, delivery_key]
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+        event_kind:
+          enum: [push, merge_request, pipeline, job]
+        delivery_key:
+          type: string
+          minLength: 1
+        payload_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+    StateChangePayload:
+      type: object
+      additionalProperties: false
+      required: [work_item_id, from, to, version]
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+        from:
+          type: [string, "null"]
+          enum: [null, draft, queued, leased, executing, validating, ready_for_human_merge, done, blocked, cancelling, cancelled, failed, needs_human]
+        to:
+          type: string
+          enum: [draft, queued, leased, executing, validating, ready_for_human_merge, done, blocked, cancelling, cancelled, failed, needs_human]
+        version:
+          type: integer
+          minimum: 1
+        reason_code:
+          type: string
+          pattern: "^[A-Z][A-Z0-9_]+$"
+    GatePayload:
+      type: object
+      additionalProperties: false
+      required: [gate_id, status, source_sha, target_sha, policy_version, evidence_ids]
+      properties:
+        gate_id:
+          type: string
+        status:
+          enum: [pending, running, passed, failed, error, stale, waived]
+        source_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+        target_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+        policy_version:
+          type: string
+        evidence_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    DefectPayload:
+      type: object
+      additionalProperties: false
+      required: [defect_id, fingerprint, severity, occurrence, state, from, to, version]
+      properties:
+        defect_id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+        severity:
+          enum: [critical, high, medium, low, info]
+        occurrence:
+          type: integer
+          minimum: 1
+        state:
+          enum: [detected, triaged, assigned, reproducing, fixing, verifying, resolved, ignored]
+        from:
+          type: [string, "null"]
+          enum: [null, detected, triaged, assigned, reproducing, fixing, verifying, resolved, ignored]
+        to:
+          enum: [detected, triaged, assigned, reproducing, fixing, verifying, resolved, ignored]
+        version:
+          type: integer
+          minimum: 1
+        reason_code:
+          type: string
+          pattern: "^[A-Z][A-Z0-9_]+$"
+    RunnerPresencePayload:
+      type: object
+      additionalProperties: false
+      required: [runner_id, from, to, connection_generation, observed_at]
+      properties:
+        runner_id:
+          type: string
+          format: uuid
+        from:
+          enum: [pending_approval, approved, online, suspect, offline, draining, revoked]
+        to:
+          enum: [pending_approval, approved, online, suspect, offline, draining, revoked]
+        connection_generation:
+          type: string
+          format: uuid
+        observed_at:
+          type: string
+          format: date-time
+    GitLabObjectPayload:
+      type: object
+      additionalProperties: false
+      required: [instance_id, gitlab_project_id, object_type, object_id, state, observed_at]
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+        gitlab_project_id:
+          type: integer
+          minimum: 1
+        object_type:
+          enum: [merge_request, pipeline, job, branch]
+        object_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+          minLength: 1
+        source_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+        target_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+        observed_at:
+          type: string
+          format: date-time
+    WaiverPayload:
+      type: object
+      additionalProperties: false
+      required: [waiver_id, gate_id, source_sha, state, expires_at, version]
+      properties:
+        waiver_id:
+          type: string
+          format: uuid
+        gate_id:
+          type: string
+        source_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+        state:
+          enum: [requested, approved, rejected, active, expired, revoked]
+        expires_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    IntegrationRunPayload:
+      type: object
+      additionalProperties: false
+      required: [integration_run_id, state, phase, cleanup_status, combination_digest, version]
+      properties:
+        integration_run_id:
+          type: string
+          format: uuid
+        state:
+          enum: [waiting, running, passed, failed, cancelled, expired]
+        phase:
+          enum: [queued, contract_check, provisioning, executing, cleanup, complete]
+        cleanup_status:
+          enum: [not_started, running, passed, failed]
+        combination_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        version:
+          type: integer
+          minimum: 1
+    AgentExecutionPayload:
+      type: object
+      additionalProperties: false
+      required: [execution_id, work_item_id, state, attempt, used_tokens, budget_tokens]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        work_item_id:
+          type: string
+          format: uuid
+        state:
+          enum: [eligibility_check, reproducing, diagnosing, modifying, local_verifying, retrying, mr_created, ci_verifying, awaiting_human, needs_human, stopped]
+        attempt:
+          type: integer
+          minimum: 0
+          maximum: 3
+        used_tokens:
+          type: integer
+          minimum: 0
+        budget_tokens:
+          type: integer
+          minimum: 1
+  messages:
+    GitLabWebhookReceived:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: gitlab.webhook.received
+              payload:
+                $ref: "#/components/schemas/GitLabWebhookPayload"
+    WorkItemStateChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: work_item.state.changed
+              payload:
+                $ref: "#/components/schemas/StateChangePayload"
+    GateEvaluated:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: quality.gate.evaluated
+              payload:
+                $ref: "#/components/schemas/GatePayload"
+    DefectDetected:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: defect.detected
+              payload:
+                $ref: "#/components/schemas/DefectPayload"
+    DefectStateChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: defect.state.changed
+              payload:
+                $ref: "#/components/schemas/DefectPayload"
+    RunnerPresenceChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: runner.presence.changed
+              payload:
+                $ref: "#/components/schemas/RunnerPresencePayload"
+    GitLabObjectSynced:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: gitlab.object.synced
+              payload:
+                $ref: "#/components/schemas/GitLabObjectPayload"
+    WaiverChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: quality.waiver.changed
+              payload:
+                $ref: "#/components/schemas/WaiverPayload"
+    IntegrationRunChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: integration_run.state.changed
+              payload:
+                $ref: "#/components/schemas/IntegrationRunPayload"
+    AgentExecutionChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: agent.execution.changed
+              payload:
+                $ref: "#/components/schemas/AgentExecutionPayload"

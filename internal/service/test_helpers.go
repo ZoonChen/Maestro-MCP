@@ -158,10 +158,15 @@ func seedTestWorker(t *testing.T, s *testStores, sessionID, workerID string) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	var sessionKey string
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT id FROM agent_sessions WHERE project_id = ? AND (id = ? OR COALESCE(external_id, id) = ?)`,
+		testProjectID, sessionID, sessionID,
+	).Scan(&sessionKey))
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agent_workers (id, session_id, project_id, status, tasks_completed, last_active)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		workerID, sessionID, testProjectID, "idle", 0, now,
+		workerID, sessionKey, testProjectID, model.WorkerStatusIdle, 0, now,
 	)
 	require.NoError(t, err)
 }
@@ -180,6 +185,49 @@ func seedTestWorktree(t *testing.T, s *testStores, taskID string) { //nolint:unu
 	require.NoError(t, err)
 }
 
+func seedTaskWithActiveLease(t *testing.T, s *testStores, task *model.Task, sessionID, workerID string) {
+	t.Helper()
+	ctx := context.Background()
+	var sessionKey string
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT id FROM agent_sessions WHERE project_id = ? AND COALESCE(external_id, id) = ?`,
+		testProjectID, sessionID,
+	).Scan(&sessionKey))
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM agent_workers WHERE project_id = ? AND session_id = ? AND id = ?`,
+		testProjectID, sessionKey, workerID,
+	).Scan(&count))
+	if count == 0 {
+		seedTestWorker(t, s, sessionID, workerID)
+	}
+	expiresAt := time.Now().UTC().Add(10 * time.Minute).Format("2006-01-02 15:04:05")
+	leaseID := "lease-" + task.ID
+	task.Status = model.TaskStatusExecuting
+	task.AssignedSessionID = &sessionID
+	task.AssignedWorkerID = &workerID
+	task.Version = 2
+	task.LeaseEpoch = 1
+	task.ActiveLeaseID = &leaseID
+	task.LeaseExpiresAt = &expiresAt
+	mustCreateTask(t, s.taskStore, task)
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE agent_workers SET current_task_id = ?, status = 'busy', version = version + 1
+		 WHERE project_id = ? AND session_id = ? AND id = ? AND status = 'idle'`,
+		task.ID, testProjectID, sessionKey, workerID,
+	)
+	require.NoError(t, err)
+	rows, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO task_leases(
+		id, project_id, task_id, session_id, worker_id, epoch, status, version, expires_at)
+		VALUES (?, ?, ?, ?, ?, 1, 'active', 1, ?)`,
+		leaseID, testProjectID, task.ID, sessionKey, workerID, expiresAt,
+	)
+	require.NoError(t, err)
+}
+
 // newTestTask creates a minimal Task with sensible defaults for testing.
 func newTestTask(id string) *model.Task {
 	return &model.Task{
@@ -189,7 +237,7 @@ func newTestTask(id string) *model.Task {
 		Title:              "Test Task " + id,
 		Description:        "Description for " + id,
 		Role:               model.RoleBackend,
-		Status:             model.TaskStatusPending,
+		Status:             model.TaskStatusQueued,
 		AllowedDirectories: `["src/"]`,
 		Dependencies:       json.RawMessage(`[]`),
 		Priority:           model.PriorityNormal,
@@ -202,4 +250,23 @@ func newTestTask(id string) *model.Task {
 func mustCreateTask(t *testing.T, ts store.TaskStore, task *model.Task) {
 	t.Helper()
 	require.NoError(t, ts.Create(context.Background(), testProjectID, task))
+}
+
+// mustSeedHistoricalDoneTask creates only a legacy terminal fixture. Production
+// schema v5 rejects INSERT done; tests that exercise read-only behavior for
+// pre-v5 rows temporarily remove and then restore that exact trigger.
+func mustSeedHistoricalDoneTask(t *testing.T, stores *testStores, task *model.Task) {
+	t.Helper()
+	require.Equal(t, model.TaskStatusDone, task.Status)
+	ctx := context.Background()
+	var triggerSQL string
+	require.NoError(t, stores.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
+		WHERE type = 'trigger' AND name = 'trg_tasks_m0_no_done_insert'`).Scan(&triggerSQL))
+	_, err := stores.db.ExecContext(ctx, `DROP TRIGGER trg_tasks_m0_no_done_insert`)
+	require.NoError(t, err)
+	defer func() {
+		_, restoreErr := stores.db.ExecContext(context.Background(), triggerSQL)
+		require.NoError(t, restoreErr)
+	}()
+	require.NoError(t, stores.taskStore.Create(ctx, testProjectID, task))
 }

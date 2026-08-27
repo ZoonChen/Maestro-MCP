@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/evidence-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Immutable Quality Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "project_id",
+    "work_item_id",
+    "kind",
+    "authority",
+    "status",
+    "source_sha",
+    "target_sha",
+    "pipeline_id",
+    "job_id",
+    "policy_version",
+    "producer",
+    "digest",
+    "attempt",
+    "observed_at",
+    "created_at",
+    "sensitivity"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "evidence_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "work_item_id": {"type": "string", "format": "uuid"},
+    "kind": {
+      "enum": [
+        "baseline_freshness",
+        "boundary",
+        "policy_integrity",
+        "build",
+        "unit",
+        "lint_typecheck",
+        "coverage",
+        "integration",
+        "contract",
+        "secret_scan",
+        "sast",
+        "dependency",
+        "image",
+        "license"
+      ]
+    },
+    "authority": {"enum": ["merge_gate", "diagnostic"]},
+    "status": {"enum": ["passed", "failed", "error", "cancelled", "skipped"]},
+    "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "target_sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "pipeline_id": {"type": ["integer", "null"], "minimum": 1},
+    "job_id": {"type": ["integer", "null"], "minimum": 1},
+    "policy_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "version"],
+      "properties": {
+        "type": {"enum": ["gitlab_job", "runner_profile", "human_qa"]},
+        "id": {"type": "string", "minLength": 1, "maxLength": 255},
+        "version": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "sensitivity": {"enum": ["internal", "confidential", "restricted"]},
+    "summary": {"type": "string", "maxLength": 8000},
+    "artifact_uri": {"type": "string", "format": "uri"},
+    "parser_version": {"type": "string", "minLength": 1, "maxLength": 128}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"authority": {"const": "merge_gate"}}},
+      "then": {
+        "properties": {
+          "pipeline_id": {"type": "integer", "minimum": 1},
+          "job_id": {"type": "integer", "minimum": 1},
+          "producer": {
+            "properties": {"type": {"const": "gitlab_job"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"authority": {"const": "diagnostic"}}},
+      "then": {
+        "properties": {
+          "pipeline_id": {"type": "null"},
+          "job_id": {"type": "null"},
+          "producer": {
+            "properties": {"type": {"enum": ["runner_profile", "human_qa"]}}
+          }
+        }
+      }
+    }
+  ]
+}

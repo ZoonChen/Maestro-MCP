@@ -184,7 +184,7 @@ func (h *BoardHandler) TriggerWorktreeGC(c *gin.Context) {
 	pid := c.Param("id")
 
 	if h.worktreeService == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "worktree service not available"})
+		errorReply(c, store.ErrRecoveryIntegrity)
 		return
 	}
 

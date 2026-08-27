@@ -1,8 +1,12 @@
 package handler
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,20 +24,34 @@ func MaxBodySize(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-// CORS returns a Gin middleware that adds Cross-Origin Resource Sharing headers.
-// In local-development mode, all origins are allowed. In production, only
-// same-origin requests are permitted by default.
-func CORS() gin.HandlerFunc {
+// CORS returns a fail-closed CORS middleware. Origins must either be exact
+// same-origin or appear in the explicit allowlist; wildcard and prefix matches
+// are intentionally unsupported.
+func CORS(allowedOrigins ...string) gin.HandlerFunc {
+	allowlist := buildOriginAllowlist(allowedOrigins)
+
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
-			c.Header("Access-Control-Allow-Origin", origin)
+			normalized, valid := normalizeOrigin(origin)
+			if !valid || !requestOriginAllowed(c.Request, normalized, allowlist) {
+				c.Abort()
+				staticErrorReply(c, http.StatusForbidden, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed")
+				return
+			}
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Origin", normalized)
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, If-Match")
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Max-Age", "86400")
+			c.Header("Access-Control-Max-Age", "600")
 		}
 		if c.Request.Method == http.MethodOptions {
+			if origin == "" {
+				c.Abort()
+				staticErrorReply(c, http.StatusBadRequest, "ORIGIN_REQUIRED", "Preflight request is missing Origin")
+				return
+			}
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
@@ -41,10 +59,153 @@ func CORS() gin.HandlerFunc {
 	}
 }
 
+func buildOriginAllowlist(allowedOrigins []string) map[string]struct{} {
+	allowlist := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		if normalized, ok := normalizeOrigin(origin); ok {
+			allowlist[normalized] = struct{}{}
+		}
+	}
+	return allowlist
+}
+
+// RemoteWriteGuard disables HTTP mutations unless they are explicitly enabled
+// by trusted server configuration. It does not affect local stdio MCP calls.
+func RemoteWriteGuard(enabled bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		if enabled {
+			c.Next()
+			return
+		}
+
+		// Streamable HTTP MCP uses POST even for initialization and discovery.
+		// Permit only an explicit read-only protocol allowlist; tools/call and
+		// unknown methods remain disabled with remote_write=false.
+		if strings.HasPrefix(c.Request.URL.Path, "/mcp") && mcpRequestIsReadOnly(c.Request) {
+			c.Next()
+			return
+		}
+
+		if !enabled {
+			c.Abort()
+			staticErrorReply(c, http.StatusForbidden, "REMOTE_WRITE_DISABLED", "Remote write operations are disabled")
+			return
+		}
+		c.Next()
+	}
+}
+
+// DrainGuard rejects every new state-changing request after BeginDrain. A nil
+// callback is fail-open only for composition roots that do not expose a
+// runtime lifecycle (principally focused middleware tests).
+func DrainGuard(isDraining func() bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isDraining == nil || !isDraining() {
+			c.Next()
+			return
+		}
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		if strings.HasPrefix(c.Request.URL.Path, "/mcp") && mcpRequestIsReadOnly(c.Request) {
+			c.Next()
+			return
+		}
+		c.Abort()
+		staticErrorReply(c, http.StatusServiceUnavailable, "RUNTIME_DRAINING", "Runtime is draining")
+	}
+}
+
+var readOnlyMCPMethods = map[string]struct{}{
+	"initialize":                {},
+	"notifications/initialized": {},
+	"notifications/cancelled":   {},
+	"ping":                      {},
+	"tools/list":                {},
+	"resources/list":            {},
+	"resources/templates/list":  {},
+	"resources/read":            {},
+	"prompts/list":              {},
+	"prompts/get":               {},
+	"completion/complete":       {},
+}
+
+func mcpRequestIsReadOnly(r *http.Request) bool {
+	if r.Body == nil {
+		return false
+	}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+
+	var batch []struct {
+		Method string `json:"method"`
+	}
+	if len(data) > 0 && data[0] == '[' {
+		if err := json.Unmarshal(data, &batch); err != nil || len(batch) == 0 {
+			return false
+		}
+	} else {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(data, &request); err != nil {
+			return false
+		}
+		batch = append(batch, request)
+	}
+
+	for _, request := range batch {
+		if _, ok := readOnlyMCPMethods[request.Method]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeOrigin(origin string) (string, bool) {
+	origin = strings.TrimSpace(origin)
+	if origin == "" || origin == "null" || strings.ContainsAny(origin, "\r\n") {
+		return "", false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", false
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), true
+}
+
+func requestOriginAllowed(r *http.Request, normalized string, allowlist map[string]struct{}) bool {
+	if _, ok := allowlist[normalized]; ok {
+		return true
+	}
+	u, err := url.Parse(normalized)
+	if err != nil || !strings.EqualFold(u.Host, r.Host) {
+		return false
+	}
+	if r.TLS != nil {
+		return u.Scheme == "https"
+	}
+	return u.Scheme == "http"
+}
+
 // visitorTracker tracks per-IP request counts for rate limiting.
 type visitorTracker struct {
-	mu       sync.Mutex
-	visitors map[string]*visitorInfo
+	mu        sync.Mutex
+	visitors  map[string]*visitorInfo
+	lastSweep time.Time
 }
 
 type visitorInfo struct {
@@ -55,28 +216,25 @@ type visitorInfo struct {
 // RateLimit returns a Gin middleware that limits requests per IP.
 // maxRequests is the number of requests allowed within the window duration.
 func RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
-	tracker := &visitorTracker{visitors: make(map[string]*visitorInfo)}
-
-	// Background cleanup of expired entries.
-	go func() {
-		for {
-			time.Sleep(window)
-			tracker.mu.Lock()
-			cutoff := time.Now().Add(-window)
-			for ip, v := range tracker.visitors {
-				if v.lastSeen.Before(cutoff) {
-					delete(tracker.visitors, ip)
-				}
-			}
-			tracker.mu.Unlock()
-		}
-	}()
+	tracker := &visitorTracker{
+		visitors:  make(map[string]*visitorInfo),
+		lastSweep: time.Now(),
+	}
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 
 		tracker.mu.Lock()
 		now := time.Now()
+		if now.Sub(tracker.lastSweep) >= window {
+			cutoff := now.Add(-window)
+			for trackedIP, tracked := range tracker.visitors {
+				if tracked.lastSeen.Before(cutoff) {
+					delete(tracker.visitors, trackedIP)
+				}
+			}
+			tracker.lastSweep = now
+		}
 		v, exists := tracker.visitors[ip]
 		if !exists || now.Sub(v.lastSeen) > window {
 			tracker.visitors[ip] = &visitorInfo{count: 1, lastSeen: now}
@@ -90,10 +248,8 @@ func RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
 		tracker.mu.Unlock()
 
 		if count > maxRequests {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error":      "rate limit exceeded",
-				"error_code": "RATE_LIMIT_EXCEEDED",
-			})
+			c.Abort()
+			staticErrorReply(c, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Rate limit exceeded")
 			return
 		}
 		c.Next()
@@ -108,20 +264,15 @@ func ProjectGuard(projectSvc *service.ProjectService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pid := c.Param("id")
 		if pid == "" {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing project id"})
+			c.Abort()
+			invalidRequestReply(c)
 			return
 		}
 
 		project, err := projectSvc.GetProject(c.Request.Context(), pid)
 		if err != nil {
-			if errors.Is(err, store.ErrProjectNotFound) {
-				c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
-					"error":      "project not found",
-					"error_code": "PROJECT_NOT_FOUND",
-				})
-				return
-			}
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.Abort()
+			errorReply(c, err)
 			return
 		}
 
@@ -133,10 +284,8 @@ func ProjectGuard(projectSvc *service.ProjectService) gin.HandlerFunc {
 			path := c.Request.URL.Path
 			isArchiveRestore := len(path) >= 8 && (path[len(path)-8:] == "/archive" || path[len(path)-8:] == "/restore")
 			if method != "GET" && !isArchiveRestore {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"error":      "project is archived",
-					"error_code": "PROJECT_ARCHIVED",
-				})
+				c.Abort()
+				errorReply(c, store.ErrProjectArchived)
 				return
 			}
 		}

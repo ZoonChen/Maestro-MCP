@@ -1,16 +1,38 @@
 package handler
 
 import (
+	"io"
+	"log"
 	"net/http"
-	"strings"
+	"runtime/debug"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/publicerror"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
+	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/ZoonChen/Maestro-MCP/internal/ws"
 	mcpweb "github.com/ZoonChen/Maestro-MCP/web"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+// RouterOptions contains security controls that must be supplied by trusted
+// server configuration, never by an HTTP request.
+type RouterOptions struct {
+	AllowedOrigins []string
+	RemoteWrite    bool
+	LogWriter      io.Writer
+	IsDraining     func() bool
+}
+
+func init() {
+	// Gin's package-level debug writer defaults to stdout. The same process also
+	// serves the local stdio MCP transport, whose stdout is protocol-only, so
+	// route-registration diagnostics must never use that global default. Runtime
+	// access/recovery logs are installed explicitly on each Engine below.
+	gin.DefaultWriter = io.Discard
+	gin.DefaultErrorWriter = io.Discard
+}
 
 // SetupRouter creates and configures the Gin engine with all REST API routes
 // and the WebSocket upgrade endpoint. Returns the configured *gin.Engine.
@@ -25,22 +47,45 @@ func SetupRouter(
 	_ *service.SessionService,
 	_ *service.WorktreeService,
 	authToken string,
+	options ...RouterOptions,
 ) *gin.Engine {
-	r := gin.Default()
+	opts := RouterOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+
+	logWriter := opts.LogWriter
+	if logWriter == nil {
+		logWriter = io.Discard
+	}
+	r := gin.New()
+	if err := r.SetTrustedProxies(nil); err != nil {
+		panic("trusted proxy configuration rejected")
+	}
+	r.Use(safeAccessLogger(logWriter), safeRecoveryWithWriter(logWriter))
 
 	// Limit request body size to 1MB across all endpoints.
 	r.Use(MaxBodySize(1 << 20))
 
 	// CORS headers for cross-origin API consumers.
-	r.Use(CORS())
+	r.Use(CORS(opts.AllowedOrigins...))
 
 	// Rate limiting: 100 requests per minute per IP.
 	r.Use(RateLimit(100, time.Minute))
 
-	// Apply Bearer token auth middleware (no-op if authToken is empty).
+	// Authentication fails closed when authToken is empty.
 	r.Use(AuthMiddleware(authToken))
 
+	// Once shutdown begins, all new state-changing REST and MCP calls stop at
+	// the transport boundary. Health and explicitly read-only protocol calls
+	// remain available for drain observation.
+	r.Use(DrainGuard(opts.IsDraining))
+
+	// Mutating remote requests require an explicit server-side feature flag.
+	r.Use(RemoteWriteGuard(opts.RemoteWrite))
+
 	// WebSocket upgrader with same-origin check.
+	originAllowlist := buildOriginAllowlist(opts.AllowedOrigins)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -49,8 +94,8 @@ func SetupRouter(
 			if origin == "" {
 				return true
 			}
-			host := r.Host
-			return strings.HasPrefix(origin, "http://"+host) || strings.HasPrefix(origin, "https://"+host)
+			normalized, ok := normalizeOrigin(origin)
+			return ok && requestOriginAllowed(r, normalized, originAllowlist)
 		},
 	}
 
@@ -82,16 +127,19 @@ func SetupRouter(
 			// Tasks
 			project.POST("/tasks", th.CreateTask)
 			project.GET("/tasks", th.ListTasks)
-			project.GET("/tasks/next", th.GetNextTask)
-			project.GET("/tasks/next-verification", th.GetNextVerificationTask)
+			// Claiming changes Task, Lease, Session/Worker and workspace state. It
+			// is intentionally a POST so caches, crawlers and the remote-write
+			// feature gate can never treat it as a read.
+			project.POST("/tasks/next", th.GetNextTask)
+			project.POST("/tasks/next-verification", th.GetNextVerificationTask)
 			project.GET("/tasks/:tid", th.GetTask)
 			project.PATCH("/tasks/:tid", th.UpdateTask)
 			project.POST("/tasks/:tid/claim", th.ClaimTask)
+			project.POST("/tasks/:tid/heartbeat", th.HeartbeatTask)
 			project.POST("/tasks/:tid/submit", th.SubmitTask)
 			project.POST("/tasks/:tid/block", th.BlockTask)
 			project.POST("/tasks/:tid/resolve", th.ResolveBlocker)
 			project.POST("/tasks/:tid/verify", th.VerifyTask)
-			project.POST("/tasks/:tid/merge", th.MergeTask)
 			project.POST("/tasks/:tid/resolve-merge-conflict", th.ResolveMergeConflict)
 			project.POST("/tasks/:tid/cancel", th.CancelTask)
 			project.GET("/tasks/:tid/validation", th.GetValidationHistory)
@@ -152,10 +200,53 @@ func SetupRouter(
 		uiHandler.ServeHTTP(c.Writer, c.Request)
 	})
 	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "route not found", "path": c.Request.URL.Path})
+		staticErrorReply(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "Route not found")
 	})
 
 	return r
+}
+
+// safeRecoveryWithWriter preserves a useful panic signal and stack without
+// dumping the request headers, query string, body, or recovered value. Gin's
+// default Recovery request dump only masks Authorization and can otherwise
+// persist Cookies or API keys in diagnostic logs.
+func safeRecoveryWithWriter(writer io.Writer) gin.HandlerFunc {
+	logger := log.New(writer, "", log.LstdFlags)
+	return func(c *gin.Context) {
+		defer func() {
+			if recover() == nil {
+				return
+			}
+			public := publicerror.Classify(store.ErrRecoveryIntegrity)
+			route := c.FullPath()
+			if route == "" {
+				route = "<unmatched>"
+			}
+			logger.Printf("http panic recovered method=%q route=%q correlation_id=%q\n%s",
+				c.Request.Method, route, public.CorrelationID, debug.Stack())
+			c.AbortWithStatusJSON(public.HTTPStatus, gin.H{
+				"error": public.Message, "error_code": public.Code,
+				"correlation_id": public.CorrelationID,
+			})
+		}()
+		c.Next()
+	}
+}
+
+// safeAccessLogger records only trusted route templates, never a raw path,
+// query string, headers, body, or Gin error text.
+func safeAccessLogger(writer io.Writer) gin.HandlerFunc {
+	logger := log.New(writer, "", log.LstdFlags)
+	return func(c *gin.Context) {
+		started := time.Now()
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = "<unmatched>"
+		}
+		logger.Printf("http request client_ip=%q method=%q route=%q status=%d duration_ms=%d",
+			c.ClientIP(), c.Request.Method, route, c.Writer.Status(), time.Since(started).Milliseconds())
+	}
 }
 
 // serveWS handles the WebSocket upgrade handshake and registers the client with the hub.

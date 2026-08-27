@@ -1,64 +1,79 @@
-# golangci-lint configuration for Maestro-MCP
-# GoLand reads this file to determine which linters to enable.
-# Only linters that catch real bugs or meaningful quality issues are enabled.
-# Style/formatting linters (wsl, nlreturn, tagliatelle, varnamelen, etc.) are intentionally omitted.
+# golangci-lint v2 configuration for Maestro-MCP.
+# Only linters that catch bugs, security problems, or meaningful quality issues
+# are enabled; formatting and subjective layout rules remain outside this gate.
+version: "2"
 
 run:
-  timeout: 3m
   modules-download-mode: readonly
 
 linters:
-  # Only enable linters listed here. All others are disabled by default.
-  enable-only:
-    # Bug detection
+  default: none
+  enable:
+    - dupl
     - errcheck
+    - errchkjson
+    - gosec
     - govet
+    - ineffassign
+    - intrange
+    - misspell
+    - nilerr
+    - revive
     - staticcheck
     - unused
-    - gosimple
-    - ineffassign
-    - typecheck
-
-    # Security & correctness
-    - gosec
-    - nilerr
     - wastedassign
-    - errchkjson
-    - intrange
-
-    # Code quality
-    - revive
-    - misspell
-    - dupl
-
-linters-settings:
-  revive:
+  settings:
+    dupl:
+      threshold: 200
+    gosec:
+      severity: medium
+    misspell:
+      locale: US
+      # Wire enums and MCP cancellation use the specification's canonical
+      # "cancelled/cancelling" spelling; changing them would be breaking.
+      ignore-rules:
+        - cancelled
+        - cancelling
+    revive:
+      rules:
+        - name: unused-parameter
+          severity: warning
+        - name: unreachable-code
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: var-naming
+        - name: package-comments
+          disabled: true
+        - name: blank-imports
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: unused-parameter
-        severity: warning
-      - name: unreachable-code
-      - name: context-as-argument
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: increment-decrement
-      - name: var-naming
-      - name: package-comments
-        disabled: true
-      - name: blank-imports
-  dupl:
-    threshold: 200
-  gosec:
-    severity: medium
-  misspell:
-    locale: US
+      - linters:
+          - dupl
+          - revive
+        path: _test.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 
 issues:
   max-issues-per-linter: 50
   max-same-issues: 5
-  exclude-rules:
-    - linters:
-        - revive
-        - dupl
-      path: "_test.go"
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

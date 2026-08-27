@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/event-envelope-v3.json",
+  "title": "Maestro Durable Event Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "source",
+    "project_id",
+    "subject",
+    "occurred_at",
+    "correlation_id",
+    "causation_id",
+    "payload_digest",
+    "sensitivity",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "pattern": "^[a-z][a-z0-9_.]+$"},
+    "event_version": {"type": "integer", "minimum": 1},
+    "source": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "format": "uuid"},
+    "subject": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "correlation_id": {"type": "string", "minLength": 1},
+    "causation_id": {"type": "string", "minLength": 1},
+    "payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sensitivity": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "payload": {"type": "object"}
+  },
+  "examples": [
+    {
+      "event_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d4",
+      "event_type": "work_item.state.changed",
+      "event_version": 1,
+      "source": "control-plane",
+      "project_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d2",
+      "subject": "work-item/018f1f4d-8f50-7b65-b4d1-43f8a49870d3",
+      "occurred_at": "2026-08-25T08:00:00Z",
+      "correlation_id": "req-018f1f4d8f50",
+      "causation_id": "cmd-018f1f4d8f50",
+      "payload_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sensitivity": "internal",
+      "payload": {"work_item_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d3", "from": "queued", "to": "leased", "version": 2}
+    }
+  ]
+}

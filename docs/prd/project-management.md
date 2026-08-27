@@ -1,72 +1,85 @@
-# 3.1 M1: 多项目管理
-
-> **文档版本:** v2.1 | **更新日期:** 2026-04-17
-> **所属:** 产品需求文档 > 功能需求 > 多项目管理
-> **相关文档:** [任务管理](task-management.md) | [项目隔离技术方案](../technical/project-isolation.md)
-
+---
+doc_id: PRD-PROJECT-MANAGEMENT
+spec_version: 3.0
+spec_status: review
+implementation_status: partial
+verification_status: unverified
+owner_role: product_owner
+approver_roles: [product_owner, technical_lead, security_owner]
+introduced_in: M1
+authority_for: [project_lifecycle, repository_mapping, project_membership]
+related_adrs: [ADR-002, ADR-003, ADR-008]
+related_specs: [../specs/openapi/control-plane.yaml, ../specs/rbac/permissions.yaml]
+related_tests: [../testing/integration-test-plan.md, ../testing/gitlab-sandbox-plan.md]
+last_verified_commit: null
 ---
 
-## 项目注册方式
+# 项目管理
 
-| 方式 | 适用角色 | 说明 |
-|---|---|---|
-| CLI 注册 | 人类开发者 | 在项目根目录执行命令，自动扫描配置或交互式引导 |
-| MCP Tool 注册 | 协调者 Agent | 通过 `register_project` 工具创建项目 |
-| REST API 注册 | 外部集成 | 通过 HTTP 接口创建项目 |
+## 1. 目标与非目标
 
-## 项目绑定机制
+`PROJ-REQ-001` 提供 team-scoped 项目创建、成员管理、仓库/Runner 绑定、策略继承与安全停用。`PROJ-REQ-002` 所有项目资源 MUST 隔离且可追踪。项目不拥有 GitLab 仓库内容，也不允许 Maestro 代替 GitLab 修改保护分支设置。
 
-Agent 连接 Maestro 时，通过以下方式确定其所属项目：
+## 2. 参与者、角色、权限和信任边界
 
-1. **显式指定优先**: 通过连接参数或命令行 flag 指定 `project_id`
-2. **cwd 自动匹配**: 从 Agent 当前工作目录匹配已注册项目的 `workspace_path`（最长路径匹配，精确匹配优先）
-3. **绑定不可更改**: 连接建立后，`project_id` 锁定，后续操作均限定在该项目范围内
-4. **匹配失败则拒绝**: 无法匹配任何项目时，拒绝连接并提示
+`platform_admin` 管实例级接入但无隐式源码权；`project_admin` 管本项目；`coordinator/developer/verifier/viewer` 按动作受限。GitLab repository 与 Runner 都是外部边界，绑定只建立引用和最小权限，不转移其凭据所有权。
 
-## 项目生命周期
+## 3. 触发条件、输入和前置条件
 
-```
-┌───────────┐     register      ┌──────────┐
-│  未注册    │ ───────────────► │  active   │
-└───────────┘                   └────┬─────┘
-                                     │ archive
-                                ┌────▼─────┐
-                                │ archived  │
-                                └────┬─────┘
-                                     │ restore
-                                ┌────▼─────┐
-                                │  active   │
-                                └──────────┘
+创建项目需 active team、唯一 `project_key`、默认质量策略和至少一名 project admin。绑定仓库需验证 GitLab host、namespace/project ID、默认目标分支和 Bot 权限；绑定 Runner 需设备已批准且声明兼容能力。停用前 MUST 展示进行中任务、Lease、MR 和保留影响。
+
+## 4. 正常交互及时序图
+
+```mermaid
+sequenceDiagram
+    actor A as Project Admin
+    participant C as Control Plane
+    participant G as GitLab
+    participant R as Runner
+    A->>C: Create project + policy reference
+    C->>C: validate team/key/membership
+    A->>C: Bind repository
+    C->>G: Verify project and bot scopes
+    A->>C: Bind approved runner
+    C->>R: Capability challenge
+    C-->>A: Project active
 ```
 
-**归档规则：**
-- archived 项目的 Agent 无法连接（自动拒绝）
-- archived 项目的数据保留但不在默认看板显示
-- 可随时 restore 恢复
-- 不提供删除，只能归档（数据安全）
+## 5. 失败、取消、超时、重试、恢复和用户提示
 
-## 项目隔离规则（防"窜台"）
+GitLab/Runner 验证超时保持 `configuring`，不创建半有效绑定；可安全重试验证。删除改为两阶段停用与保留期，进行中任务存在时默认拒绝并列出阻塞项。恢复必须重新验证凭据、策略和默认分支 SHA。错误提示不得暴露无权项目或仓库。
 
-"窜台"指 Agent A（绑定 project-a）意外或恶意访问/修改 project-b 的数据。Maestro 通过以下业务规则实现纵深防御：
+## 6. 状态机、规则和不可变式
 
-| 隔离层级 | 规则 |
-|---|---|
-| **L1 连接绑定层** | 连接建立时锁定 `project_id`，一旦绑定不可更改。Agent 无法在 Tool 参数中伪造 `project_id` |
-| **L2 请求校验层** | 每个请求校验目标资源是否属于当前绑定的项目。不匹配则拒绝并记录审计日志 |
-| **L3 业务逻辑层** | 所有业务操作（领取任务、提交结果等）自动限定在当前项目范围内。`task_id` 归属校验——不属于当前项目则拒绝 |
-| **L4 数据存储层** | 所有数据查询强制携带 `project_id` 条件，不存在无项目范围的查询方法 |
+项目状态：`draft → configuring → active → suspended → archived`；仓库绑定：`pending → verified → degraded → revoked`。`PROJ-RULE-001` project key 在 team 内不可复用；`PROJ-RULE-002` 每个资源外键携带 project scope；`PROJ-RULE-003` 下级策略只能加强；`PROJ-RULE-004` suspended 项目禁止新写操作和 Lease。
 
-**审计告警规则：**
-- 单次越权访问 → 记录日志
-- 同一 Agent 5 分钟内 3 次越权 → 看板弹窗告警
-- 多个 Agent 同时越权 → 疑似配置错误，建议检查项目注册
+## 7. 字段、配置和格式校验
 
-**协调者跨项目访问规则：**
+`project_key` 匹配 `^[a-z][a-z0-9-]{2,31}$`；显示名 1–80 字符；描述最多 2,000 字符；GitLab project 使用数值 ID 加批准的 host ID，不接受任意 URL；默认分支必须从 GitLab API 解析。标签键值、保留期和策略引用均按 Schema 校验。
 
-| 能力 | 规则 |
-|---|---|
-| 跨项目只读 | 协调者可查看所有 active 项目的状态、任务列表、Agent 活动（通过 `list_projects`、`board://all`） |
-| 跨项目写操作 | 协调者可为其绑定的项目执行写操作。跨项目写操作（如为项目 B 创建任务）需要建立额外的 MCP 连接并绑定到项目 B |
-| 当前版本 (v0.1-v0.3) | 协调者一次只能绑定一个项目。跨项目协调通过多个 Claude Code 终端实现 |
+## 8. 并发、幂等和一致性
 
-**实现说明:** 协调者的跨项目只读能力通过 MCP Resource（`project://list`、`board://all`）实现，不受 L1 连接绑定层限制。但所有 Tool 级写操作仍受 L1 绑定约束。
+项目与绑定写入使用资源版本和幂等键；同一仓库在同一 team 默认只能绑定一个 active 项目。项目、初始 admin、策略引用与审计同事务；外部验证通过 Inbox/Outbox 最终一致，UI 显示同步时间和 degraded 状态。
+
+## 9. 安全、Secret、隐私和审计
+
+仓库 Token 仅保存 Secret 句柄；连接验证输出脱敏。成员、策略、仓库、Runner、状态及保留期变化必须审计前后值、actor 与理由。Project admin 无权查看平台级 Secret 原值。
+
+## 10. 质量门禁、证据与 fail-closed 规则
+
+激活 Gate 要求有效 admin、已验证仓库、批准 Runner、可解析公司/项目策略和成功权限隔离测试。任一依赖 degraded 时禁止新增自动执行；缓存只读 MAY 保留。
+
+## 11. 指标、SLO、告警和运维动作
+
+监控项目激活耗时、绑定验证失败率、degraded 时长、孤儿资源和跨项目拒绝。外部连接状态最迟 5 分钟对账；连续三次失败告警 project admin，24 小时未恢复升级至平台运维。
+
+## 12. 验收测试和需求追踪
+
+- `TC-PROJ-001`：创建、绑定、激活、停用、恢复全链路及审计通过。
+- `TC-PROJ-002`：重复 key、无权仓库、弱化策略和跨项目绑定被拒绝。
+- `TC-PROJ-003`：GitLab/Runner 故障不产生 active 假状态。
+- `TC-PROJ-004`：suspended 项目只读且不能创建 Lease。
+
+## 13. 数据迁移、兼容、发布与回滚
+
+SQLite 项目导入 PostgreSQL 时生成 team/project scope，重复 key 进入人工映射清单。旧全局仓库配置先置 `pending` 再验证；未验证不得激活。回滚保留 scope 列和审计，禁止降级为全局资源查找。

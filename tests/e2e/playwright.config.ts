@@ -13,7 +13,8 @@ for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
 }
 
 export default defineConfig({
-  testDir: './specs',
+  // M0 gates only the strict real-binary runtime suite.
+  testDir: './specs-m0',
   testMatch: '*.spec.ts',
   fullyParallel: false,
   workers: 1,
@@ -22,17 +23,22 @@ export default defineConfig({
   expect: { timeout: 10000 },
   use: {
     baseURL: 'http://localhost:19080',
+    extraHTTPHeaders: {
+      Authorization: 'Bearer m0-e2e-token',
+    },
     screenshot: 'on',
     trace: 'on',
   },
   webServer: {
-    command: `go run ./cmd/maestro/main.go serve --db ${path.join(dbDir, 'test.db')} --http :19080 --sse :19000`,
+    command: `go run ./cmd/maestro server --db ${path.join(dbDir, 'test.db')} --http 127.0.0.1:19080`,
     port: 19080,
     reuseExistingServer: false,
     timeout: 30000,
     cwd: projectRoot,
     env: {
       ...process.env,
+      MAESTRO_AUTH_TOKEN: 'm0-e2e-token',
+      MAESTRO_REMOTE_WRITE: 'false',
     },
   },
 });

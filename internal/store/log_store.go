@@ -92,8 +92,7 @@ func (s *SQLiteActivityLogStore) List(ctx context.Context, projectID string, lim
 	var query strings.Builder
 	args := []interface{}{projectID}
 
-	query.WriteString(fmt.Sprintf(
-		`SELECT %s FROM activity_log WHERE project_id = ?`, activityLogColumns))
+	fmt.Fprintf(&query, `SELECT %s FROM activity_log WHERE project_id = ?`, activityLogColumns)
 
 	if since != "" {
 		query.WriteString(` AND created_at >= ?`)
@@ -231,8 +230,7 @@ func (s *SQLiteAuditLogStore) List(ctx context.Context, filter AuditFilter) ([]*
 	var query strings.Builder
 	var args []interface{}
 
-	query.WriteString(fmt.Sprintf(
-		`SELECT %s FROM audit_log WHERE 1=1`, auditLogColumns))
+	fmt.Fprintf(&query, `SELECT %s FROM audit_log WHERE 1=1`, auditLogColumns)
 
 	if filter.BoundProject != "" {
 		query.WriteString(` AND bound_project = ?`)

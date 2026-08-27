@@ -12,35 +12,42 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	ErrProjectNotFound      = errors.New("project not found")
-	ErrProjectArchived      = errors.New("project archived")
-	ErrProjectNotBound      = errors.New("project not bound")
-	ErrProjectAmbiguous     = errors.New("ambiguous project match")
-	ErrFeatureNotFound      = errors.New("feature not found")
-	ErrTaskNotFound         = errors.New("task not found")
-	ErrTaskNotOwned         = errors.New("task not owned by session")
-	ErrTaskStateInvalid     = errors.New("task state invalid for this operation")
-	ErrTaskAlreadyCancelled = errors.New("task already cancelled")
-	ErrTaskDependencyUnmet  = errors.New("task dependency unmet")
-	ErrSessionNotFound      = errors.New("session not found")
-	ErrSessionCapacityFull  = errors.New("session capacity full")
-	ErrWorktreeCreateFailed = errors.New("worktree create failed")
-	ErrWorktreeCleanFailed  = errors.New("worktree clean failed")
-	ErrConcurrentConflict   = errors.New("concurrent conflict, retry exhausted")
-	ErrNoAvailableTask      = errors.New("no available task")
-	ErrInvalidParameter     = errors.New("invalid parameter")
-	ErrCircularDependency   = errors.New("circular dependency detected")
-	ErrWorktreeNotFound     = errors.New("worktree not found")
-	ErrWorkerNotFound       = errors.New("worker not found")
-	ErrTestExecutionFailed  = errors.New("test execution failed")
-	ErrBoundaryViolation    = errors.New("file boundary violation")
-	ErrCoverageBelowMin     = errors.New("coverage below minimum threshold")
-	ErrMergeConflict        = errors.New("merge conflict detected")
-	ErrValidationFailed     = errors.New("validation failed")
-	ErrDependencyNotReady   = errors.New("dependency not ready")
-	ErrFeatureStatusInvalid = errors.New("feature status invalid for this operation")
-	ErrProjectAlreadyExists = errors.New("project already exists")
-	ErrContractNotFound     = errors.New("contract not found")
+	ErrProjectNotFound       = errors.New("project not found")
+	ErrProjectArchived       = errors.New("project archived")
+	ErrProjectNotBound       = errors.New("project not bound")
+	ErrProjectAmbiguous      = errors.New("ambiguous project match")
+	ErrFeatureNotFound       = errors.New("feature not found")
+	ErrTaskNotFound          = errors.New("task not found")
+	ErrTaskNotOwned          = errors.New("task not owned by session")
+	ErrTaskStateInvalid      = errors.New("task state invalid for this operation")
+	ErrTaskAlreadyCancelled  = errors.New("task already cancelled")
+	ErrTaskDependencyUnmet   = errors.New("task dependency unmet")
+	ErrSessionNotFound       = errors.New("session not found")
+	ErrSessionCapacityFull   = errors.New("session capacity full")
+	ErrWorktreeCreateFailed  = errors.New("worktree create failed")
+	ErrWorktreeCleanFailed   = errors.New("worktree clean failed")
+	ErrConcurrentConflict    = errors.New("concurrent conflict, retry exhausted")
+	ErrNoAvailableTask       = errors.New("no available task")
+	ErrInvalidParameter      = errors.New("invalid parameter")
+	ErrCircularDependency    = errors.New("circular dependency detected")
+	ErrWorktreeNotFound      = errors.New("worktree not found")
+	ErrWorkerNotFound        = errors.New("worker not found")
+	ErrTestExecutionFailed   = errors.New("test execution failed")
+	ErrBoundaryViolation     = errors.New("file boundary violation")
+	ErrCoverageBelowMin      = errors.New("coverage below minimum threshold")
+	ErrMergeConflict         = errors.New("merge conflict detected")
+	ErrValidationFailed      = errors.New("validation failed")
+	ErrDependencyNotReady    = errors.New("dependency not ready")
+	ErrFeatureStatusInvalid  = errors.New("feature status invalid for this operation")
+	ErrProjectAlreadyExists  = errors.New("project already exists")
+	ErrContractNotFound      = errors.New("contract not found")
+	ErrProjectScopeViolation = errors.New("resource does not belong to the authorized project")
+	ErrLeaseNotFound         = errors.New("active lease not found")
+	ErrLeaseExpired          = errors.New("lease expired")
+	ErrLeaseVersionMismatch  = errors.New("lease version mismatch")
+	ErrIdempotencyConflict   = errors.New("idempotency key reused with different request")
+	ErrOperationDisabled     = errors.New("operation disabled by platform policy")
+	ErrRecoveryIntegrity     = errors.New("startup recovery could not prove state integrity")
 )
 
 // ---------------------------------------------------------------------------
@@ -126,6 +133,10 @@ type TaskStore interface {
 	// 用于防止并发修改导致状态被意外覆盖。
 	UpdateStatusFrom(ctx context.Context, projectID, taskID, expectedOldStatus, newStatus string) error
 
+	// UpdateStatusFromVersion additionally guards the aggregate version and
+	// increments it on success. M0 write use cases should prefer this method.
+	UpdateStatusFromVersion(ctx context.Context, projectID, taskID, expectedOldStatus string, expectedVersion int64, newStatus string) error
+
 	// Update 更新任务的可修改字段（title/description/allowed_directories 等）。
 	Update(ctx context.Context, projectID string, t *model.Task) error
 
@@ -138,7 +149,7 @@ type TaskStore interface {
 	FindNextSubmitted(ctx context.Context, projectID string) (*model.Task, error)
 
 	// Claim 原子认领任务（pending → in_progress）。设置 assigned_session_id、assigned_worker_id、assigned_at。
-	// 实现层应使用事务 + WHERE status='pending' 做乐观锁，并发冲突时返回 ErrConcurrentConflict。
+	// Store-level claiming is disabled; Application Service owns Task+Lease+Worker CAS.
 	Claim(ctx context.Context, projectID, taskID, sessionID, workerID string) error
 
 	// ClaimVerification 原子认领验证任务（submitted → verifying）。
@@ -175,7 +186,9 @@ type TaskResultStore interface {
 // ---------------------------------------------------------------------------
 
 type ValidationRunStore interface {
-	// Create 追加一条验证记录。返回自增 ID。
+	// Create appends M0 local diagnostic Evidence. Authority/producer are
+	// server-owned and fixed to diagnostic/maestro-local; merge_gate ingestion
+	// requires a separate authenticated CI port in M2.
 	Create(ctx context.Context, projectID string, r *model.ValidationRun) (int64, error)
 
 	// ListByTask 列出某任务的全部验证历史（按 attempt 升序）。

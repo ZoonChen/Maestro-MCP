@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
@@ -19,11 +21,12 @@ import (
 func TestCreateProject_HappyPath(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
+	workspace := t.TempDir()
 
 	project := &model.Project{
 		ID:            "proj-new-001",
 		Name:          "New Project",
-		WorkspacePath: "/tmp/new-workspace",
+		WorkspacePath: workspace,
 		Description:   "A new project",
 		Status:        model.ProjectStatusActive,
 		Config:        json.RawMessage(`{}`),
@@ -34,23 +37,71 @@ func TestCreateProject_HappyPath(t *testing.T) {
 	got, err := svc.projSvc.GetProject(ctx, "proj-new-001")
 	require.NoError(t, err)
 	assert.Equal(t, "New Project", got.Name)
-	assert.Equal(t, "/tmp/new-workspace", got.WorkspacePath)
+	canonical, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	assert.Equal(t, canonical, got.WorkspacePath)
 }
 
 func TestCreateProject_DuplicateID(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
+	workspace := t.TempDir()
 
 	project := &model.Project{
 		ID:            testProjectID, // already seeded
 		Name:          "Duplicate",
-		WorkspacePath: "/tmp/dup-workspace",
+		WorkspacePath: workspace,
 		Description:   "Should fail",
 		Status:        model.ProjectStatusActive,
 		Config:        json.RawMessage(`{}`),
 	}
 	err := svc.projSvc.CreateProject(ctx, project)
 	require.Error(t, err, "duplicate project ID should fail")
+}
+
+func TestCreateProjectRejectsUnsafeWorkspacePaths(t *testing.T) {
+	svc := setupTestEnv(t)
+	ctx := context.Background()
+	missing := filepath.Join(t.TempDir(), "missing")
+	filePath := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(filePath, []byte("not a directory"), 0o600))
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	for name, workspace := range map[string]string{
+		"relative":  "relative/workspace",
+		"traversal": t.TempDir() + string(filepath.Separator) + ".." + string(filepath.Separator) + "workspace",
+		"missing":   missing,
+		"file":      filePath,
+		"nul":       "/tmp/workspace\x00suffix",
+		"root":      filepath.Clean(filepath.VolumeName(filePath) + string(filepath.Separator)),
+		"home":      home,
+	} {
+		t.Run(name, func(t *testing.T) {
+			project := &model.Project{
+				ID: name, Name: name, WorkspacePath: workspace,
+				Status: model.ProjectStatusActive, Config: json.RawMessage(`{}`),
+			}
+			err := svc.projSvc.CreateProject(ctx, project)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, store.ErrInvalidParameter)
+		})
+	}
+}
+
+func TestCreateProjectStoresResolvedSymlinkWorkspace(t *testing.T) {
+	svc := setupTestEnv(t)
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "workspace-link")
+	require.NoError(t, os.Symlink(target, link))
+	project := &model.Project{
+		ID: "symlink-project", Name: "symlink", WorkspacePath: link,
+		Status: model.ProjectStatusActive, Config: json.RawMessage(`{}`),
+	}
+	require.NoError(t, svc.projSvc.CreateProject(context.Background(), project))
+	canonical, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, canonical, project.WorkspacePath)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +180,7 @@ func TestRestoreProject_NonexistentProject(t *testing.T) {
 func TestListProjects_ExcludeArchived(t *testing.T) {
 	svc := setupTestEnv(t)
 	ctx := context.Background()
+	workspace := t.TempDir()
 
 	// Archive the seed project.
 	require.NoError(t, svc.projSvc.ArchiveProject(ctx, testProjectID))
@@ -137,7 +189,7 @@ func TestListProjects_ExcludeArchived(t *testing.T) {
 	newProj := &model.Project{
 		ID:            "proj-active-002",
 		Name:          "Active Project",
-		WorkspacePath: "/tmp/active-workspace-002",
+		WorkspacePath: workspace,
 		Description:   "Still active",
 		Status:        model.ProjectStatusActive,
 		Config:        json.RawMessage(`{}`),

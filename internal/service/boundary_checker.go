@@ -2,152 +2,164 @@ package service
 
 import (
 	"encoding/json"
-	"log/slog"
-	"os"
-	"path/filepath"
+	"fmt"
+	"path"
 	"strings"
 )
 
-// BoundaryCheckResult contains the results of a boundary compliance check.
+// BoundaryCheckResult contains the deterministic boundary decision. Policy
+// parsing/path-integrity errors are represented as violations and never pass.
 type BoundaryCheckResult struct {
 	OK         bool     `json:"ok"`
+	ErrorCode  string   `json:"error_code,omitempty"`
 	Violations []string `json:"violations,omitempty"`
 }
 
-// checkBoundaries verifies that all changed files are within allowed directories
-// and do not match any forbidden glob patterns.
-//
-// Design note: when allowedDirs is empty (or null), all files are treated as
-// allowed. This is intentional — a task without allowed_directories is
-// unrestricted, which is the default for tasks that don't need directory-level
-// isolation. If you want to block ALL file changes, set allowed_directories to
-// a non-existent directory like ["__none__"].
-//
-// Hard-coded protections: .git/ and .maestro/ directories are ALWAYS forbidden,
-// regardless of allowed_directories or forbidden_patterns settings.
+// checkBoundaries performs lexical checks and is retained for focused unit
+// tests. Validation must call checkBoundariesInWorktree so filesystem symlinks
+// are also checked relative to the actual worktree.
 func checkBoundaries(changedFiles []string, allowedDirsJSON, forbiddenPatternsJSON string) BoundaryCheckResult {
-	// Parse allowed directories.
-	var allowedDirs []string
-	if allowedDirsJSON != "" {
-		if err := json.Unmarshal([]byte(allowedDirsJSON), &allowedDirs); err != nil {
-			slog.Error("checkBoundaries: invalid allowed_directories JSON", "allowed_dirs_json", allowedDirsJSON, "error", err)
-		}
-	}
+	return checkBoundariesInWorktree("", changedFiles, allowedDirsJSON, forbiddenPatternsJSON)
+}
 
-	// Parse forbidden patterns.
-	var forbiddenPatterns []string
-	if forbiddenPatternsJSON != "" {
-		if err := json.Unmarshal([]byte(forbiddenPatternsJSON), &forbiddenPatterns); err != nil {
-			slog.Error("checkBoundaries: invalid forbidden_patterns JSON", "forbidden_patterns_json", forbiddenPatternsJSON, "error", err)
-		}
+func checkBoundariesInWorktree(worktreeRoot string, changedFiles []string, allowedDirsJSON, forbiddenPatternsJSON string) BoundaryCheckResult {
+	allowedDirs, err := parseAllowedDirectories(allowedDirsJSON)
+	if err != nil {
+		return BoundaryCheckResult{OK: false, ErrorCode: "POLICY_INVALID", Violations: []string{err.Error()}}
+	}
+	forbiddenPatterns, err := parseForbiddenPatterns(forbiddenPatternsJSON)
+	if err != nil {
+		return BoundaryCheckResult{OK: false, ErrorCode: "POLICY_INVALID", Violations: []string{err.Error()}}
 	}
 
 	result := BoundaryCheckResult{OK: true}
-
 	for _, file := range changedFiles {
-		// Normalize path separators.
-		normalizedFile := filepath.ToSlash(file)
-
-		// Symlink protection: detect if the file path contains symlink components.
-		// Git tracks symlinks as files — a symlink inside an allowed directory could
-		// point outside the boundary. We check the normalized path for symlink markers.
-		// Note: full EvalSymlinks requires a real filesystem; the file paths come from
-		// git diff, so we rely on path analysis as a defense-in-depth measure.
-		if containsSymlinkIndicator(file) {
-			result.OK = false
-			result.Violations = append(result.Violations,
-				"file "+file+" appears to be or contain a symlink (not allowed)")
+		normalizedFile, pathErr := normalizeRepositoryPath(file, false)
+		if pathErr != nil {
+			result.addViolation("file %q has an unsafe path: %v", file, pathErr)
 			continue
 		}
-
-		// Hard-coded system directory protection: .git/ and .maestro/ are always forbidden.
 		if isSystemPath(normalizedFile) {
-			result.OK = false
-			result.Violations = append(result.Violations,
-				"file "+file+" is in a protected system directory (.git or .maestro)")
+			result.addViolation("file %s is in a protected system directory (.git or .maestro)", normalizedFile)
 			continue
 		}
+		if worktreeRoot != "" {
+			if _, resolveErr := resolvePathWithinRoot(worktreeRoot, normalizedFile, false); resolveErr != nil {
+				result.addViolation("file %s failed canonical/symlink validation: %v", normalizedFile, resolveErr)
+				continue
+			}
+		}
 
-		// Check if file is within at least one allowed directory.
 		allowed := false
 		for _, dir := range allowedDirs {
-			normalizedDir := strings.TrimSuffix(filepath.ToSlash(dir), "/") + "/"
-			if strings.HasPrefix(normalizedFile, normalizedDir) || normalizedFile == strings.TrimSuffix(normalizedDir, "/") {
+			if normalizedFile == dir || strings.HasPrefix(normalizedFile, dir+"/") {
 				allowed = true
 				break
 			}
 		}
-		if !allowed && len(allowedDirs) > 0 {
-			result.OK = false
-			result.Violations = append(result.Violations,
-				"file "+file+" is outside allowed directories")
+		if !allowed {
+			result.addViolation("file %s is outside allowed directories", normalizedFile)
 			continue
 		}
 
-		// Check if file matches any forbidden pattern.
-		// Dual matching: first try full path, then try basename (for backwards compatibility).
 		for _, pattern := range forbiddenPatterns {
-			matched := false
-			// Full path match (for patterns containing "/")
-			if strings.Contains(pattern, "/") {
-				if m, err := filepath.Match(pattern, normalizedFile); err == nil && m {
-					matched = true
-				}
-			}
-			// Basename match (for simple filename glob patterns)
-			if !matched {
-				if m, err := filepath.Match(pattern, filepath.Base(file)); err == nil && m {
-					matched = true
-				}
+			var matched bool
+			if strings.HasSuffix(pattern, "/") {
+				prefix := strings.TrimSuffix(pattern, "/")
+				matched = normalizedFile == prefix || strings.HasPrefix(normalizedFile, prefix+"/")
+			} else if strings.Contains(pattern, "/") {
+				matched, _ = path.Match(pattern, normalizedFile)
+			} else {
+				matched, _ = path.Match(pattern, path.Base(normalizedFile))
 			}
 			if matched {
-				result.OK = false
-				result.Violations = append(result.Violations,
-					"file "+file+" matches forbidden pattern "+pattern)
+				result.addViolation("file %s matches forbidden pattern %s", normalizedFile, pattern)
 				break
 			}
 		}
 	}
-
 	return result
 }
 
-// isSystemPath checks if a normalized file path is inside a protected system directory.
-// These directories are always forbidden regardless of task configuration.
+func (r *BoundaryCheckResult) addViolation(format string, args ...any) {
+	r.OK = false
+	if r.ErrorCode == "" {
+		r.ErrorCode = "BOUNDARY_VIOLATION"
+	}
+	r.Violations = append(r.Violations, fmt.Sprintf(format, args...))
+}
+
+func parseAllowedDirectories(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("allowed_directories evidence is missing")
+	}
+	var dirs []string
+	if err := json.Unmarshal([]byte(raw), &dirs); err != nil {
+		return nil, fmt.Errorf("allowed_directories is invalid JSON: %w", err)
+	}
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("allowed_directories must contain at least one directory")
+	}
+
+	seen := make(map[string]struct{}, len(dirs))
+	normalized := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		clean, err := normalizeRepositoryPath(dir, true)
+		if err != nil {
+			return nil, fmt.Errorf("allowed directory %q is unsafe: %w", dir, err)
+		}
+		if clean == "." || isSystemPath(clean) {
+			return nil, fmt.Errorf("allowed directory %q is too broad or protected", dir)
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		normalized = append(normalized, clean)
+	}
+	return normalized, nil
+}
+
+func parseForbiddenPatterns(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "null" {
+		return []string{}, nil
+	}
+	var patterns []string
+	if err := json.Unmarshal([]byte(raw), &patterns); err != nil {
+		return nil, fmt.Errorf("forbidden_patterns is invalid JSON: %w", err)
+	}
+	for _, pattern := range patterns {
+		if pattern == "" || strings.ContainsRune(pattern, '\x00') || strings.HasPrefix(pattern, "/") || strings.Contains(pattern, "..") {
+			return nil, fmt.Errorf("forbidden pattern %q is unsafe", pattern)
+		}
+		candidate := strings.TrimSuffix(pattern, "/")
+		if _, err := path.Match(candidate, candidate); err != nil {
+			return nil, fmt.Errorf("forbidden pattern %q is invalid: %w", pattern, err)
+		}
+	}
+	return patterns, nil
+}
+
+func normalizeRepositoryPath(value string, directory bool) (string, error) {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	value = strings.TrimSuffix(value, "/")
+	if value == "" || strings.ContainsRune(value, '\x00') || strings.HasPrefix(value, "/") {
+		return "", fmt.Errorf("path must be non-empty, relative and NUL-free")
+	}
+	clean := path.Clean(value)
+	if clean == "." && directory {
+		return clean, nil
+	}
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path traversal is not allowed")
+	}
+	if clean != value {
+		return "", fmt.Errorf("path must be canonical")
+	}
+	return clean, nil
+}
+
 func isSystemPath(normalizedPath string) bool {
-	// Check .git/ directory
-	if strings.HasPrefix(normalizedPath, ".git/") || normalizedPath == ".git" {
-		return true
-	}
-	// Check .maestro/ directory
-	if strings.HasPrefix(normalizedPath, ".maestro/") || normalizedPath == ".maestro" {
-		return true
-	}
-	return false
-}
-
-// containsSymlinkIndicator checks if a file path is or traverses through a symlink.
-// It resolves the real path of the file and compares it to the given path.
-// If they differ, the path contains a symlink component.
-func containsSymlinkIndicator(file string) bool {
-	// Best-effort: try to evaluate symlinks on the real filesystem.
-	// If the file doesn't exist (e.g., testing), we can't check, so skip.
-	realPath, err := filepath.EvalSymlinks(file)
-	if err != nil {
-		// File doesn't exist on disk — can't verify. Allow through.
-		return false
-	}
-	// If the resolved path differs from the original, a symlink was involved.
-	normalizedOrig := filepath.Clean(file)
-	normalizedReal := filepath.Clean(realPath)
-	return normalizedOrig != normalizedReal
-}
-
-// isSymlinkPath checks if the given path is itself a symlink on the filesystem.
-func isSymlinkPath(file string) bool { //nolint:unused
-	info, err := os.Lstat(file)
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeSymlink != 0
+	return normalizedPath == ".git" || strings.HasPrefix(normalizedPath, ".git/") ||
+		normalizedPath == ".maestro" || strings.HasPrefix(normalizedPath, ".maestro/")
 }

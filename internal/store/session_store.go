@@ -19,10 +19,10 @@ func NewSessionStore(db *sql.DB) *SQLiteSessionStore {
 }
 
 // sessionColumns is the ordered column list for SELECT queries on agent_sessions.
-// Order matches DDL: id, project_id, role, client_type, capacity, status,
-// last_heartbeat, created_at.
-const sessionColumns = `id, project_id, role, client_type, capacity, status,
-	last_heartbeat, created_at`
+// The physical primary key is intentionally not exposed. external_id is scoped
+// by project and is the only Session ID visible above the store boundary.
+const sessionColumns = `COALESCE(external_id, id), project_id, role, client_type, capacity, status,
+	version, last_heartbeat, created_at`
 
 // scanSession scans a single row into an AgentSession struct.
 func scanSession(scanner interface {
@@ -36,6 +36,7 @@ func scanSession(scanner interface {
 		&s.ClientType,
 		&s.Capacity,
 		&s.Status,
+		&s.Version,
 		&s.LastHeartbeat,
 		&s.CreatedAt,
 	)
@@ -48,15 +49,17 @@ func scanSession(scanner interface {
 // Create registers a new AgentSession.
 func (s *SQLiteSessionStore) Create(ctx context.Context, projectID string, session *model.AgentSession) error {
 	const query = `INSERT INTO agent_sessions
-		(id, project_id, role, client_type, capacity, status, last_heartbeat, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		(id, external_id, project_id, role, client_type, capacity, status, version, last_heartbeat, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
+		scopedSessionKey(projectID, session.ID),
 		session.ID,
 		projectID,
 		session.Role,
 		session.ClientType,
 		session.Capacity,
 		session.Status,
+		session.Version,
 		session.LastHeartbeat,
 		session.CreatedAt,
 	)
@@ -70,30 +73,44 @@ func (s *SQLiteSessionStore) Create(ctx context.Context, projectID string, sessi
 // Returns true if the session was created, false if it already existed.
 func (s *SQLiteSessionStore) CreateIfNotExists(ctx context.Context, projectID string, session *model.AgentSession) (bool, error) {
 	const query = `INSERT OR IGNORE INTO agent_sessions
-		(id, project_id, role, client_type, capacity, status, last_heartbeat, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		(id, external_id, project_id, role, client_type, capacity, status, version, last_heartbeat, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	result, err := s.db.ExecContext(ctx, query,
+		scopedSessionKey(projectID, session.ID),
 		session.ID,
 		projectID,
 		session.Role,
 		session.ClientType,
 		session.Capacity,
 		session.Status,
+		session.Version,
 		session.LastHeartbeat,
 		session.CreatedAt,
 	)
 	if err != nil {
 		return false, fmt.Errorf("session create if not exists: %w", err)
 	}
-	affected, _ := result.RowsAffected()
-	return affected > 0, nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("session create if not exists rows: %w", err)
+	}
+	if affected > 0 {
+		return true, nil
+	}
+	// INSERT OR IGNORE can hide multiple constraint classes. Only an existing
+	// logical ID in the same project is an idempotent hit; everything else is a
+	// hard conflict and must not be interpreted as success.
+	if _, err := s.GetByID(ctx, projectID, session.ID); err != nil {
+		return false, fmt.Errorf("session create ignored without matching scoped session: %w", err)
+	}
+	return false, nil
 }
 
 // GetByID retrieves a session by ID scoped to projectID.
 func (s *SQLiteSessionStore) GetByID(ctx context.Context, projectID, id string) (*model.AgentSession, error) {
 	query := fmt.Sprintf(`
 		SELECT %s FROM agent_sessions
-		WHERE id = ? AND project_id = ?`, sessionColumns)
+		WHERE COALESCE(external_id, id) = ? AND project_id = ?`, sessionColumns)
 
 	row := s.db.QueryRowContext(ctx, query, id, projectID)
 	session, err := scanSession(row)
@@ -135,7 +152,9 @@ func (s *SQLiteSessionStore) List(ctx context.Context, projectID string) ([]*mod
 
 // UpdateHeartbeat refreshes last_heartbeat to current time.
 func (s *SQLiteSessionStore) UpdateHeartbeat(ctx context.Context, projectID, id string) error {
-	const query = `UPDATE agent_sessions SET last_heartbeat = datetime('now') WHERE id = ? AND project_id = ?`
+	const query = `UPDATE agent_sessions
+		SET last_heartbeat = datetime('now'), version = version + 1
+		WHERE COALESCE(external_id, id) = ? AND project_id = ?`
 	result, err := s.db.ExecContext(ctx, query, id, projectID)
 	if err != nil {
 		return fmt.Errorf("session update heartbeat: %w", err)
@@ -152,8 +171,27 @@ func (s *SQLiteSessionStore) UpdateHeartbeat(ctx context.Context, projectID, id 
 
 // UpdateStatus changes the session status (online/offline).
 func (s *SQLiteSessionStore) UpdateStatus(ctx context.Context, projectID, id, status string) error {
-	const query = `UPDATE agent_sessions SET status = ? WHERE id = ? AND project_id = ?`
-	result, err := s.db.ExecContext(ctx, query, status, id, projectID)
+	if !model.IsSessionStatus(status) {
+		return fmt.Errorf("session update status: %w: %q", ErrTaskStateInvalid, status)
+	}
+	var current string
+	var version int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT status, version FROM agent_sessions WHERE COALESCE(external_id, id) = ? AND project_id = ?`,
+		id, projectID,
+	).Scan(&current, &version); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("session read status: %w", err)
+	}
+	if !model.CanSessionTransition(current, status) {
+		return fmt.Errorf("session transition %s -> %s: %w", current, status, ErrTaskStateInvalid)
+	}
+	const query = `UPDATE agent_sessions
+		SET status = ?, version = version + 1
+		WHERE COALESCE(external_id, id) = ? AND project_id = ? AND status = ? AND version = ?`
+	result, err := s.db.ExecContext(ctx, query, status, id, projectID, current, version)
 	if err != nil {
 		return fmt.Errorf("session update status: %w", err)
 	}
@@ -162,7 +200,7 @@ func (s *SQLiteSessionStore) UpdateStatus(ctx context.Context, projectID, id, st
 		return fmt.Errorf("session update status rows: %w", err)
 	}
 	if n == 0 {
-		return ErrSessionNotFound
+		return ErrConcurrentConflict
 	}
 	return nil
 }
@@ -198,3 +236,8 @@ func (s *SQLiteSessionStore) FindStale(ctx context.Context, timeoutSec int) ([]*
 
 // Verify interface compliance at compile time.
 var _ SessionStore = (*SQLiteSessionStore)(nil)
+
+// Database exposes the adapter connection to the M0 Application Service so it
+// can bind all repositories to one transaction. It is deliberately absent from
+// the SessionStore port and must not be used by transports.
+func (s *SQLiteSessionStore) Database() *sql.DB { return s.db }

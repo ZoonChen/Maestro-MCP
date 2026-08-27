@@ -1,4 +1,22 @@
+---
+doc_id: REF-MCP-GO
+spec_version: 3.0
+spec_status: review
+implementation_status: partial
+verification_status: unverified
+owner_role: technical_lead
+approver_roles: [technical_lead]
+introduced_in: M0
+authority_for: []
+related_adrs: [ADR-004]
+related_specs: [../specs/mcp/tools.schema.json]
+related_tests: [../testing/mcp-test-guide.md]
+last_verified_commit: f24bdf7
+---
+
 # mcp-go API 参考速查
+
+> 本文仅是锁定依赖 `github.com/mark3labs/mcp-go v0.48.0` 的 SDK 速查，不是 Maestro v3 的协议、认证或 Tool 语义权威文档。实现必须以 `docs/prd/mcp-protocol.md`、`docs/technical/api-spec.md` 和机器 Schema 为准；升级 mcp-go 后必须重新验证本文并更新 `last_verified_commit`。
 
 > 调研日期: 2026-04-18 | 库: `github.com/mark3labs/mcp-go`
 
@@ -27,7 +45,7 @@ s := server.NewMCPServer("name", "version",
 // Stdio (单连接，sessionID="stdio")
 server.ServeStdio(s)
 
-// SSE (多连接，:3000)
+// Legacy SSE API reference only; Maestro v3 MUST NOT use this transport.
 sse := server.NewSSEServer(s, server.WithSSEContextFunc(injectCtx))
 sse.Start(":3000")
 

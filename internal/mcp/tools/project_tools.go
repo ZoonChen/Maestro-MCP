@@ -30,7 +30,7 @@ func RegisterProjectTools(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("Optional project description"),
 			),
 			mcp.WithString("config",
-				mcp.Description("Optional JSON object with ProjectConfig fields (default_test_command, merge_target_branch, etc.)"),
+				mcp.Description("Optional JSON object with ProjectConfig fields (default_command_profile_id/version/digest, coverage defaults, merge_target_branch, etc.). Arbitrary command strings are forbidden."),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

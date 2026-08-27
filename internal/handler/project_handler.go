@@ -47,7 +47,7 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	}
 
 	// Marshal config to JSON if provided.
-	if body.Config.DefaultTestCommand != nil || body.Config.DefaultCoverageFormat != nil {
+	if body.Config.DefaultCommandProfileID != nil || body.Config.DefaultCoverageFormat != nil {
 		configBytes, _ := json.Marshal(body.Config) //nolint:errchkjson // ProjectConfig is a safe struct
 		p.Config = configBytes
 	}
@@ -103,7 +103,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 		Config      json.RawMessage `json:"config"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		invalidRequestReply(c)
 		return
 	}
 

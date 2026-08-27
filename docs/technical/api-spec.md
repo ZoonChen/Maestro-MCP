@@ -1,186 +1,120 @@
-# 4. 接口规范
-
-> **文档版本:** v2.1 | **更新日期:** 2026-04-17
-> **所属:** 技术设计文档 > 接口规范
-> **相关文档:** [MCP 协议层 PRD](../prd/mcp-protocol.md) | [Web 看板 PRD](../prd/web-dashboard.md) | [数据模型](data-model.md) | [任务管理 PRD](../prd/task-management.md)
-
+---
+doc_id: TECH-API-001
+spec_version: 3.0
+spec_status: review
+implementation_status: partial
+verification_status: unverified
+owner_role: technical_lead
+approver_roles: [product_owner, security_owner, qa_owner]
+introduced_in: M0
+authority_for: [api_semantics, errors, idempotency, versioning, protocol_mapping]
+related_adrs: [ADR-003, ADR-004, ADR-008]
+related_specs: [../specs/openapi/control-plane.yaml, ../specs/openapi/runner.yaml, ../specs/asyncapi/events.yaml, ../specs/mcp/tools.schema.json]
+related_tests: [../testing/integration-test-plan.md, ../testing/mcp-test-guide.md]
+last_verified_commit: null
 ---
 
-## 4.1 REST API 端点
+# API 语义与机器规范映射
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| **全局端点** |||
-| GET | `/api/v1/projects` | 列出所有项目 |
-| POST | `/api/v1/projects` | 注册新项目 |
-| GET | `/api/v1/projects/:id` | 项目详情 |
-| PATCH | `/api/v1/projects/:id` | 更新项目 |
-| POST | `/api/v1/projects/:id/archive` | 归档项目 |
-| POST | `/api/v1/projects/:id/restore` | 恢复项目 |
-| GET | `/api/v1/overview` | 跨项目总览 |
-| **Feature (项目级)** |||
-| POST | `/api/v1/projects/:pid/features` | 创建 Feature |
-| GET | `/api/v1/projects/:pid/features` | 列出 Feature |
-| GET | `/api/v1/projects/:pid/features/:id` | Feature 详情 |
-| PATCH | `/api/v1/projects/:pid/features/:id` | 更新 Feature |
-| **Task (项目级)** |||
-| POST | `/api/v1/projects/:pid/tasks` | 创建 Task |
-| GET | `/api/v1/projects/:pid/tasks` | 列出 Task (支持 `?status=&role=&feature_id=`) |
-| GET | `/api/v1/projects/:pid/tasks/next?role=backend&worker_id=default` | 获取下一个可执行任务（`worker_id` 可选，用于隐式 Worker 注册） |
-| GET | `/api/v1/projects/:pid/tasks/:id` | Task 详情 |
-| PATCH | `/api/v1/projects/:pid/tasks/:id` | 更新 Task（对应 MCP `update_task`） |
-| POST | `/api/v1/projects/:pid/tasks/:id/claim` | 认领任务 |
-| POST | `/api/v1/projects/:pid/tasks/:id/submit` | 提交结果 |
-| POST | `/api/v1/projects/:pid/tasks/:id/block` | 上报阻塞 |
-| POST | `/api/v1/projects/:pid/tasks/:id/resolve` | 解除阻塞 |
-| POST | `/api/v1/projects/:pid/tasks/:id/verify` | 提交验证 |
-| POST | `/api/v1/projects/:pid/tasks/:id/merge` | 执行 merge |
-| POST | `/api/v1/projects/:pid/tasks/:id/resolve-merge-conflict` | 解决 merge 冲突 |
-| POST | `/api/v1/projects/:pid/tasks/:id/cancel` | 取消任务 |
-| **Session (项目级)** |||
-| POST | `/api/v1/projects/:pid/sessions` | 注册 Session |
-| PUT | `/api/v1/projects/:pid/sessions/:sid/heartbeat` | 心跳 |
-| GET | `/api/v1/projects/:pid/sessions` | 列出 Session |
-| GET | `/api/v1/projects/:pid/sessions/:sid` | Session 详情 |
-| DELETE | `/api/v1/projects/:pid/sessions/:sid` | 断开 Session |
-| **Worker (Session 级)** |||
-| POST | `/api/v1/projects/:pid/sessions/:sid/workers` | 注册 Worker |
-| GET | `/api/v1/projects/:pid/sessions/:sid/workers` | 列出 Workers |
-| DELETE | `/api/v1/projects/:pid/sessions/:sid/workers/:wid` | 释放 Worker |
-| **Board (项目级)** |||
-| GET | `/api/v1/projects/:pid/board` | 看板数据聚合 |
-| GET | `/api/v1/projects/:pid/board/activity` | 活动日志 (`?limit=&since=`) |
-| **WebSocket** |||
-| WS | `/ws` | 实时事件推送 (`?project_id=` 过滤) |
+> 当前实现说明：M0 已将非健康入口改为强制本地 bearer、关闭远程写默认值、移除公开 `merge_task`/批量领取/强制释放，并为核心 Lease/Heartbeat/状态写入补充 CAS、幂等和稳定错误码。兼容的 `ConfirmMergedFact` 也固定返回 `OPERATION_DISABLED`，schema v5 禁止本地构造 `done`；M2 必须以已验签 Inbox/对账事实重新引入该转换。现有本地兼容 Tool 仍允许显式传入 project/session/role，且目录名称/shape 尚未迁移到权威 v3 Schema；这些参数只在本地持久状态中二次校验，不能作为 M1 远程授权上下文。
 
-## 4.2 MCP Tools
+## 1. 目标与非目标
 
-| Tool 名称 | 参数 | 说明 |
-|---|---|---|
-| **项目管理** |||
-| `register_project` | `{ name, workspace_path, description?, config? }` | 注册新项目 |
-| `list_projects` | `{ include_archived? }` | 列出所有项目 |
-| **协调者** |||
-| `create_feature` | `{ title, description, reference_urls? }` | 创建 Feature |
-| `split_task` | `{ feature_id, role, title, description, allowed_directories, forbidden_patterns?, required_apis?, dependencies?, test_requirements?, priority? }` | 拆分子任务 |
-| `update_task` | `{ task_id, title?, description?, summary?, allowed_directories?, forbidden_patterns?, required_apis?, test_requirements? }` | 修改任务参数（`pending` 状态可修改全部字段；`in_progress` 仅可修改 `description`/`summary`；其余状态不可修改） |
-| `cancel_task` | `{ task_id, reason }` | 取消任务 |
-| `resolve_blocker` | `{ task_id, resolution, reassign? }` | 解除 blocked 状态 |
-| `resolve_merge_conflict` | `{ task_id, action, reason? }` | 处理 merge_conflicted (action: reopen/cancel/followup) |
-| **执行者** |||
-| `get_next_task` | `{ role, worker_id? }` | 领取下一个任务（含降噪上下文 + Worktree 路径）。`role` 必须匹配 Session 角色，不匹配返回 `TASK_STATE_INVALID` |
-| `submit_task_result` | `{ task_id, summary? }` | 声明完成（服务端自动取证） |
-| `report_blocker` | `{ task_id, reason }` | 上报阻塞 |
-| `claim_batch` | `{ role, count }` | 批量认领任务 |
-| `release_worker` | `{ worker_id }` | 释放子 Worker |
+- `API-REQ-001`：wire shape、字段、状态码以 OpenAPI/AsyncAPI/JSON Schema 为唯一机器事实源；本文定义跨协议语义与失败行为。
+- `API-REQ-002`：所有写 API MUST 定义授权 action、Idempotency-Key、expected version、审计事件与稳定错误码。
+- `API-REQ-003`：REST、MCP Tool/Resource、WebSocket/Event 对同一 use case MUST 具有一致 project scope 与状态语义。
+- 非目标：不保留 v2 调用方自报可信身份字段；不提供公开 `merge_task`；WebSocket 不作为命令写入口。
 
-**claim_batch 语义：**
-- 批量认领多个任务的便利接口。Session 下的空闲 Worker（含隐式注册的 `default`）按顺序领取，每个认领的 Task 走与 `get_next_task` 相同的分配逻辑（设置 assigned_session_id、assigned_worker_id、assigned_at，创建 Worktree）
-- **执行顺序:** 先创建 Worktree，再执行数据库事务（与单次 `get_next_task` 的"先事务后 Worktree"顺序不同，以便在 Worktree 创建失败时避免数据库回滚）
-- 部分成功语义: 返回 `{ claimed: [...], failed: [...] }`
-- 不承诺全有或全无事务性 (worktree 创建非数据库事务)
-- 如果某个 worktree 创建失败, 已认领的任务保留, 失败的任务留在 pending
-- 如果 Worktree 创建成功但数据库事务失败（并发冲突），已创建的 Worktree 标记 abandoned 等待 GC
+## 2. 参与者、角色、权限和信任边界
 
-| **验证者** |||
-| `get_verification_task` | `{}` | 领取 submitted 状态任务 |
-| `submit_verification` | `{ task_id, passed, notes }` | 提交验证结果 |
-| `merge_task` | `{ task_id }` | 对 ready_to_merge 任务执行 git merge |
+Browser 使用 OIDC session Cookie+CSRF；远程 MCP/REST 使用 OAuth access token；stdio 使用本地 Runner/用户已授权上下文；Runner 使用设备身份；GitLab 使用验签 Webhook。Handler 只信认证中间件生成的 PrincipalContext。权限矩阵在 `specs/rbac/permissions.yaml`，机器 schema 不能替代运行时授权。
 
-## 4.3 MCP Resources
+## 3. 触发条件、输入和前置条件
 
-| URI | 返回内容 |
-|---|---|
-| `project://list` | 所有已注册项目列表及状态概览 |
-| `project://{project_id}` | 单项目详情：配置、进度统计、Agent 列表 |
-| `board://active` | 当前项目看板摘要 |
-| `board://all` | 跨项目全局看板 |
-| `task://{task_id}/context` | 任务纯净上下文（动态组装） |
-| `feature://{feature_id}/summary` | Feature 级进度 |
+所有请求需要 `X-Correlation-ID`（可由服务生成）；写请求需要 `Idempotency-Key` 与 `If-Match: \"<version>\"`，创建可用 `If-None-Match: *`。Content-Type 必须精确支持；body 默认 <=1MiB，Webhook/Artifact 走专门上限。project 从 scoped route/connection 得出，payload 同名可信字段拒绝。
 
-## 4.4 MCP Prompts
+## 4. 正常交互及时序图
 
-| Prompt 名称 | 说明 |
-|---|---|
-| `start-coordinator` | 注入协调者角色：需求分析、任务拆分、定期检查 Blocked 队列 |
-| `start-worker` | 注入执行者角色：绑定 role，专注执行，Worktree 内操作 |
-| `start-verifier` | 注入验证者角色：领取 submitted 任务，检查代码质量，决定 merge 或打回 |
-
-## 4.5 MCP 传输模式
-
-| 传输模式 | 端口/方式 | 适用场景 | 配置示例 |
-|---|---|---|---|
-| **stdio** | 标准输入输出 | Claude Code | `"command": "maestro", "args": ["mcp", "--transport", "stdio"]` |
-| **SSE** | `:3000/sse` | OpenClaw / 远程 | `"url": "http://localhost:3000/sse"` |
-
-## 4.6 WebSocket 事件类型
-
-```typescript
-type WSEvent =
-  | { type: "project.registered"; project_id: string; project: Project }
-  | { type: "project.archived"; project_id: string }
-  | { type: "task.created"; project_id: string; task: Task }
-  | { type: "task.claimed"; project_id: string; task_id: string; session_id: string; worker_id: string }
-  | { type: "task.submitted"; project_id: string; task_id: string; result: TaskResult }
-  | { type: "task.blocked"; project_id: string; task_id: string; reason: string }
-  | { type: "task.unblocked"; project_id: string; task_id: string; resolution: string }  // resolve_blocker 解除阻塞
-  | { type: "task.verifying"; project_id: string; task_id: string; session_id: string; worker_id: string }    // Verifier 领取 submitted 任务（session_id/worker_id 为验证者，Task.assigned_session_id 不变）
-  | { type: "task.rejected"; project_id: string; task_id: string; notes: string }
-  | { type: "task.ready_to_merge"; project_id: string; task_id: string }    // 对应 activity_log action = "approved"
-  | { type: "task.merge_requested"; project_id: string; task_id: string; session_id: string; worker_id: string }
-  | { type: "task.merge_conflicted"; project_id: string; task_id: string; conflicts: string[] }
-  | { type: "task.reopened"; project_id: string; task_id: string; reason: string }       // merge_conflicted → in_progress (reopen)
-  | { type: "task.merged"; project_id: string; task_id: string; commit: string }    // 系统触发，Web 看板展示为 "system merged"
-  | { type: "task.done"; project_id: string; task_id: string }    // 系统触发，Web 看板展示为 "system done"
-  | { type: "task.cancelled"; project_id: string; task_id: string; reason: string }
-  | { type: "task.followup_created"; project_id: string; task_id: string; new_task_id: string }
-  | { type: "agent.online"; project_id: string; session_id: string; role: string }
-  | { type: "agent.offline"; project_id: string; session_id: string }
+```mermaid
+sequenceDiagram
+  participant C as REST/MCP Client
+  participant H as Protocol Handler
+  participant A as Application Use Case
+  participant E as Event Stream
+  C->>H: schema-valid request + auth + idempotency/version
+  H->>A: PrincipalContext + Command + Meta
+  A-->>H: resource/version or typed error
+  H-->>C: protocol-specific stable response
+  A-->>E: committed Outbox event
+  E-->>C: authorized project-scoped notification
 ```
 
-## 4.7 错误码规范
+资源族：identity/session、teams/projects/memberships、runners/leases/executions、work-items、GitLab mappings/MR/pipeline/jobs、policies/evidence/gates/waivers、findings/defects/workflows、audit/operations。具体 path/operationId 见 OpenAPI，不在 Markdown 复制 wire shape。
 
-MCP Tool、REST API、WebSocket 使用统一错误模型:
+## 5. 失败、取消、超时、重试、恢复和用户提示
 
-```go
-type MaestroError struct {
-    Code    string `json:"code"`              // 机器可读
-    Message string `json:"message"`           // 人类可读
-    Detail  any    `json:"detail,omitempty"`  // 附加上下文
+统一 Problem：
+
+```json
+{
+  "type": "urn:maestro:error:CONCURRENT_CONFLICT",
+  "title": "Resource version conflict",
+  "status": 409,
+  "code": "CONCURRENT_CONFLICT",
+  "correlation_id": "...",
+  "retryable": false,
+  "details": [{"field": "If-Match", "reason": "expected version 3, current 4"}]
 }
 ```
 
-**可重试语义:** 错误码表中 `可重试` 列标识该错误是否适合 Agent 自动重试：
-- `Y`: 可直接重试（如超时、限流）
-- `N`: 不可重试，需修改请求或人工介入
-- `Conditional`: 修复根本原因后可重试（如测试失败 → 修复代码后重新 submit）
+固定语义：401 未认证；403 已认证但明确无动作权限；404 不可见/不存在；409 状态/版本/幂等冲突；412 前置/Gate；422 语义验证；429 限流；503 依赖不可用。安全错误 `details` 不泄露目标。自动重试只对响应明确 `retryable=true` 且方法/幂等键安全的 429/503/超时。
 
-| 错误码 | HTTP Status | 含义 | 可重试 |
-|---|---|---|
-| `PROJECT_NOT_FOUND` | 404 | 项目不存在 | N |
-| `PROJECT_ARCHIVED` | 403 | 项目已归档 | N |
-| `PROJECT_NOT_BOUND` | 400 | Agent 未绑定项目 | N |
-| `PROJECT_AMBIGUOUS` | 400 | cwd 匹配到多个项目 | N |
-| `FEATURE_NOT_FOUND` | 404 | Feature 不存在 | N |
-| `TASK_NOT_FOUND` | 404 | Task 不存在（含不属于当前项目） | N |
-| `TASK_NOT_OWNED` | 403 | Task 不属于当前 Session | N |
-| `TASK_STATE_INVALID` | 409 | 当前状态不允许此操作 | N |
-| `TASK_DEPENDENCY_UNMET` | 412 | 前置依赖未满足 | Y |
-| `SESSION_NOT_FOUND` | 404 | Session 不存在 | N |
-| `SESSION_CAPACITY_FULL` | 429 | Session Worker 数已达上限 | Y |
-| `WORKTREE_CREATE_FAILED` | 500 | Worktree 创建失败（Git 工作区不干净/磁盘/权限） | Y |
-| `WORKTREE_CLEAN_FAILED` | 500 | Worktree 清理失败 | Y |
-| `TEST_EXECUTION_FAILED` | 422 | 测试执行失败 | Conditional |
-| `TEST_EXECUTION_TIMEOUT` | 408 | 测试执行超时 | Y |
-| `COVERAGE_BELOW_THRESHOLD` | 422 | 覆盖率低于阈值 | Conditional |
-| `COVERAGE_FILE_NOT_FOUND` | 422 | 覆盖率文件不存在 | Conditional |
-| `BOUNDARY_VIOLATION` | 422 | 文件变更越界或命中禁止模式（sub_type: out_of_bounds / forbidden_pattern） | Conditional |
-| `CROSS_PROJECT_ACCESS_DENIED` | 403 | 跨项目访问被拒绝 | N |
-| `VALIDATION_REJECTED` | 422 | Verifier 人工驳回任务（记录在 WS 事件，不作为 HTTP 响应返回。区别于 validation_runs.result=rejected 的服务端自动校验拒绝） | Conditional |
-| `MERGE_CONFLICT` | 409 | 合并冲突 | N |
-| `TASK_ALREADY_CANCELLED` | 409 | 任务已取消 | N |
-| `INVALID_PARAMETER` | 400 | 参数校验失败 | N |
-| `CIRCULAR_DEPENDENCY` | 422 | 循环依赖 | N |
-| `CONNECTION_LIMIT_REACHED` | 429 | MCP 连接数达到上限 | Y |
-| `NO_AVAILABLE_TASK` | 404 | 当前无符合条件的可执行任务（`get_next_task` / `get_verification_task` 无匹配） | Y |
-| `CONCURRENT_CONFLICT` | 409 | 并发冲突，乐观锁重试耗尽（SQLite SERIALIZABLE 事务竞争） | Y |
+长任务返回 202+operation/workflow resource，不保持长 HTTP；取消使用独立幂等 command。MCP cancellation 映射 context cancel，但若业务 commit 已完成则返回/可查询原结果。
+
+## 6. 状态机、规则和不可变式
+
+- `API-INV-001`：响应资源含 `id, project_id(仅展示), version, created_at, updated_at`；可信 scope 不从这些字段反推。
+- `API-INV-002`：写成功后必有审计与可关联 event；event 不得早于事务 commit。
+- `API-INV-003`：删除采用显式 archive/revoke/cancel，不提供广泛 hard DELETE。
+- `API-INV-004`：`done`、Gate pass、waiver 等高风险状态不能由通用 PATCH 直接设置。
+
+## 7. 字段、配置和格式校验
+
+OpenAPI 3.1/JSON Schema 2020-12 开启 unknown-field rejection；时间 RFC3339 UTC，duration ISO-8601 或明确毫秒字段，UUID/URL/SHA/digest 有 format。分页 cursor 不透明、签名且含 scope/filter/version，默认 50 最大 200；排序字段 allowlist。查询 filter 重复/未知拒绝。MCP Tool 输入/输出由 `tools.schema.json`，资源 URI 必须 project-scoped；`merge_task` 不得注册。
+
+Event Envelope 至少：`event_id,event_type,event_version,source,project_id,subject,occurred_at,correlation_id,causation_id,payload_digest,sensitivity,payload`，精确 wire shape 以 `event-envelope.schema.json` 与 AsyncAPI 为准。消费者遇未知 major 拒绝/DLQ；未知向后兼容 optional 字段可忽略。
+
+## 8. 并发、幂等和一致性
+
+同 Idempotency-Key+相同 canonical request 返回原 status/body/location；不同 request hash 返回 409。资源修改使用 If-Match，缺失返回 428。批量操作每项独立幂等/结果，除非 operation 明示原子。事件至少一次且可能乱序，消费者以 event ID/aggregate version 幂等；读模型返回 `observed_at` 与 consistency/stale 标记。
+
+## 9. 安全、Secret、隐私和审计
+
+Bearer token 不放 query；Cookie Secure/HttpOnly/SameSite 且 Browser 写入验证 CSRF/Origin。CORS 精确 allowlist，不反射任意 Origin；WS/Streamable HTTP 同样鉴权与 Origin 校验。限流按 principal/project/action，不暴露高基数敏感 label。错误/日志不含 token、Cookie、Secret、源码。所有 deny、写入、导出与管理读取审计。
+
+## 10. 质量门禁、证据与 fail-closed 规则
+
+- `API-GATE-001`：OpenAPI/AsyncAPI/JSON Schema lint、示例验证、breaking diff Required。
+- `API-GATE-002`：每个写 operation 必须声明 security、permission、idempotency、If-Match、error responses 与 audit event 扩展。
+- `API-GATE-003`：REST/MCP 真协议 contract test；不得用 REST equivalent 冒充 MCP。
+- `API-GATE-004`：未认证、越权、不可见资源、Origin/CSRF/limit/unknown field fuzz 全部 fail-closed。
+
+## 11. 指标、SLO、告警和运维动作
+
+按 operation/result/status 记录 request rate/latency/error、idempotency hit/conflict、version conflict、auth deny、WS/MCP connections/backpressure。普通 API P95 <500ms；Webhook 持久化 P95 <2s。5xx >1%、授权依赖失败、event backlog、schema violation 激增告警。
+
+## 12. 验收测试和需求追踪
+
+| 测试 ID | 场景 |
+| --- | --- |
+| `TC-API-001` | OpenAPI 正/反例、错误模型与 401/403/404 语义 |
+| `TC-API-002` | 幂等键相同/不同 body、If-Match 并发冲突 |
+| `TC-API-003` | MCP initialize/tools/list/call/cancel 真实 transport |
+| `TC-API-004` | Event envelope、重复/乱序、project subscription 隔离 |
+| `TC-API-005` | `merge_task` 缺失且通用 PATCH 无法设置高风险状态 |
+
+机器规范、权限矩阵、实现 Handler 和追踪矩阵 operationId MUST 一一对应。
+
+## 13. 数据迁移、兼容、发布与回滚
+
+v3 是破坏性 API：新 `/api/v3`/MCP tool schema 并行只读观测期，v2 写默认关闭；客户端迁移后删除请求自报身份与 `merge_task`。兼容遵循 additive minor、breaking major；弃用返回 Sunset/Deprecation 和迁移链接。事件新 major 使用新 type/version。回滚只能回到仍拒绝旧不安全写入的兼容版本，不能重新开放匿名/自报 scope/local merge。

@@ -2,15 +2,15 @@ export function SessionPanel({ sessions }) {
   if (!sessions || sessions.length === 0) {
     return (
       <div class="session-panel">
-        <h3 class="section-title">Active Sessions</h3>
-        <p class="empty-hint">No active sessions</p>
+        <h3 class="section-title">Sessions</h3>
+        <p class="empty-hint">No sessions</p>
       </div>
     );
   }
 
   return (
     <div class="session-panel">
-      <h3 class="section-title">Active Sessions ({sessions.length})</h3>
+      <h3 class="section-title">Sessions ({sessions.length})</h3>
       <div class="session-list">
         {sessions.map((s) => (
           <div key={s.id} class="session-card">
@@ -28,8 +28,9 @@ export function SessionPanel({ sessions }) {
                   <div key={w.id} class="worker-item">
                     <span class="worker-icon">├──</span>
                     <span class="worker-id">{w.id}</span>
-                    <span class="worker-status">
-                      {w.current_task_id ? `T: ${w.current_task_id}` : 'idle'}
+                    <span class={`worker-status ${w.status || 'unknown'}`}>
+                      {w.status || 'unknown'}
+                      {w.current_task_id ? ` · T: ${w.current_task_id}` : ''}
                     </span>
                   </div>
                 ))}
