@@ -299,97 +299,119 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 	)
 }
 
-// registerSubmitTaskResult adds the submit_task_result tool.
+// registerSubmitTaskResult adds the submit_task_result tool in its frozen
+// v3 shape: the submission is lease-bound (work item + lease id + CAS
+// version) with mandatory evidence references; identity comes from the
+// TransportBinding and the server performs zero-trust validation, never
+// trusting the reported commit_sha or evidence content.
 func registerSubmitTaskResult(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("submit_task_result",
-			mcp.WithDescription("Submit completed work for a task. The server performs zero-trust validation: it runs git diff and executes tests itself, never trusting agent-reported results."),
-			mcp.WithString("project_id",
-				mcp.Required(),
-				mcp.Description("ID of the project"),
-			),
-			mcp.WithString("task_id",
-				mcp.Required(),
-				mcp.Description("ID of the task being submitted"),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Agent session ID (defaults to 'default-session')"),
-			),
-			mcp.WithString("worker_id",
-				mcp.Description("Worker ID (defaults to 'default-worker')"),
-			),
-			mcp.WithString("summary",
-				mcp.Description("Optional summary of the work completed"),
-			),
+			mcp.WithDescription("Submit completed work for a leased work item. The server performs zero-trust validation: it runs git diff and executes tests itself; agent-reported commit_sha and evidence are recorded, never trusted."),
+			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Leased work item")),
+			mcp.WithString("lease_id", mcp.Required(), mcp.Description("Active Lease UUID")),
+			mcp.WithNumber("lease_version", mcp.Required(), mcp.Description("Lease CAS version")),
+			mcp.WithString("commit_sha", mcp.Required(), mcp.Description("Reported commit SHA (40-64 hex); server recomputes and does not trust it")),
+			mcp.WithArray("evidence_refs", mcp.Required(), mcp.Description("1-100 evidence references")),
+			mcp.WithString("summary", mcp.Description("Optional summary of the completed work")),
+			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
+			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
 			}
-			taskID, err := req.RequireString("task_id")
+			leaseID, err := req.RequireString("lease_id")
 			if err != nil {
 				return errorResult(err), nil
 			}
-			sessionID := req.GetString("session_id", "default-session")
-			workerID := req.GetString("worker_id", "default-worker")
+			leaseVersion, err := requireLeaseVersion(req, "lease_version")
+			if err != nil {
+				return errorResult(err), nil
+			}
+			commitSHA, err := req.RequireString("commit_sha")
+			if err != nil {
+				return errorResult(err), nil
+			}
+			if !commitSHAPattern.MatchString(commitSHA) {
+				return errorResult(fmt.Errorf("commit_sha: %w", store.ErrInvalidParameter)), nil
+			}
+			if _, err := requireStringSlice(req, "evidence_refs", 1, 100); err != nil {
+				return errorResult(err), nil
+			}
 			summaryStr := req.GetString("summary", "")
+			_, projectID, sessionID, workerID, err := requireLeaseContext(req, services)
+			if err != nil {
+				return errorResult(err), nil
+			}
+
+			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
+				return errorResult(fmt.Errorf("submission rejected: %w", err)), nil
+			}
 
 			var summary *string
 			if summaryStr != "" {
 				summary = &summaryStr
 			}
-
-			if err := services.Validation.SubmitAndValidate(ctx, projectID, taskID, sessionID, workerID, summary); err != nil {
+			if err := services.Validation.SubmitAndValidate(ctx, projectID, workItemID, sessionID, workerID, summary); err != nil {
 				return errorResult(fmt.Errorf("submission failed: %w", err)), nil
 			}
-
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"validating","validation":"passed"}`, taskID)), nil
+			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"validating","validation":"in_progress"}`, workItemID)), nil
 		},
 	)
 }
 
-// registerReportBlocker adds the report_blocker tool.
+// commitSHAPattern accepts 40 (git-1) or 64 (git-2/sha256) hex characters.
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// registerReportBlocker adds the report_blocker tool in its frozen v3
+// shape: the blocker is lease-bound; identity comes from the binding.
 func registerReportBlocker(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("report_blocker",
-			mcp.WithDescription("Report that a task is blocked. The task transitions from executing to blocked."),
-			mcp.WithString("project_id",
-				mcp.Required(),
-				mcp.Description("ID of the project"),
-			),
-			mcp.WithString("task_id",
-				mcp.Required(),
-				mcp.Description("ID of the blocked task"),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Agent session ID (defaults to 'default-session')"),
-			),
-			mcp.WithString("reason",
-				mcp.Required(),
-				mcp.Description("Description of what is blocking the task"),
-			),
+			mcp.WithDescription("Record an evidenced blocker against the currently leased work item."),
+			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Leased work item")),
+			mcp.WithString("lease_id", mcp.Required(), mcp.Description("Active Lease UUID")),
+			mcp.WithNumber("lease_version", mcp.Required(), mcp.Description("Lease CAS version")),
+			mcp.WithString("reason", mcp.Required(), mcp.Description("Why the work item is blocked")),
+			mcp.WithArray("evidence_refs", mcp.Description("Optional evidence references (max 100)")),
+			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
+			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
 			}
-			taskID, err := req.RequireString("task_id")
+			leaseID, err := req.RequireString("lease_id")
 			if err != nil {
 				return errorResult(err), nil
 			}
-			sessionID := req.GetString("session_id", "default-session")
+			leaseVersion, err := requireLeaseVersion(req, "lease_version")
+			if err != nil {
+				return errorResult(err), nil
+			}
 			reason, err := req.RequireString("reason")
 			if err != nil {
 				return errorResult(err), nil
 			}
-
-			if err := services.Task.ReportBlocker(ctx, projectID, taskID, sessionID, reason); err != nil {
-				return errorResult(fmt.Errorf("failed to report blocker: %w", err)), nil
+			if reason == "" {
+				return errorResult(fmt.Errorf("reason: %w", store.ErrInvalidParameter)), nil
+			}
+			if _, err := requireStringSlice(req, "evidence_refs", 0, 100); err != nil {
+				return errorResult(err), nil
+			}
+			_, projectID, sessionID, _, err := requireLeaseContext(req, services)
+			if err != nil {
+				return errorResult(err), nil
 			}
 
-			return mcp.NewToolResultText(fmt.Sprintf(`{"task_id":"%s","status":"blocked"}`, taskID)), nil
+			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
+				return errorResult(fmt.Errorf("blocker rejected: %w", err)), nil
+			}
+			if err := services.Task.ReportBlocker(ctx, projectID, workItemID, sessionID, reason); err != nil {
+				return errorResult(fmt.Errorf("failed to report blocker: %w", err)), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"blocked"}`, workItemID)), nil
 		},
 	)
 }

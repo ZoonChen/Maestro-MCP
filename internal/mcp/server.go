@@ -19,6 +19,7 @@ func NewMaestroMCPServer(svc *tools.Services) *mcpserver.MCPServer {
 	)
 
 	// Register tools
+	tools.RegisterReadTools(s, svc)
 	tools.RegisterProjectTools(s, svc)
 	tools.RegisterCoordinatorTools(s, svc)
 	tools.RegisterWorkerTools(s, svc)
