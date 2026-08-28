@@ -52,8 +52,12 @@ services:
       # Local development credentials only; production uses secret refs and
       # network isolation per docs/technical/deployment.md.
       POSTGRES_USER: maestro
-      POSTGRES_PASSWORD: maestro-local-dev
+      POSTGRES_PASSWORD: ${MAESTRO_POSTGRES_PASSWORD:-maestro-local-dev}
       POSTGRES_DB: maestro
+    ports:
+      # Loopback-only publish so local drills and tests can reach the
+      # control-plane database without exposing it beyond the host.
+      - "127.0.0.1:${MAESTRO_POSTGRES_PORT:-5433}:5432"
     volumes:
       - maestro-postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -67,6 +71,35 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
+
+  # One-shot schema migration job (TECH-DEP-001 minimal set: postgres ready
+  # -> migrate success -> control plane ready).
+  maestro-migrate:
+    build:
+      context: .
+      args:
+        VERSION: ${MAESTRO_VERSION:-dev}
+        COMMIT: ${MAESTRO_COMMIT:-unknown}
+        BUILD_TIME: ${MAESTRO_BUILD_TIME:-unknown}
+        SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:-0}
+    profiles: ["m1", "m1-gitlab"]
+    environment:
+      MAESTRO_DB_DRIVER: postgres
+      MAESTRO_DATABASE_DSN: postgres://maestro:${MAESTRO_POSTGRES_PASSWORD:-maestro-local-dev}@maestro-postgres:5432/maestro?sslmode=disable
+    command: ["migrate", "up"]
+    depends_on:
+      maestro-postgres:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - maestro
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
