@@ -1095,8 +1095,21 @@ validation:
 	runGit(t, successWorktree, "add", "src/subtract.go", "src/subtract_test.go")
 	runGit(t, successWorktree, "-c", "user.name=M0 Test", "-c", "user.email=m0@example.invalid", "commit", "-m", "successful validation change")
 
+	var renewedLeaseVersion int64
+	requireNoError(t, database.QueryRow(`SELECT version FROM task_leases
+		WHERE project_id=? AND id=?`, projectID, leaseID).Scan(&renewedLeaseVersion), "read lease version before submit")
+	successCommit := gitRevParse(t, successWorktree)
+	var dbgAssigned, dbgWorker sql.NullString
+	_ = database.QueryRow(`SELECT assigned_session_id, assigned_worker_id FROM tasks WHERE project_id=? AND id=?`, projectID, successTaskID).Scan(&dbgAssigned, &dbgWorker)
+	var dbgLeaseSession string
+	_ = database.QueryRow(`SELECT session_id FROM task_leases WHERE id=?`, leaseID).Scan(&dbgLeaseSession)
+	var dbgPhys, dbgExt string
+	_ = database.QueryRow(`SELECT id, COALESCE(external_id,'') FROM agent_sessions WHERE project_id=? AND COALESCE(external_id,id)=?`, projectID, validationRunnerSession).Scan(&dbgPhys, &dbgExt)
+	t.Logf("DBG lease.session=%q sess.phys=%q ext=%q", dbgLeaseSession, dbgPhys, dbgExt)
 	result, resultText := callRealTool(t, ctx, runner, "submit_task_result", map[string]any{
-		"project_id": projectID, "task_id": successTaskID, "session_id": validationRunnerSession, "worker_id": validationRunnerWorker, "summary": "real binary validation",
+		"work_item_id": successTaskID, "lease_id": leaseID, "lease_version": renewedLeaseVersion,
+		"commit_sha": successCommit, "evidence_refs": []string{"local://validation"},
+		"summary": "real binary validation", "idempotency_key": "m0-real-submit-0000000001",
 	})
 	if result.IsError {
 		t.Fatalf("successful real-binary validation returned an MCP error: %s", resultText)
@@ -1124,8 +1137,16 @@ validation:
 	runGit(t, failureWorktree, "add", "src/failure_test.go")
 	runGit(t, failureWorktree, "-c", "user.name=M0 Test", "-c", "user.email=m0@example.invalid", "commit", "-m", "failing validation change")
 
+	var failureLeaseID string
+	var failureLeaseVersion int64
+	requireNoError(t, database.QueryRow(`SELECT id, version FROM task_leases
+		WHERE project_id=? AND task_id=? AND status='active'`, projectID, failureTaskID).
+		Scan(&failureLeaseID, &failureLeaseVersion), "read failure task lease")
+	failureCommit := gitRevParse(t, failureWorktree)
 	result, resultText = callRealTool(t, ctx, runner, "submit_task_result", map[string]any{
-		"project_id": projectID, "task_id": failureTaskID, "session_id": validationRunnerSession, "worker_id": validationRunnerWorker,
+		"work_item_id": failureTaskID, "lease_id": failureLeaseID, "lease_version": failureLeaseVersion,
+		"commit_sha": failureCommit, "evidence_refs": []string{"local://validation"},
+		"idempotency_key": "m0-real-submit-fail-00002",
 	})
 	if !result.IsError || !strings.Contains(resultText, "TEST_FAILED") {
 		t.Fatalf("failing real-binary validation did not fail closed: is_error=%t content=%s", result.IsError, resultText)
@@ -1643,4 +1664,17 @@ func environmentWithOverrides(overrides map[string]string) []string {
 		environment = append(environment, key+"="+value)
 	}
 	return environment
+}
+
+func gitRevParse(t *testing.T, worktree string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	command.Dir = worktree
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD in %s: %v", worktree, err)
+	}
+	return strings.TrimSpace(string(output))
 }

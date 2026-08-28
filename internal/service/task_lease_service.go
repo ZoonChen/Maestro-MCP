@@ -1084,3 +1084,38 @@ func (s *TaskService) ActiveLeaseSnapshot(ctx context.Context, projectID, taskID
 	}
 	return id, version, epoch, nil
 }
+
+// VerifyLeaseAuthority is the lease-binding gate for lease-scoped tool
+// calls (submit, blocker, verification verdict): the lease must be the
+// work item's ACTIVE lease, owned by the requesting session, and carry the
+// exact CAS version the caller presented.
+func (s *TaskService) VerifyLeaseAuthority(
+	ctx context.Context, projectID, taskID, leaseID string, expectedVersion int64, sessionID string,
+) error {
+	var ownerSession string
+	var version int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT session_id, version FROM task_leases
+		WHERE id = ? AND project_id = ? AND task_id = ? AND status = 'active'`,
+		leaseID, projectID, taskID).Scan(&ownerSession, &version)
+	if err == sql.ErrNoRows {
+		var task *model.Task
+		if task, err = s.taskStore.GetByID(ctx, projectID, taskID); err != nil {
+			return fmt.Errorf("VerifyLeaseAuthority: %w", err)
+		}
+		if task.ActiveLeaseID == nil || *task.ActiveLeaseID != leaseID {
+			return fmt.Errorf("VerifyLeaseAuthority: %w: lease %s is not the active lease", store.ErrLeaseNotFound, leaseID)
+		}
+		return fmt.Errorf("VerifyLeaseAuthority: %w: lease %s is not active", store.ErrLeaseExpired, leaseID)
+	}
+	if err != nil {
+		return fmt.Errorf("VerifyLeaseAuthority: lookup: %w", err)
+	}
+	if ownerSession != sessionID {
+		return fmt.Errorf("VerifyLeaseAuthority: %w: lease belongs to %s", store.ErrTaskNotOwned, ownerSession)
+	}
+	if version != expectedVersion {
+		return fmt.Errorf("VerifyLeaseAuthority: %w: presented %d, stored %d", store.ErrLeaseVersionMismatch, expectedVersion, version)
+	}
+	return nil
+}
