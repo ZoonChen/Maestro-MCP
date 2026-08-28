@@ -26,8 +26,8 @@ func TestParsePostgresMigrationsShape(t *testing.T) {
 		assert.NotEmpty(t, migration.Name)
 		assert.True(t, strings.HasPrefix(migration.Digest, "sha256:"), "digest must be a sha256 hex string")
 		assert.Len(t, strings.TrimPrefix(migration.Digest, "sha256:"), 64)
-		assert.Contains(t, migration.UpSQL, "CREATE TABLE")
-		assert.Contains(t, migration.DownSQL, "DROP SCHEMA")
+		assert.NotEmpty(t, migration.UpSQL)
+		assert.NotEmpty(t, migration.DownSQL)
 	}
 }
 
@@ -62,9 +62,11 @@ func TestPostgresMigrateApplyValidateRevert(t *testing.T) {
 	_, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS maestro_meta CASCADE;`)
 	require.NoError(t, err)
 
+	migrations, err := ParsePostgresMigrations()
+	require.NoError(t, err)
 	applied, err := ApplyPostgresMigrations(ctx, db)
 	require.NoError(t, err)
-	assert.Equal(t, 1, applied, "baseline applies exactly one migration")
+	assert.Equal(t, len(migrations), applied, "a fresh schema applies every embedded migration")
 
 	require.NoError(t, ValidatePostgresSchema(ctx, db))
 
@@ -81,15 +83,18 @@ func TestPostgresMigrateApplyValidateRevert(t *testing.T) {
 	_, err = ApplyPostgresMigrations(ctx, db)
 	require.ErrorIs(t, err, ErrPostgresMigrationIntegrity)
 
-	// Restore the real digest, then revert and verify the schema is gone.
-	migrations, err := ParsePostgresMigrations()
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `UPDATE maestro_meta.schema_migrations SET digest = $1`, migrations[0].Digest)
-	require.NoError(t, err)
+	// Restore every real digest, then revert everything and verify the
+	// schema is gone (the envelope trigger fix rides along with the baseline).
+	for _, migration := range migrations {
+		_, err = db.ExecContext(ctx,
+			`UPDATE maestro_meta.schema_migrations SET digest = $1 WHERE version = $2`,
+			migration.Digest, migration.Version)
+		require.NoError(t, err)
+	}
 
-	reverted, err := RevertPostgresMigrations(ctx, db, 1)
+	reverted, err := RevertPostgresMigrations(ctx, db, len(migrations))
 	require.NoError(t, err)
-	assert.Equal(t, 1, reverted)
+	assert.Equal(t, len(migrations), reverted)
 
 	var tables int
 	require.NoError(t, db.QueryRowContext(ctx,
