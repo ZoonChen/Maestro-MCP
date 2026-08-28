@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-003
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: security_owner
@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-003：OIDC Principal + 默认拒绝的项目 RBAC
 
-> 决策状态：待评审接受。M0 已使全局 Bearer 在未配置时对非健康端点 fail-closed，并默认禁止远程写；但共享 Token 无法提供个人归责、Membership/RBAC、委托交集权限或撤权传播，仍不满足本决策。
+> 决策状态：已评审接受（I1 契约冻结 sprint；签署以契约 PR 评审批准记录为准）。M0 已使全局 Bearer 在未配置时对非健康端点 fail-closed，并默认禁止远程写；但共享 Token 无法提供个人归责、Membership/RBAC、委托交集权限或撤权传播，仍不满足本决策。
 
 ## 1. 目标与非目标
 

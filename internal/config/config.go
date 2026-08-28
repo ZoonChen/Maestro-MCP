@@ -58,8 +58,65 @@ type ValidationCommandProfileResources struct {
 	PIDs      int `yaml:"pids"`
 }
 
-// Config holds all configuration for the M0 local Maestro runtime. M1 replaces
-// the SQLite/shared-token fields with the v3 Control Plane and Runner schema.
+// Database driver constants for the M1 dual-driver transition. SQLite keeps
+// serving the M0 local baseline; PostgreSQL is the v3 source of truth
+// (ADR-002). The driver is selected by the `database` section: an explicit
+// driver field, or DSN presence implying postgres, otherwise the legacy
+// db_path/sqlite path.
+const (
+	DatabaseDriverSQLite   = "sqlite"
+	DatabaseDriverPostgres = "postgres"
+)
+
+// DatabaseConfig mirrors the v3 `database` config section
+// (docs/specs/schemas/config.schema.json). Production files carry only
+// dsn_secret_ref plus pool sizing; the resolved DSN value is injected via
+// environment and never persisted in the config file.
+type DatabaseConfig struct {
+	Driver             string `yaml:"driver,omitempty"`         // sqlite | postgres; empty = infer
+	SQLitePath         string `yaml:"sqlite_path,omitempty"`    // explicit sqlite target inside the section
+	DSNRef             string `yaml:"dsn_secret_ref,omitempty"` // secret reference, e.g. docker-secret://maestro-postgres-dsn
+	DSN                string `yaml:"-"`                        // resolved value: MAESTRO_DATABASE_DSN only
+	MaxOpenConnections int    `yaml:"max_open_connections,omitempty"`
+}
+
+// OIDCConfig mirrors the v3 `oidc` config section. The section is optional
+// until M1-AUTH-001 wires the identity layer; when present it must satisfy
+// the frozen machine schema (https issuer, fixed 15-minute access tokens).
+type OIDCConfig struct {
+	Issuer            string `yaml:"issuer"`
+	ClientID          string `yaml:"client_id"`
+	ClientSecretRef   string `yaml:"client_secret_ref"`
+	ClientSecret      string `yaml:"-"` // resolved value: MAESTRO_OIDC_CLIENT_SECRET only
+	Audience          string `yaml:"audience"`
+	AccessTokenTTLSec int    `yaml:"access_token_ttl_seconds,omitempty"`
+}
+
+// RunnerConfig mirrors the v3 `runner` config section. The enrollment TTL,
+// heartbeat, suspect and offline windows are frozen constants
+// (runner-security.md section 5); only the lease TTL and long-poll bound are
+// operator-tunable within their schema ranges.
+type RunnerConfig struct {
+	EnrollmentTTLSec int `yaml:"enrollment_ttl_seconds,omitempty"`
+	LeaseTTLSec      int `yaml:"lease_ttl_seconds,omitempty"`
+	LongPollSec      int `yaml:"long_poll_seconds,omitempty"`
+	HeartbeatSec     int `yaml:"heartbeat_seconds,omitempty"`
+	SuspectSec       int `yaml:"suspect_seconds,omitempty"`
+	OfflineSec       int `yaml:"offline_seconds,omitempty"`
+}
+
+// Frozen runner protocol windows (runner-security.md section 5).
+const (
+	RunnerEnrollmentTTLSec = 600
+	RunnerHeartbeatSec     = 15
+	RunnerSuspectSec       = 45
+	RunnerOfflineSec       = 90
+	RunnerAccessTokenTTL   = 900
+)
+
+// Config holds all configuration for the Maestro runtime. M0 fields keep the
+// SQLite single-binary baseline; the v3 sections (database/oidc/runner) are
+// the frozen M1 contract and stay optional until their streams wire them in.
 type Config struct {
 	DBPath   string `yaml:"db_path"`
 	HTTPAddr string `yaml:"http_addr"`
@@ -80,6 +137,10 @@ type Config struct {
 	AuthToken      string   `yaml:"-"`               // process Secret: MAESTRO_AUTH_TOKEN only
 	AllowedOrigins []string `yaml:"allowed_origins"` // exact browser Origin values
 	RemoteWrite    bool     `yaml:"remote_write"`    // disabled by default throughout M0
+
+	Database DatabaseConfig `yaml:"database"`
+	OIDC     *OIDCConfig    `yaml:"oidc,omitempty"`
+	Runner   RunnerConfig   `yaml:"runner"`
 
 	Validation ValidationConfig `yaml:"validation"`
 }
@@ -105,6 +166,15 @@ func DefaultConfig() *Config {
 
 		AllowedOrigins: []string{},
 		RemoteWrite:    false,
+
+		Runner: RunnerConfig{
+			EnrollmentTTLSec: RunnerEnrollmentTTLSec,
+			LeaseTTLSec:      90,
+			LongPollSec:      25,
+			HeartbeatSec:     RunnerHeartbeatSec,
+			SuspectSec:       RunnerSuspectSec,
+			OfflineSec:       RunnerOfflineSec,
+		},
 
 		Validation: ValidationConfig{
 			DefaultTimeoutSec: 120,
@@ -153,6 +223,10 @@ func ApplyEnvOverrides(cfg *Config) error {
 	}
 	next := *cfg
 	next.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
+	if cfg.OIDC != nil {
+		copied := *cfg.OIDC
+		next.OIDC = &copied
+	}
 
 	applyString := func(environmentName string, destination *string) {
 		if value, ok := os.LookupEnv(environmentName); ok && value != "" {
@@ -177,6 +251,35 @@ func ApplyEnvOverrides(cfg *Config) error {
 	applyString("MAESTRO_HTTP_ADDR", &next.HTTPAddr)
 	applyString("MAESTRO_LOG_LEVEL", &next.LogLevel)
 	applyString("MAESTRO_LOG_FORMAT", &next.LogFormat)
+
+	// v3 database section. The resolved DSN is a process secret and only
+	// enters through the environment, never the config file.
+	applyString("MAESTRO_DB_DRIVER", &next.Database.Driver)
+	applyString("MAESTRO_DATABASE_DSN_REF", &next.Database.DSNRef)
+	applyString("MAESTRO_DATABASE_DSN", &next.Database.DSN)
+	if err := applyInt("MAESTRO_DATABASE_MAX_OPEN_CONNECTIONS", &next.Database.MaxOpenConnections); err != nil {
+		return fmt.Errorf("MAESTRO_DATABASE_MAX_OPEN_CONNECTIONS: %w", err)
+	}
+
+	// v3 oidc section. Issuer/client identity may come from the environment;
+	// the client secret value is MAESTRO_OIDC_CLIENT_SECRET only. Any OIDC
+	// variable materializes the section so partial overrides fail closed in
+	// Validate instead of being silently dropped.
+	if value, ok := os.LookupEnv("MAESTRO_OIDC_ISSUER"); ok && value != "" {
+		next.ensureOIDC().Issuer = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_OIDC_CLIENT_ID"); ok && value != "" {
+		next.ensureOIDC().ClientID = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_OIDC_CLIENT_SECRET_REF"); ok && value != "" {
+		next.ensureOIDC().ClientSecretRef = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_OIDC_AUDIENCE"); ok && value != "" {
+		next.ensureOIDC().Audience = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_OIDC_CLIENT_SECRET"); ok && value != "" {
+		next.ensureOIDC().ClientSecret = value
+	}
 
 	for _, item := range []struct {
 		name        string
@@ -273,6 +376,113 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateValidation(); err != nil {
 		return err
+	}
+	if err := c.validateDatabase(); err != nil {
+		return err
+	}
+	if err := c.validateOIDC(); err != nil {
+		return err
+	}
+	if err := c.validateRunner(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureOIDC lazily materializes the optional oidc section.
+func (c *Config) ensureOIDC() *OIDCConfig {
+	if c.OIDC == nil {
+		c.OIDC = &OIDCConfig{}
+	}
+	return c.OIDC
+}
+
+// DatabaseDriver resolves the effective driver for composition roots. An
+// explicit driver wins; otherwise a configured DSN implies postgres, and the
+// legacy db_path keeps the M0 sqlite baseline.
+func (c *Config) DatabaseDriver() string {
+	if c.Database.Driver != "" {
+		return c.Database.Driver
+	}
+	if c.Database.DSN != "" || c.Database.DSNRef != "" {
+		return DatabaseDriverPostgres
+	}
+	return DatabaseDriverSQLite
+}
+
+// PostgresEnabled reports whether the runtime must assemble the PostgreSQL
+// control-plane stack (store, migrations, outbox dispatcher).
+func (c *Config) PostgresEnabled() bool {
+	return c.DatabaseDriver() == DatabaseDriverPostgres
+}
+
+func (c *Config) validateDatabase() error {
+	if c.Database.Driver != "" &&
+		c.Database.Driver != DatabaseDriverSQLite &&
+		c.Database.Driver != DatabaseDriverPostgres {
+		return errors.New("database.driver must be sqlite or postgres")
+	}
+	if c.Database.SQLitePath != "" {
+		if err := validateDBPath(c.Database.SQLitePath); err != nil {
+			return fmt.Errorf("database.sqlite_path: %w", err)
+		}
+	}
+	if c.Database.MaxOpenConnections != 0 &&
+		(c.Database.MaxOpenConnections < 2 || c.Database.MaxOpenConnections > 100) {
+		return errors.New("database.max_open_connections must be between 2 and 100")
+	}
+	if c.PostgresEnabled() && c.Database.DSN == "" && c.Database.DSNRef == "" {
+		return errors.New("database requires a dsn_secret_ref (or MAESTRO_DATABASE_DSN) when postgres is selected")
+	}
+	if c.PostgresEnabled() && c.Validation.AllowHostExecution {
+		// Host execution is a loopback-only M0 diagnostic; the PostgreSQL
+		// control plane never executes on the host.
+		return errors.New("validation.allow_host_execution requires the sqlite driver")
+	}
+	return nil
+}
+
+func (c *Config) validateOIDC() error {
+	if c.OIDC == nil {
+		return nil
+	}
+	issuer, err := url.Parse(c.OIDC.Issuer)
+	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
+		return errors.New("oidc.issuer must be a valid HTTPS URL")
+	}
+	if strings.TrimSpace(c.OIDC.ClientID) == "" {
+		return errors.New("oidc.client_id must not be empty")
+	}
+	if strings.TrimSpace(c.OIDC.ClientSecretRef) == "" {
+		return errors.New("oidc.client_secret_ref must not be empty")
+	}
+	if strings.TrimSpace(c.OIDC.Audience) == "" {
+		return errors.New("oidc.audience must not be empty")
+	}
+	if c.OIDC.AccessTokenTTLSec != 0 && c.OIDC.AccessTokenTTLSec != RunnerAccessTokenTTL {
+		return fmt.Errorf("oidc.access_token_ttl_seconds must be %d", RunnerAccessTokenTTL)
+	}
+	return nil
+}
+
+func (c *Config) validateRunner() error {
+	if c.Runner.EnrollmentTTLSec != 0 && c.Runner.EnrollmentTTLSec != RunnerEnrollmentTTLSec {
+		return fmt.Errorf("runner.enrollment_ttl_seconds must be %d", RunnerEnrollmentTTLSec)
+	}
+	if c.Runner.LeaseTTLSec != 0 && (c.Runner.LeaseTTLSec < 30 || c.Runner.LeaseTTLSec > 600) {
+		return errors.New("runner.lease_ttl_seconds must be between 30 and 600")
+	}
+	if c.Runner.LongPollSec != 0 && (c.Runner.LongPollSec < 1 || c.Runner.LongPollSec > 30) {
+		return errors.New("runner.long_poll_seconds must be between 1 and 30")
+	}
+	if c.Runner.HeartbeatSec != 0 && c.Runner.HeartbeatSec != RunnerHeartbeatSec {
+		return fmt.Errorf("runner.heartbeat_seconds must be %d", RunnerHeartbeatSec)
+	}
+	if c.Runner.SuspectSec != 0 && c.Runner.SuspectSec != RunnerSuspectSec {
+		return fmt.Errorf("runner.suspect_seconds must be %d", RunnerSuspectSec)
+	}
+	if c.Runner.OfflineSec != 0 && c.Runner.OfflineSec != RunnerOfflineSec {
+		return fmt.Errorf("runner.offline_seconds must be %d", RunnerOfflineSec)
 	}
 	return nil
 }

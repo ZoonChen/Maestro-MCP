@@ -1,3 +1,11 @@
+# Default topology (no profiles): the M0 single-service baseline, identical
+# to `make compose-up`.
+#
+# M1 local-first topology (plans/stages/m1-control-plane.md P2):
+#   docker compose --profile m1 up          # + maestro-postgres + keycloak
+#   docker compose --profile m1-gitlab up   # + GitLab CE (W2 integration)
+# The maestro service stays on SQLite unless MAESTRO_DB_DRIVER=postgres and a
+# DSN are provided; the v3 wiring lands with M1-DATA-001.
 services:
   maestro:
     build:
@@ -14,6 +22,10 @@ services:
     environment:
       MAESTRO_AUTH_TOKEN: ${MAESTRO_AUTH_TOKEN:-}
       MAESTRO_REMOTE_WRITE: "false"
+      # v3 database section passthrough (inert until M1-DATA-001 wires PG).
+      MAESTRO_DB_DRIVER: ${MAESTRO_DB_DRIVER:-}
+      MAESTRO_DATABASE_DSN_REF: ${MAESTRO_DATABASE_DSN_REF:-}
+      MAESTRO_DATABASE_DSN: ${MAESTRO_DATABASE_DSN:-}
       GIN_MODE: release
     command: server --db /var/lib/maestro/maestro.db --http 0.0.0.0:8080
     restart: unless-stopped
@@ -24,6 +36,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - maestro
     healthcheck:
       test: ["CMD", "/app/maestro", "doctor", "--db", "/var/lib/maestro/maestro.db", "--health-url", "http://127.0.0.1:8080/readyz"]
       interval: 10s
@@ -31,5 +45,81 @@ services:
       retries: 12
       start_period: 10s
 
+  maestro-postgres:
+    image: postgres:16-alpine
+    profiles: ["m1", "m1-gitlab"]
+    environment:
+      # Local development credentials only; production uses secret refs and
+      # network isolation per docs/technical/deployment.md.
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: maestro-local-dev
+      POSTGRES_DB: maestro
+    volumes:
+      - maestro-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - maestro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["m1", "m1-gitlab"]
+    command: ["start-dev", "--http-port", "8080"]
+    environment:
+      # start-dev with ephemeral local state is for the Compose topology only.
+      # Production deployments run TLS behind the edge with a managed realm.
+      KEYCLOAK_ADMIN: maestro-local-dev
+      KEYCLOAK_ADMIN_PASSWORD: maestro-local-dev
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    ports:
+      - "127.0.0.1:${MAESTRO_KEYCLOAK_PORT:-8180}:8080"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - maestro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /realms/master HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q -m1 'HTTP/1.1 200' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # GitLab CE is W2 integration material (M2-GL-001); the topology slot is
+  # reserved behind the m1-gitlab profile so S4 can extend it without
+  # restructuring the file.
+  gitlab-ce:
+    image: gitlab/gitlab-ce:17.9.1-ce.0
+    profiles: ["m1-gitlab"]
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    shm_size: 256m
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    ports:
+      - "127.0.0.1:${MAESTRO_GITLAB_PORT:-8181}:80"
+    restart: unless-stopped
+    networks:
+      - maestro
+
 volumes:
   maestro-data:
+  maestro-postgres-data:
+  keycloak-data:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+
+networks:
+  maestro:

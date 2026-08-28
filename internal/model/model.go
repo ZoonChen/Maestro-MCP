@@ -324,16 +324,22 @@ type APIContract struct {
 }
 
 // AgentSession maps to the agent_sessions table.
+// PrincipalID and ConnectionGeneration are the M1 session-identity contract:
+// the owning principal and the fencing generation are assigned server-side at
+// registration/recovery; claim and heartbeat payloads never carry them.
+// SQLite persistence for the new columns lands with the M1-DATA-001 schema.
 type AgentSession struct {
-	ID            string `db:"id"             json:"id"`
-	ProjectID     string `db:"project_id"     json:"project_id"`
-	Role          string `db:"role"           json:"role"`
-	ClientType    string `db:"client_type"    json:"client_type"`
-	Capacity      int    `db:"capacity"       json:"capacity"`
-	Status        string `db:"status"         json:"status"`
-	Version       int64  `db:"version"        json:"version"`
-	LastHeartbeat string `db:"last_heartbeat" json:"last_heartbeat"`
-	CreatedAt     string `db:"created_at"     json:"created_at"`
+	ID                   string  `db:"id"                   json:"id"`
+	ProjectID            string  `db:"project_id"           json:"project_id"`
+	PrincipalID          *string `db:"principal_id"         json:"principal_id,omitempty"`
+	Role                 string  `db:"role"                 json:"role"`
+	ClientType           string  `db:"client_type"          json:"client_type"`
+	Capacity             int     `db:"capacity"             json:"capacity"`
+	Status               string  `db:"status"               json:"status"`
+	ConnectionGeneration int64   `db:"connection_generation" json:"connection_generation"`
+	Version              int64   `db:"version"              json:"version"`
+	LastHeartbeat        string  `db:"last_heartbeat"       json:"last_heartbeat"`
+	CreatedAt            string  `db:"created_at"           json:"created_at"`
 }
 
 // AgentWorker maps to the agent_workers table.
@@ -351,18 +357,22 @@ type AgentWorker struct {
 // TaskLease is the append-preserving execution authority for a task attempt.
 // Lease tokens are represented by the opaque ID at this prototype stage; the
 // v3 Runner stores and transports a nonce hash in addition to these fields.
+// ConnectionGeneration fences stale runners/sessions: bumping the session's
+// generation invalidates heartbeats and results carrying an older generation.
 type TaskLease struct {
-	ID        string `db:"id"          json:"id"`
-	ProjectID string `db:"project_id"  json:"project_id"`
-	TaskID    string `db:"task_id"     json:"task_id"`
-	SessionID string `db:"session_id"  json:"session_id"`
-	WorkerID  string `db:"worker_id"   json:"worker_id"`
-	Epoch     int64  `db:"epoch"       json:"epoch"`
-	Status    string `db:"status"      json:"status"`
-	Version   int64  `db:"version"     json:"version"`
-	ExpiresAt string `db:"expires_at"  json:"expires_at"`
-	CreatedAt string `db:"created_at"  json:"created_at"`
-	UpdatedAt string `db:"updated_at"  json:"updated_at"`
+	ID                   string `db:"id"                   json:"id"`
+	ProjectID            string `db:"project_id"           json:"project_id"`
+	TaskID               string `db:"task_id"              json:"task_id"`
+	SessionID            string `db:"session_id"           json:"session_id"`
+	WorkerID             string `db:"worker_id"            json:"worker_id"`
+	Epoch                int64  `db:"epoch"                json:"epoch"`
+	ConnectionGeneration int64  `db:"connection_generation" json:"connection_generation"`
+	NonceHash            string `db:"nonce_hash"           json:"nonce_hash,omitempty"`
+	Status               string `db:"status"               json:"status"`
+	Version              int64  `db:"version"              json:"version"`
+	ExpiresAt            string `db:"expires_at"           json:"expires_at"`
+	CreatedAt            string `db:"created_at"           json:"created_at"`
+	UpdatedAt            string `db:"updated_at"           json:"updated_at"`
 }
 
 // ActivityLog maps to the activity_log table.
@@ -388,4 +398,236 @@ type AuditLog struct {
 	Result        string  `db:"result"         json:"result"`
 	Detail        *string `db:"detail"         json:"detail,omitempty"` // JSON TEXT
 	CreatedAt     string  `db:"created_at"     json:"created_at"`
+}
+
+// ---------------------------------------------------------------------------
+// M1 v3 identity, runner and event entities.
+//
+// These structs are the frozen PostgreSQL contract for M1-DATA-001
+// (docs/technical/data-model.md section 7). The SQLite implementation keeps
+// serving the M0 tables unchanged until the cutover; no SQLite DDL is bound
+// to these types yet.
+// ---------------------------------------------------------------------------
+
+// Principal type constants for PrincipalContext.
+const (
+	PrincipalTypeHuman   = "human"
+	PrincipalTypeService = "service"
+	PrincipalTypeDevice  = "device"
+)
+
+// PrincipalContext is the server-derived authorization subject defined by
+// TECH-ARCH-001 section 2. It is constructed exclusively by the
+// authentication middleware; business payloads carrying any of these fields
+// must be rejected or ignored with an audit entry.
+type PrincipalContext struct {
+	PrincipalID        string            `json:"principal_id"`
+	Type               string            `json:"type"`
+	TeamIDs            []string          `json:"team_ids"`
+	ProjectMemberships map[string]string `json:"project_memberships"` // project_id -> role
+	DelegationID       string            `json:"delegation_id,omitempty"`
+	TokenIDHash        string            `json:"token_id_hash,omitempty"`
+}
+
+// Resource identifies the authorization target of an action. ProjectID is
+// mandatory for every project-scoped resource; cross-project queries must
+// authorize each project separately.
+type Resource struct {
+	Type      string `json:"type"`       // e.g. work_item, lease, runner, project
+	ProjectID string `json:"project_id"` // empty only for platform-level resources
+	ID        string `json:"id"`
+	Version   int64  `json:"version"`
+}
+
+// Decision is the outcome of the unified authorize(principal, action,
+// resource) policy decision point. Deny decisions must be audited without
+// creating business or outbox side effects (SVC-INV-002).
+type Decision struct {
+	Allow         bool     `json:"allow"`
+	PolicyVersion string   `json:"policy_version"`
+	Reasons       []string `json:"reasons"`
+}
+
+// User status constants (SEC-IDENTITY-RBAC section 6:
+// invited -> active -> suspended -> removed).
+const (
+	UserStatusInvited   = "invited"
+	UserStatusActive    = "active"
+	UserStatusSuspended = "suspended"
+	UserStatusRemoved   = "removed"
+)
+
+// User maps to the v3 users table: one human/service identity per normalized
+// issuer+subject pair.
+type User struct {
+	ID          string `db:"id"           json:"id"`
+	Issuer      string `db:"issuer"       json:"issuer"`
+	Subject     string `db:"subject"      json:"subject"`
+	DisplayName string `db:"display_name" json:"display_name"`
+	Status      string `db:"status"       json:"status"`
+	CreatedAt   string `db:"created_at"   json:"created_at"`
+	UpdatedAt   string `db:"updated_at"   json:"updated_at"`
+}
+
+// Team maps to the v3 teams table.
+type Team struct {
+	ID        string `db:"id"         json:"id"`
+	Name      string `db:"name"       json:"name"`
+	Status    string `db:"status"     json:"status"`
+	CreatedAt string `db:"created_at" json:"created_at"`
+	UpdatedAt string `db:"updated_at" json:"updated_at"`
+}
+
+// TeamMembership maps to the v3 memberships table; (team_id, user_id) is
+// unique and role values follow docs/specs/rbac/permissions.yaml.
+type TeamMembership struct {
+	TeamID    string  `db:"team_id"     json:"team_id"`
+	UserID    string  `db:"user_id"     json:"user_id"`
+	Role      string  `db:"role"        json:"role"`
+	ValidFrom string  `db:"valid_from"  json:"valid_from"`
+	ValidTo   *string `db:"valid_to"    json:"valid_to,omitempty"`
+	CreatedAt string  `db:"created_at"  json:"created_at"`
+	UpdatedAt string  `db:"updated_at"  json:"updated_at"`
+}
+
+// Runner device status constants — the canonical RunnerState enum
+// (pending_approval/approved/online/suspect/offline/draining/revoked).
+const (
+	RunnerStatusPendingApproval = "pending_approval"
+	RunnerStatusApproved        = "approved"
+	RunnerStatusOnline          = "online"
+	RunnerStatusSuspect         = "suspect"
+	RunnerStatusOffline         = "offline"
+	RunnerStatusDraining        = "draining"
+	RunnerStatusRevoked         = "revoked"
+)
+
+// RunnerDevice maps to the v3 runners table. The device public key is stored
+// only as a hash; the private key never leaves the member OS Keychain.
+// Generation fences old connections: a new generation invalidates leases and
+// heartbeats carrying an older one.
+type RunnerDevice struct {
+	ID              string          `db:"id"                json:"id"`
+	DisplayName     string          `db:"display_name"      json:"display_name"`
+	DeviceKeyHash   string          `db:"device_key_hash"   json:"device_key_hash"`
+	Status          string          `db:"status"            json:"status"`
+	Generation      int64           `db:"generation"        json:"generation"`
+	Capabilities    json.RawMessage `db:"capabilities"      json:"capabilities"`
+	LastHeartbeatAt *string         `db:"last_heartbeat_at" json:"last_heartbeat_at,omitempty"`
+	CreatedAt       string          `db:"created_at"        json:"created_at"`
+	UpdatedAt       string          `db:"updated_at"        json:"updated_at"`
+	RevokedAt       *string         `db:"revoked_at"        json:"revoked_at,omitempty"`
+}
+
+// RunnerBinding maps to the v3 runner_bindings table; (project_id, runner_id)
+// is unique and authorizes a device for exactly one project scope.
+type RunnerBinding struct {
+	ProjectID string `db:"project_id"  json:"project_id"`
+	RunnerID  string `db:"runner_id"   json:"runner_id"`
+	CreatedAt string `db:"created_at"  json:"created_at"`
+}
+
+// RunnerEnrollment maps to the v3 one-time registration codes: single use,
+// project-bound, expiring after the fixed enrollment TTL.
+type RunnerEnrollment struct {
+	ID         string  `db:"id"          json:"id"`
+	ProjectID  string  `db:"project_id"  json:"project_id"`
+	CodeHash   string  `db:"code_hash"   json:"code_hash"`
+	ExpiresAt  string  `db:"expires_at"  json:"expires_at"`
+	ConsumedAt *string `db:"consumed_at" json:"consumed_at,omitempty"`
+	CreatedBy  string  `db:"created_by"  json:"created_by"`
+	CreatedAt  string  `db:"created_at"  json:"created_at"`
+}
+
+// Execution maps to the v3 executions table: one recorded attempt of a
+// leased work item on a runner.
+type Execution struct {
+	ID         string  `db:"id"          json:"id"`
+	ProjectID  string  `db:"project_id"  json:"project_id"`
+	WorkItemID string  `db:"work_item_id" json:"work_item_id"`
+	LeaseID    string  `db:"lease_id"    json:"lease_id"`
+	RunnerID   *string `db:"runner_id"   json:"runner_id,omitempty"`
+	Attempt    int     `db:"attempt"     json:"attempt"`
+	Status     string  `db:"status"      json:"status"`
+	StartedAt  *string `db:"started_at"  json:"started_at,omitempty"`
+	EndedAt    *string `db:"ended_at"    json:"ended_at,omitempty"`
+	CreatedAt  string  `db:"created_at"  json:"created_at"`
+}
+
+// AuditEvent is the append-only v3 audit fact (SEC-IDENTITY-RBAC section 9).
+// It never stores cookies, tokens or full personal claims.
+type AuditEvent struct {
+	ID             int64   `db:"id"              json:"id"`
+	ActorPrincipal string  `db:"actor_principal" json:"actor_principal"`
+	DelegationID   *string `db:"delegation_id"   json:"delegation_id,omitempty"`
+	ProjectID      *string `db:"project_id"      json:"project_id,omitempty"`
+	Action         string  `db:"action"          json:"action"`
+	ResourceType   string  `db:"resource_type"   json:"resource_type"`
+	ResourceID     *string `db:"resource_id"     json:"resource_id,omitempty"`
+	Decision       string  `db:"decision"        json:"decision"` // allow | deny
+	Reason         *string `db:"reason"          json:"reason,omitempty"`
+	PolicyVersion  *string `db:"policy_version"  json:"policy_version,omitempty"`
+	TokenHash      *string `db:"token_hash"      json:"token_hash,omitempty"`
+	CorrelationID  string  `db:"correlation_id"  json:"correlation_id"`
+	CreatedAt      string  `db:"created_at"      json:"created_at"`
+}
+
+// Event sensitivity constants per event-envelope.schema.json.
+const (
+	EventSensitivityPublic       = "public"
+	EventSensitivityInternal     = "internal"
+	EventSensitivityConfidential = "confidential"
+	EventSensitivityRestricted   = "restricted"
+)
+
+// Outbox dispatch status constants (ADR-002 section 6).
+const (
+	OutboxStatusPending    = "pending"
+	OutboxStatusSending    = "sending"
+	OutboxStatusDelivered  = "delivered"
+	OutboxStatusRetryWait  = "retry_wait"
+	OutboxStatusDeadLetter = "dead_letter"
+	InboxStatusReceived    = "received"
+	InboxStatusProcessing  = "processing"
+	InboxStatusProcessed   = "processed"
+)
+
+// EventEnvelope is the durable event envelope defined by
+// event-envelope.schema.json; payload must be schema-validated before insert
+// and events never carry tokens, secrets or source code.
+type EventEnvelope struct {
+	EventID       string          `db:"event_id"       json:"event_id"`
+	EventType     string          `db:"event_type"     json:"event_type"`
+	EventVersion  int             `db:"event_version"  json:"event_version"`
+	Source        string          `db:"source"         json:"source"`
+	ProjectID     string          `db:"project_id"     json:"project_id"`
+	Subject       string          `db:"subject"        json:"subject"`
+	OccurredAt    string          `db:"occurred_at"    json:"occurred_at"`
+	CorrelationID string          `db:"correlation_id" json:"correlation_id"`
+	CausationID   string          `db:"causation_id"   json:"causation_id"`
+	PayloadDigest string          `db:"payload_digest" json:"payload_digest"`
+	Sensitivity   string          `db:"sensitivity"    json:"sensitivity"`
+	Payload       json.RawMessage `db:"payload"        json:"payload"`
+}
+
+// OutboxEvent extends the envelope with at-least-once dispatch state; rows
+// are written in the same transaction as the business state change.
+type OutboxEvent struct {
+	EventEnvelope
+	Status      string  `db:"status"       json:"status"`
+	Attempts    int     `db:"attempts"     json:"attempts"`
+	AvailableAt string  `db:"available_at" json:"available_at"`
+	LeaseOwner  *string `db:"lease_owner"  json:"lease_owner,omitempty"`
+	CreatedAt   string  `db:"created_at"   json:"created_at"`
+	UpdatedAt   string  `db:"updated_at"   json:"updated_at"`
+}
+
+// InboxEvent records verified external events (duplicates collapse on the
+// event identity) before any business effect is produced.
+type InboxEvent struct {
+	EventEnvelope
+	Status      string  `db:"status"      json:"status"`
+	Attempts    int     `db:"attempts"    json:"attempts"`
+	ProcessedAt *string `db:"processed_at" json:"processed_at,omitempty"`
+	CreatedAt   string  `db:"created_at"  json:"created_at"`
 }

@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-002
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: technical_lead
@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-002：PostgreSQL + Transactional Outbox/Inbox
 
-> 决策状态：待评审接受。M0 当前使用 SQLite schema v5 承载单机 Lease、状态和本地 Evidence 基线，并在 GitLab 验签事实落地前禁止本地 `done` 转换；尚无 PostgreSQL、复合租户约束、Inbox/Outbox、DLQ 或 PITR，不满足中央控制面的一致性与恢复目标。
+> 决策状态：已评审接受（I1 契约冻结 sprint；签署以契约 PR 评审批准记录为准）。M0 当前使用 SQLite schema v5 承载单机 Lease、状态和本地 Evidence 基线，并在 GitLab 验签事实落地前禁止本地 `done` 转换；尚无 PostgreSQL、复合租户约束、Inbox/Outbox、DLQ 或 PITR，不满足中央控制面的一致性与恢复目标。
 
 ## 1. 目标与非目标
 

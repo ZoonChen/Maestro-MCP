@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Maestro Runner API
-  version: 3.0.0-draft
+  version: 3.0.0
   license:
     name: Internal Proprietary
     identifier: LicenseRef-Internal-Proprietary
@@ -9,6 +9,12 @@ info:
     Outbound-only HTTPS long-poll/heartbeat/result protocol used by an enrolled
     local Runner. The bearer token determines runner identity; request bodies
     cannot override runner or project scope. This is not a WebSocket or mTLS API.
+
+    Version 3.0.0 is frozen by the M1 I1 contract-freeze sprint: enrollment,
+    lease claim/heartbeat (reconnect recovery via connection_generation
+    fencing) and execution evidence/completion are the fixed M1 wire shape.
+    Changes now require a contract change request through the integration
+    session per plans/PIPELINE.md.
 servers:
   - url: https://maestro.company.internal
 security:

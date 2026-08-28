@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
+	"github.com/ZoonChen/Maestro-MCP/internal/health"
 	maestromcp "github.com/ZoonChen/Maestro-MCP/internal/mcp"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
@@ -61,16 +62,21 @@ type Options struct {
 	// value intentionally has no approved profiles and disables host execution,
 	// so submission fails closed until the operator injects versioned policy.
 	TestExecution service.TestExecutionConfig
+	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
+	// registers none; readiness keeps its local-baseline semantics until a
+	// stream wires PostgreSQL/OIDC/runner-pool probes.
+	Dependencies []health.Dependency
 }
 
 // Application owns the SQLite adapter, the shared application services, all
 // transports, and cancellable background work.
 type Application struct {
-	database    *store.SQLiteDB
-	sqlDB       *sql.DB
-	httpHandler *gin.Engine
-	mcpServer   *mcpserver.MCPServer
-	mcpHTTP     *mcpserver.StreamableHTTPServer
+	database     *store.SQLiteDB
+	sqlDB        *sql.DB
+	httpHandler  *gin.Engine
+	mcpServer    *mcpserver.MCPServer
+	mcpHTTP      *mcpserver.StreamableHTTPServer
+	dependencies *health.Registry
 
 	backgroundCtx    context.Context
 	backgroundCancel context.CancelFunc
@@ -263,12 +269,19 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		},
 	)
 
+	dependencies := &health.Registry{}
+	for _, dependency := range opts.Dependencies {
+		if err := dependencies.Register(dependency); err != nil {
+			return nil, fmt.Errorf("dependency health: %w", err)
+		}
+	}
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	a := &Application{
 		database:         database,
 		sqlDB:            sqlDB,
 		httpHandler:      router,
 		mcpServer:        mcpServer,
+		dependencies:     dependencies,
 		backgroundCtx:    backgroundCtx,
 		backgroundCancel: backgroundCancel,
 		draining:         draining,
@@ -391,7 +404,9 @@ func (a *Application) MCPServer() *mcpserver.MCPServer {
 	return a.mcpServer
 }
 
-// Ready checks runtime state and the local source-of-truth dependency.
+// Ready checks runtime state and the local source-of-truth dependency. M1
+// dependency-health probes aggregate into the same decision: any unavailable
+// dependency makes the whole Control Plane not ready (fail-closed).
 func (a *Application) Ready(ctx context.Context) error {
 	if !a.ready.Load() {
 		return errors.New("runtime is not accepting traffic")
@@ -403,6 +418,9 @@ func (a *Application) Ready(ctx context.Context) error {
 	defer cancel()
 	if err := a.sqlDB.PingContext(pingCtx); err != nil {
 		return fmt.Errorf("database ping: %w", err)
+	}
+	if _, ready := a.dependencies.Check(pingCtx); !ready {
+		return errors.New("dependency health: not ready")
 	}
 	return nil
 }
