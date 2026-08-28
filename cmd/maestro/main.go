@@ -132,6 +132,8 @@ func dispatch(ctx context.Context, args []string, ioStreams streams) error {
 		return runRunner(ctx, args[1:], ioStreams)
 	case "migrate":
 		return runMigrate(ctx, args[1:], ioStreams)
+	case "pg-import":
+		return runPGImport(ctx, args[1:], ioStreams)
 	case "doctor":
 		return runDoctor(ctx, args[1:], ioStreams)
 	case "version":
@@ -299,12 +301,15 @@ func runRunner(ctx context.Context, args []string, ioStreams streams) error {
 
 func runMigrate(ctx context.Context, args []string, ioStreams streams) error {
 	if len(args) == 0 {
-		fmt.Fprintln(ioStreams.err, "usage: maestro migrate up [--config FILE] [--db PATH]")
+		fmt.Fprintln(ioStreams.err, "usage: maestro migrate up|revert [--config FILE] [--db PATH] [--steps N]")
 		return fail(exitUsage, "USAGE_ERROR", errors.New("a migrate action is required"))
 	}
 	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(ioStreams.out, "usage: maestro migrate up [--config FILE] [--db PATH]")
+		fmt.Fprintln(ioStreams.out, "usage: maestro migrate up|revert [--config FILE] [--db PATH] [--steps N]")
 		return nil
+	}
+	if args[0] == "revert" {
+		return runMigrateRevert(ctx, args[1:], ioStreams)
 	}
 	if args[0] != "up" {
 		return fail(exitUsage, "USAGE_ERROR", fmt.Errorf("unsupported migrate action %q", args[0]))
@@ -329,6 +334,9 @@ func runMigrate(ctx context.Context, args []string, ioStreams streams) error {
 		return err
 	}
 	configureLogger(cfg, ioStreams.err)
+	if cfg.PostgresEnabled() {
+		return runPostgresMigrateUp(ctx, cfg, ioStreams)
+	}
 	if cfg.DBPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 			return fail(exitMigration, "MIGRATION_FAILED", fmt.Errorf("create database directory: %w", err))
@@ -361,6 +369,166 @@ func runMigrate(ctx context.Context, args []string, ioStreams streams) error {
 	}
 	fmt.Fprintf(ioStreams.out, "migration complete schema_version=%d\n", store.CurrentSchemaVersion())
 	return nil
+}
+
+func runPostgresMigrateUp(ctx context.Context, cfg *config.Config, ioStreams streams) error {
+	database, err := store.OpenPostgres(ctx, cfg.Database.DSN)
+	if err != nil {
+		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer database.Close()
+	target, err := store.CurrentPostgresSchemaVersion()
+	if err != nil {
+		return fail(exitMigration, "MIGRATION_FAILED", err)
+	}
+	applied, err := store.ApplyPostgresMigrations(ctx, database)
+	if err != nil {
+		return postgresMigrationFailure(err)
+	}
+	fmt.Fprintf(ioStreams.out, "postgres migration complete applied=%d target_schema=%d\n", applied, target)
+	return nil
+}
+
+func runMigrateRevert(ctx context.Context, args []string, ioStreams streams) error {
+	fs := flag.NewFlagSet("migrate revert", flag.ContinueOnError)
+	fs.SetOutput(ioStreams.err)
+	var common commonFlags
+	bindCommonFlags(fs, &common)
+	var steps int
+	fs.IntVar(&steps, "steps", 1, "number of migrations to roll back (pre-cutover drill only)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return flag.ErrHelp
+		}
+		return fail(exitUsage, "USAGE_ERROR", err)
+	}
+	if fs.NArg() != 0 {
+		return fail(exitUsage, "USAGE_ERROR", fmt.Errorf("unexpected migrate arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+
+	cfg, err := loadRuntimeConfig(common)
+	if err != nil {
+		return err
+	}
+	configureLogger(cfg, ioStreams.err)
+	if !cfg.PostgresEnabled() {
+		return fail(exitUsage, "USAGE_ERROR", errors.New("migrate revert requires the postgres driver (pre-cutover rollback drill)"))
+	}
+	if steps < 1 {
+		return fail(exitUsage, "USAGE_ERROR", errors.New("steps must be positive"))
+	}
+	database, err := store.OpenPostgres(ctx, cfg.Database.DSN)
+	if err != nil {
+		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer database.Close()
+	reverted, err := store.RevertPostgresMigrations(ctx, database, steps)
+	if err != nil {
+		return postgresMigrationFailure(err)
+	}
+	fmt.Fprintf(ioStreams.out, "postgres migration reverted=%d\n", reverted)
+	return nil
+}
+
+func postgresMigrationFailure(err error) error {
+	if errors.Is(err, store.ErrPostgresMigrationIntegrity) {
+		return fail(exitIncompatible, "SCHEMA_INTEGRITY_FAILED", fmt.Errorf(
+			"%w; restore the database from a verified backup before retrying", err))
+	}
+	return fail(exitMigration, "MIGRATION_FAILED", err)
+}
+
+// runPGImport executes the four-stage SQLite -> PostgreSQL migration flow
+// (M1-DATA-001): --dry-run plans without writing, the default applies the
+// plan in one transaction, --reconcile verifies coverage and invariants.
+func runPGImport(ctx context.Context, args []string, ioStreams streams) error {
+	fs := flag.NewFlagSet("pg-import", flag.ContinueOnError)
+	fs.SetOutput(ioStreams.err)
+	var common commonFlags
+	bindCommonFlags(fs, &common)
+	var sqlitePath string
+	var dryRun, reconcile bool
+	var reportPath string
+	fs.StringVar(&sqlitePath, "sqlite", "", "frozen SQLite database to import (read-only)")
+	fs.BoolVar(&dryRun, "dry-run", false, "plan and validate without writing to PostgreSQL")
+	fs.BoolVar(&reconcile, "reconcile", false, "compare source and target instead of importing")
+	fs.StringVar(&reportPath, "report", "", "optional path to write the JSON report")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return flag.ErrHelp
+		}
+		return fail(exitUsage, "USAGE_ERROR", err)
+	}
+	if fs.NArg() != 0 {
+		return fail(exitUsage, "USAGE_ERROR", fmt.Errorf("unexpected pg-import arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if strings.TrimSpace(sqlitePath) == "" {
+		return fail(exitUsage, "USAGE_ERROR", errors.New("--sqlite PATH is required"))
+	}
+	if dryRun && reconcile {
+		return fail(exitUsage, "USAGE_ERROR", errors.New("--dry-run and --reconcile are mutually exclusive"))
+	}
+
+	cfg, err := loadRuntimeConfig(common)
+	if err != nil {
+		return err
+	}
+	configureLogger(cfg, ioStreams.err)
+	if !cfg.PostgresEnabled() {
+		return fail(exitUsage, "CONFIG_INVALID", errors.New("pg-import requires the postgres database configuration"))
+	}
+
+	sqliteDB, err := store.OpenSQLiteReadOnly(sqlitePath)
+	if err != nil {
+		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer sqliteDB.Close()
+	pgDB, err := store.OpenPostgres(ctx, cfg.Database.DSN)
+	if err != nil {
+		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer pgDB.Close()
+	if err := store.ValidatePostgresSchema(ctx, pgDB); err != nil {
+		return postgresMigrationFailure(err)
+	}
+
+	importer, err := store.NewSQLiteImporter(sqliteDB, pgDB)
+	if err != nil {
+		return fail(exitUsage, "CONFIG_INVALID", err)
+	}
+	var report *store.ImportReport
+	switch {
+	case dryRun:
+		report, err = importer.DryRun(ctx)
+	case reconcile:
+		report, err = importer.Reconcile(ctx)
+	default:
+		report, err = importer.Import(ctx)
+	}
+	if err != nil {
+		return fail(exitInternal, "IMPORT_FAILED", err)
+	}
+
+	encoder := json.NewEncoder(ioStreams.out)
+	encoder.SetEscapeHTML(false)
+	if writeErr := encoder.Encode(report); writeErr != nil {
+		return fail(exitInternal, "IMPORT_FAILED", writeErr)
+	}
+	if reportPath != "" {
+		if writeErr := os.WriteFile(reportPath, mustMarshalReport(report), 0o600); writeErr != nil {
+			return fail(exitInternal, "IMPORT_FAILED", fmt.Errorf("write report: %w", writeErr))
+		}
+	}
+	return nil
+}
+
+func mustMarshalReport(report *store.ImportReport) []byte {
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		// ImportReport is a plain data struct; encoding cannot fail.
+		return []byte("{}")
+	}
+	return append(encoded, '\n')
 }
 
 func runtimeStartupFailure(err error) error {
@@ -401,6 +569,7 @@ func doctorSchemaFailure(err error) error {
 
 type doctorReport struct {
 	Status             string                           `json:"status"`
+	Driver             string                           `json:"driver"`
 	Database           string                           `json:"database"`
 	Health             string                           `json:"health,omitempty"`
 	Schema             int                              `json:"schema_version"`
@@ -440,45 +609,19 @@ func runDoctor(ctx context.Context, args []string, ioStreams streams) error {
 	if err != nil {
 		return fail(exitUsage, "CONFIG_INVALID", err)
 	}
-	if cfg.DBPath != ":memory:" {
-		parent := filepath.Dir(cfg.DBPath)
-		if info, statErr := os.Stat(parent); statErr != nil || !info.IsDir() {
-			if statErr == nil {
-				statErr = errors.New("database parent is not a directory")
-			}
-			return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database parent %s: %w", parent, statErr))
-		}
+
+	var report doctorReport
+	if cfg.PostgresEnabled() {
+		report, err = runDoctorPostgres(ctx, cfg, profileReports)
+	} else {
+		report, err = runDoctorSQLite(ctx, cfg, profileReports)
+	}
+	if err != nil {
+		return err
 	}
 
-	database, err := store.NewSQLiteDB(cfg.DBPath)
-	if err != nil {
-		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
-	}
-	defer database.Close()
 	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := database.DB().PingContext(pingCtx); err != nil {
-		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database ping: %w", err))
-	}
-	if err := database.ValidateSchema(pingCtx); err != nil {
-		return doctorSchemaFailure(err)
-	}
-	var actualSchemaVersion int
-	if err := database.DB().QueryRowContext(pingCtx, "PRAGMA user_version").Scan(&actualSchemaVersion); err != nil {
-		return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database schema version: %w", err))
-	}
-
-	report := doctorReport{
-		Status:             "ok",
-		Database:           "ok",
-		Schema:             actualSchemaVersion,
-		Runtime:            runtime.Version(),
-		RemoteWrite:        cfg.RemoteWrite,
-		HostExecution:      cfg.Validation.AllowHostExecution,
-		PolicyVersion:      cfg.Validation.PolicyVersion,
-		PolicyDigest:       cfg.Validation.PolicyDigest,
-		ValidationProfiles: profileReports,
-	}
 	if healthURL != "" {
 		request, requestErr := http.NewRequestWithContext(pingCtx, http.MethodGet, healthURL, nil)
 		if requestErr != nil {
@@ -500,12 +643,85 @@ func runDoctor(ctx context.Context, args []string, ioStreams streams) error {
 		encoder.SetEscapeHTML(false)
 		return encoder.Encode(report)
 	}
-	fmt.Fprintf(ioStreams.out, "status=%s database=%s schema_version=%d runtime=%s remote_write=%t host_execution=%t profiles=%d", report.Status, report.Database, report.Schema, report.Runtime, report.RemoteWrite, report.HostExecution, len(report.ValidationProfiles))
+	fmt.Fprintf(ioStreams.out, "status=%s driver=%s database=%s schema_version=%d runtime=%s remote_write=%t host_execution=%t profiles=%d", report.Status, report.Driver, report.Database, report.Schema, report.Runtime, report.RemoteWrite, report.HostExecution, len(report.ValidationProfiles))
 	if report.Health != "" {
 		fmt.Fprintf(ioStreams.out, " health=%s", report.Health)
 	}
 	fmt.Fprintln(ioStreams.out)
 	return nil
+}
+
+func runDoctorSQLite(ctx context.Context, cfg *config.Config, profileReports []config.ValidationProfileReport) (doctorReport, error) {
+	if cfg.DBPath != ":memory:" {
+		parent := filepath.Dir(cfg.DBPath)
+		if info, statErr := os.Stat(parent); statErr != nil || !info.IsDir() {
+			if statErr == nil {
+				statErr = errors.New("database parent is not a directory")
+			}
+			return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database parent %s: %w", parent, statErr))
+		}
+	}
+
+	database, err := store.NewSQLiteDB(cfg.DBPath)
+	if err != nil {
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer database.Close()
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := database.DB().PingContext(pingCtx); err != nil {
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database ping: %w", err))
+	}
+	if err := database.ValidateSchema(pingCtx); err != nil {
+		return doctorReport{}, doctorSchemaFailure(err)
+	}
+	var actualSchemaVersion int
+	if err := database.DB().QueryRowContext(pingCtx, "PRAGMA user_version").Scan(&actualSchemaVersion); err != nil {
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", fmt.Errorf("database schema version: %w", err))
+	}
+	return doctorReport{
+		Status:             "ok",
+		Driver:             config.DatabaseDriverSQLite,
+		Database:           "ok",
+		Schema:             actualSchemaVersion,
+		Runtime:            runtime.Version(),
+		RemoteWrite:        cfg.RemoteWrite,
+		HostExecution:      cfg.Validation.AllowHostExecution,
+		PolicyVersion:      cfg.Validation.PolicyVersion,
+		PolicyDigest:       cfg.Validation.PolicyDigest,
+		ValidationProfiles: profileReports,
+	}, nil
+}
+
+func runDoctorPostgres(ctx context.Context, cfg *config.Config, profileReports []config.ValidationProfileReport) (doctorReport, error) {
+	database, err := store.OpenPostgres(ctx, cfg.Database.DSN)
+	if err != nil {
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	defer database.Close()
+	if err := store.ValidatePostgresSchema(ctx, database); err != nil {
+		if errors.Is(err, store.ErrPostgresMigrationIntegrity) {
+			return doctorReport{}, fail(exitIncompatible, "SCHEMA_INTEGRITY_FAILED", fmt.Errorf(
+				"%w; restore the database from a verified backup before retrying", err))
+		}
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	target, err := store.CurrentPostgresSchemaVersion()
+	if err != nil {
+		return doctorReport{}, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	return doctorReport{
+		Status:             "ok",
+		Driver:             config.DatabaseDriverPostgres,
+		Database:           "ok",
+		Schema:             int(target),
+		Runtime:            runtime.Version(),
+		RemoteWrite:        cfg.RemoteWrite,
+		HostExecution:      cfg.Validation.AllowHostExecution,
+		PolicyVersion:      cfg.Validation.PolicyVersion,
+		PolicyDigest:       cfg.Validation.PolicyDigest,
+		ValidationProfiles: profileReports,
+	}, nil
 }
 
 type versionInfo struct {
@@ -565,7 +781,9 @@ func printRootUsage(w io.Writer) {
 Usage:
   maestro server  [--config FILE] [--db PATH] [--http ADDR]
   maestro runner  [--config FILE] [--db PATH] [--runner-id ID]
-  maestro migrate up [--config FILE] [--db PATH]
+  maestro migrate up     [--config FILE] [--db PATH]
+  maestro migrate revert [--config FILE] [--steps N]   (postgres, pre-cutover drill)
+  maestro pg-import --sqlite PATH [--dry-run|--reconcile] [--report FILE] [--config FILE]
   maestro doctor  [--config FILE] [--db PATH] [--health-url URL] [--json]
   maestro version [--json]`)
 }
