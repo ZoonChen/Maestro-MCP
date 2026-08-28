@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"time"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
+	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -21,25 +24,70 @@ func RegisterWorkerTools(s *mcpserver.MCPServer, services *Services) {
 	registerReportBlocker(s, services)
 }
 
-// registerGetNextTask adds the get_next_task tool.
+// claimIdempotencyKeyPattern mirrors the frozen tools.schema.json rule:
+// 16-128 characters from the printable key alphabet.
+var claimIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$`)
+
+// requireIntegerArg reads a strict integer argument. JSON-RPC decoding
+// yields float64, direct in-process calls often carry int64/int; anything
+// else (or a fractional value) is an invalid parameter.
+func requireIntegerArg(req mcp.CallToolRequest, name string) (int64, error) {
+	raw, ok := req.GetArguments()[name]
+	if !ok {
+		return 0, fmt.Errorf("argument %q is required", name)
+	}
+	switch value := raw.(type) {
+	case float64:
+		if value != math.Trunc(value) {
+			return 0, fmt.Errorf("argument %q must be an integer", name)
+		}
+		return int64(value), nil
+	case int64:
+		return value, nil
+	case int:
+		return int64(value), nil
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("argument %q must be an integer", name)
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("argument %q must be an integer", name)
+	}
+}
+
+// claimOutcome is the frozen claim response contract (tools.schema.json
+// output_schema): lease identity and fencing fields plus the precise
+// worktree path the caller must operate in.
+type claimOutcome struct {
+	WorkItemID   string `json:"work_item_id"`
+	LeaseID      string `json:"lease_id"`
+	LeaseVersion int64  `json:"lease_version"`
+	LeaseEpoch   int64  `json:"lease_epoch"`
+	QueueVersion int64  `json:"queue_version"`
+	WorktreePath string `json:"worktree_path"`
+}
+
+// registerGetNextTask adds the get_next_task tool in its frozen v3 shape:
+// the only inputs are the mandatory idempotency key and queue-version CAS
+// token (capabilities are advisory); project scope and session identity
+// come from the server-side TransportBinding and can never be self-reported
+// by the caller.
 func registerGetNextTask(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("get_next_task",
-			mcp.WithDescription("Atomically claim the next available queued task matching the given role. The durable Lease moves it through leased to executing."),
-			mcp.WithString("project_id",
+			mcp.WithDescription("Atomically lease the next eligible execution task from the authorized queue."),
+			mcp.WithString("idempotency_key",
 				mcp.Required(),
-				mcp.Description("ID of the project"),
+				mcp.Description("16-128 character replay key scoped to principal/project/queue"),
 			),
-			mcp.WithString("role",
+			mcp.WithNumber("queue_version",
 				mcp.Required(),
-				mcp.Description("Agent role to match: backend, frontend, devops, or verifier"),
-				mcp.Enum("backend", "frontend", "devops", "verifier"),
+				mcp.Description("Queue CAS token observed by this client; stale tokens conflict"),
 			),
-			mcp.WithString("session_id",
-				mcp.Description("Agent session ID (defaults to 'default-session')"),
-			),
-			mcp.WithString("worker_id",
-				mcp.Description("Worker ID within the session (defaults to 'default-worker')"),
+			mcp.WithString("capabilities",
+				mcp.Description("Caller capability labels used for eligibility filtering"),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -53,16 +101,24 @@ func handleGetNextTask(
 	req mcp.CallToolRequest,
 	services *Services,
 ) (*mcp.CallToolResult, error) {
-	projectID, err := req.RequireString("project_id")
+	idempotencyKey, err := req.RequireString("idempotency_key")
 	if err != nil {
 		return errorResult(err), nil
 	}
-	role, err := req.RequireString("role")
+	if !claimIdempotencyKeyPattern.MatchString(idempotencyKey) {
+		return errorResult(fmt.Errorf("idempotency_key: %w", store.ErrInvalidParameter)), nil
+	}
+	queueVersion, err := requireIntegerArg(req, "queue_version")
+	if err != nil {
+		return errorResult(fmt.Errorf("queue_version: %w", store.ErrInvalidParameter)), nil
+	}
+	if queueVersion < 0 {
+		return errorResult(fmt.Errorf("queue_version: %w", store.ErrInvalidParameter)), nil
+	}
+	projectID, sessionID, workerID, err := services.Binding.scope()
 	if err != nil {
 		return errorResult(err), nil
 	}
-	sessionID := req.GetString("session_id", "default-session")
-	workerID := req.GetString("worker_id", "default-worker")
 
 	// The claim lifecycle cannot be made safe if any required compensation
 	// dependency is absent. Reject before claiming instead of risking a Lease
@@ -75,31 +131,61 @@ func handleGetNextTask(
 		)), nil
 	}
 
-	task, claimCreated, err := services.Task.GetNextTaskForContext(ctx, projectID, sessionID, role, workerID)
+	// The session's REGISTERED role is the eligibility authority; the claim
+	// transaction enforces role/status/capacity and the queue CAS token.
+	session, err := services.Session.GetSession(ctx, projectID, sessionID)
+	if err != nil {
+		return errorResult(fmt.Errorf("bound session is not registered: %w", err)), nil
+	}
+
+	task, claimCreated, err := services.Task.GetNextTaskWithVersion(
+		ctx, projectID, sessionID, session.Role, workerID, idempotencyKey, queueVersion,
+	)
 	if err != nil {
 		return errorResult(fmt.Errorf("no task available: %w", err)), nil
 	}
 
-	// A claim is usable only when all required dependency and API sources can be
-	// assembled. Any failure revokes the already-committed authority before an
-	// MCP error is returned; a bare Task is never a success fallback.
-	taskCtx, contextErr := services.Context.GetTaskContext(ctx, projectID, task.ID)
-	if contextErr != nil {
+	// A claim is usable only when all required dependency and API sources can
+	// be assembled. Any failure revokes the already-committed authority before
+	// an MCP error is returned; a bare Task is never a success fallback.
+	if _, contextErr := services.Context.GetTaskContext(ctx, projectID, task.ID); contextErr != nil {
 		return rejectClaimAfterContextFailure(
 			ctx, services, task, sessionID, workerID, claimCreated, normalizeContextBuildError(contextErr),
 		), nil
 	}
 
-	data, err := json.Marshal(taskCtx)
+	// Response assembly never rewrites context-source error codes: snapshot
+	// failures get their own assembly error after compensation.
+	leaseID, leaseVersion, leaseEpoch, err := services.Task.ActiveLeaseSnapshot(ctx, projectID, task.ID)
 	if err != nil {
-		contextErr = service.NewContextBuildError(
-			service.ContextErrorBuildFailed,
-			"task context could not be encoded",
-			err,
-		)
-		return rejectClaimAfterContextFailure(ctx, services, task, sessionID, workerID, claimCreated, contextErr), nil
+		return rejectClaimAfterContextFailure(
+			ctx, services, task, sessionID, workerID, claimCreated,
+			service.NewContextBuildError(service.ContextErrorBuildFailed, "claim lease snapshot unavailable", err),
+		), nil
 	}
-	return mcp.NewToolResultText(string(data)), nil
+	worktree, err := services.Worktree.GetWorktreeByTask(ctx, projectID, task.ID)
+	if err != nil {
+		return rejectClaimAfterContextFailure(
+			ctx, services, task, sessionID, workerID, claimCreated,
+			service.NewContextBuildError(service.ContextErrorBuildFailed, "claim worktree unavailable", err),
+		), nil
+	}
+
+	outcome, err := json.Marshal(claimOutcome{
+		WorkItemID:   task.ID,
+		LeaseID:      leaseID,
+		LeaseVersion: leaseVersion,
+		LeaseEpoch:   leaseEpoch,
+		QueueVersion: queueVersion,
+		WorktreePath: worktree.WorktreePath,
+	})
+	if err != nil {
+		return rejectClaimAfterContextFailure(
+			ctx, services, task, sessionID, workerID, claimCreated,
+			service.NewContextBuildError(service.ContextErrorBuildFailed, "claim response could not be encoded", err),
+		), nil
+	}
+	return mcp.NewToolResultText(string(outcome)), nil
 }
 
 func normalizeContextBuildError(err error) error {
@@ -148,35 +234,32 @@ func rejectClaimAfterContextFailure(
 	return errorResult(contextErr)
 }
 
-// registerHeartbeatTask renews only the caller's current durable Task Lease.
-// The M0 stdio compatibility transport still carries local scope explicitly;
-// M1 derives these fields from the authenticated Runner connection.
+// registerHeartbeatTask adds the heartbeat_task tool in its frozen v3
+// shape: work_item/lease identity plus the replay key; session and project
+// scope come from the server-side TransportBinding.
 func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
 		mcp.NewTool("heartbeat_task",
-			mcp.WithDescription("Renew an active Task Lease using its epoch-bound lease ID and version. Expired, stale, replay-mismatched, or non-owner heartbeats fail closed."),
-			mcp.WithString("project_id", mcp.Required(), mcp.Description("M0 local project ID")),
-			mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID owned by the Lease")),
-			mcp.WithString("session_id", mcp.Required(), mcp.Description("Owning local Session ID")),
-			mcp.WithString("worker_id", mcp.Required(), mcp.Description("Owning Worker ID")),
-			mcp.WithString("lease_id", mcp.Required(), mcp.Description("Active Lease UUID")),
-			mcp.WithNumber("lease_version", mcp.Required(), mcp.Description("Current Lease CAS version")),
-			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
+			mcp.WithDescription("Renew an active execution lease without changing its ownership."),
+			mcp.WithString("work_item_id",
+				mcp.Required(),
+				mcp.Description("Work item owned by the lease"),
+			),
+			mcp.WithString("lease_id",
+				mcp.Required(),
+				mcp.Description("Active Lease UUID"),
+			),
+			mcp.WithNumber("lease_version",
+				mcp.Required(),
+				mcp.Description("Current Lease CAS version"),
+			),
+			mcp.WithString("idempotency_key",
+				mcp.Required(),
+				mcp.Description("16-128 character replay key"),
+			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			projectID, err := req.RequireString("project_id")
-			if err != nil {
-				return errorResult(err), nil
-			}
-			taskID, err := req.RequireString("task_id")
-			if err != nil {
-				return errorResult(err), nil
-			}
-			sessionID, err := req.RequireString("session_id")
-			if err != nil {
-				return errorResult(err), nil
-			}
-			workerID, err := req.RequireString("worker_id")
+			taskID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
 			}
@@ -184,15 +267,18 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 			if err != nil {
 				return errorResult(err), nil
 			}
-			leaseVersionFloat, err := req.RequireFloat("lease_version")
+			leaseVersion, err := requireIntegerArg(req, "lease_version")
+			if err != nil {
+				return errorResult(fmt.Errorf("lease_version: %w", store.ErrInvalidParameter)), nil
+			}
+			if leaseVersion < 0 {
+				return errorResult(fmt.Errorf("lease_version: %w", store.ErrInvalidParameter)), nil
+			}
+			idempotencyKey, err := req.RequireString("idempotency_key")
 			if err != nil {
 				return errorResult(err), nil
 			}
-			leaseVersion := int64(leaseVersionFloat)
-			if leaseVersionFloat != float64(leaseVersion) || leaseVersion < 0 {
-				return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: "lease_version must be a non-negative integer"}), nil
-			}
-			idempotencyKey, err := req.RequireString("idempotency_key")
+			projectID, sessionID, workerID, err := services.Binding.scope()
 			if err != nil {
 				return errorResult(err), nil
 			}
@@ -205,7 +291,7 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(fmt.Errorf("heartbeat rejected: %w", err)), nil
 			}
 			payload, err := json.Marshal(map[string]any{
-				"task_id": taskID, "lease_id": lease.ID,
+				"work_item_id": taskID, "lease_id": lease.ID,
 				"lease_version": lease.Version, "expires_at": lease.ExpiresAt,
 			})
 			if err != nil {

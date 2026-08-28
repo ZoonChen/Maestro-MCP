@@ -9,6 +9,10 @@ import (
 
 // Services holds all service dependencies needed by MCP tool handlers.
 type Services struct {
+	// Binding is the trusted server-side scope for this transport. Tools
+	// that need project scope resolve it from here, never from payloads.
+	Binding *TransportBinding
+
 	Project    *service.ProjectService
 	Feature    *service.FeatureService
 	Task       *service.TaskService

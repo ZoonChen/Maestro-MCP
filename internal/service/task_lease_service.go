@@ -386,12 +386,14 @@ func (s *TaskService) GetNextTaskWithVersion(
 	ctx context.Context,
 	projectID, sessionID, role, workerID, idempotencyKey string,
 	expectedQueueVersion int64,
-) (*model.Task, error) {
+) (*model.Task, bool, error) {
 	if len(idempotencyKey) < 16 || len(idempotencyKey) > 128 {
-		return nil, fmt.Errorf("GetNextTask: %w: idempotency key length", store.ErrInvalidParameter)
+		return nil, false, fmt.Errorf("GetNextTask: %w: idempotency key length", store.ErrInvalidParameter)
 	}
 	requestHash := sha256.Sum256([]byte(sessionID + "\x00" + role + "\x00" + workerID + "\x00" + fmt.Sprint(expectedQueueVersion)))
-	return s.claimNextTask(ctx, projectID, sessionID, role, workerID, idempotencyKey, expectedQueueVersion, hex.EncodeToString(requestHash[:]), "", nil)
+	var claimCreated bool
+	task, err := s.claimNextTask(ctx, projectID, sessionID, role, workerID, idempotencyKey, expectedQueueVersion, hex.EncodeToString(requestHash[:]), "", &claimCreated)
+	return task, claimCreated, err
 }
 
 func (s *TaskService) claimNextTask(
@@ -1064,4 +1066,21 @@ func (s *TaskService) compensateFailedClaim(
 		return err
 	}
 	return tx.Commit()
+}
+
+// ActiveLeaseSnapshot returns the active lease authority fields for a task
+// so transport layers can answer claims without re-deriving the lease row.
+func (s *TaskService) ActiveLeaseSnapshot(ctx context.Context, projectID, taskID string) (leaseID string, version, epoch int64, err error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, version, epoch FROM task_leases
+		WHERE project_id = ? AND task_id = ? AND status = 'active'
+		ORDER BY epoch DESC LIMIT 1`, projectID, taskID)
+	var id string
+	if scanErr := row.Scan(&id, &version, &epoch); scanErr != nil {
+		if scanErr == sql.ErrNoRows {
+			return "", 0, 0, store.ErrLeaseNotFound
+		}
+		return "", 0, 0, fmt.Errorf("active lease snapshot for %s: %w", taskID, scanErr)
+	}
+	return id, version, epoch, nil
 }

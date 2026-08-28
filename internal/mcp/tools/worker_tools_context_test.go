@@ -20,14 +20,14 @@ import (
 )
 
 func TestGetNextTaskMCPFailsClosedAndCompensatesMissingContext(t *testing.T) {
-	services, database, projectID, taskID, sessionID, workspace := newMCPContextFixture(t)
+	services, database, projectID, taskID, _, workspace := newMCPContextFixture(t)
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "get_next_task"
+	currentQueueVersion, err := services.Task.CurrentQueueVersion(context.Background(), projectID)
+	require.NoError(t, err)
 	req.Params.Arguments = map[string]any{
-		"project_id": projectID,
-		"role":       model.RoleBackend,
-		"session_id": sessionID,
-		"worker_id":  "context-worker",
+		"idempotency_key": "mcp-test-idempotency-key-0001",
+		"queue_version":   currentQueueVersion,
 	}
 
 	result, transportErr := handleGetNextTask(context.Background(), req, services)
@@ -75,19 +75,19 @@ func TestGetNextTaskMCPFailsClosedAndCompensatesMissingContext(t *testing.T) {
 	require.NoError(t, database.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM worktrees
 		WHERE project_id = ? AND task_id = ?`, projectID, taskID).Scan(&worktrees))
 	assert.Zero(t, worktrees, "exact cleanup must retire the rejected claim Worktree")
-	_, err := os.Stat(filepath.Join(workspace, ".maestro", "worktrees", taskID))
-	require.ErrorIs(t, err, os.ErrNotExist)
+	_, statErr := os.Stat(filepath.Join(workspace, ".maestro", "worktrees", taskID))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestGetNextTaskMCPRejectsMissingCompensationDependenciesBeforeClaim(t *testing.T) {
-	services, database, projectID, taskID, sessionID, _ := newMCPContextFixture(t)
+	services, database, projectID, taskID, _, _ := newMCPContextFixture(t)
 	services.Worktree = nil
 	req := mcp.CallToolRequest{}
+	currentQueueVersion, err := services.Task.CurrentQueueVersion(context.Background(), projectID)
+	require.NoError(t, err)
 	req.Params.Arguments = map[string]any{
-		"project_id": projectID,
-		"role":       model.RoleBackend,
-		"session_id": sessionID,
-		"worker_id":  "context-worker",
+		"idempotency_key": "mcp-test-idempotency-key-0001",
+		"queue_version":   currentQueueVersion,
 	}
 
 	result, err := handleGetNextTask(context.Background(), req, services)
@@ -107,9 +107,9 @@ func TestGetNextTaskMCPRejectsMissingCompensationDependenciesBeforeClaim(t *test
 }
 
 func TestGetNextTaskMCPQuarantinesPreviouslyAssignedWorktree(t *testing.T) {
-	services, database, projectID, taskID, sessionID, _ := newMCPContextFixture(t)
+	services, database, projectID, taskID, _, _ := newMCPContextFixture(t)
 	claimed, err := services.Task.GetNextTask(
-		context.Background(), projectID, sessionID, model.RoleBackend, "context-worker",
+		context.Background(), projectID, services.Binding.SessionID, model.RoleBackend, "context-worker",
 	)
 	require.NoError(t, err)
 	require.Equal(t, taskID, claimed.ID)
@@ -120,11 +120,11 @@ func TestGetNextTaskMCPQuarantinesPreviouslyAssignedWorktree(t *testing.T) {
 	require.NoError(t, os.WriteFile(markerPath, []byte("preserve possible side effects\n"), 0o600))
 
 	req := mcp.CallToolRequest{}
+	currentQueueVersion, err := services.Task.CurrentQueueVersion(context.Background(), projectID)
+	require.NoError(t, err)
 	req.Params.Arguments = map[string]any{
-		"project_id": projectID,
-		"role":       model.RoleBackend,
-		"session_id": sessionID,
-		"worker_id":  "context-worker",
+		"idempotency_key": "mcp-test-idempotency-key-0001",
+		"queue_version":   currentQueueVersion,
 	}
 	result, err := handleGetNextTask(context.Background(), req, services)
 	require.NoError(t, err)
@@ -219,6 +219,7 @@ func newMCPContextFixture(
 	}))
 
 	return &Services{
+		Binding:  &TransportBinding{ProjectID: projectID, SessionID: sessionID, WorkerID: "context-worker"},
 		Task:     taskService,
 		Session:  sessionService,
 		Worktree: worktreeService,
