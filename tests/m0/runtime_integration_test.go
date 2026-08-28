@@ -962,22 +962,6 @@ validation:
 	requireNoError(t, os.WriteFile(serverConfigPath, []byte(serverConfig), 0o600), "write server config")
 	runBinary(t, "migrate", "up", "--config", runnerConfigPath)
 
-	runnerProcess, err := startManagedStdioMCPClient(
-		maestroBinary,
-		append(os.Environ(), "MAESTRO_REMOTE_WRITE=false"),
-		"runner", "--config", runnerConfigPath, "--runner-id", "m0-validation-runner",
-	)
-	requireNoError(t, err, "start persistent real stdio Runner")
-	t.Cleanup(func() {
-		if closeErr := runnerProcess.Close(); closeErr != nil {
-			t.Errorf("close validation Runner: %v", closeErr)
-		}
-	})
-	runner := runnerProcess.Client
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
-	defer cancel()
-	initializeMCP(t, ctx, runner)
-
 	// The HTTP process can mutate orchestration state but has no host execution
 	// profiles. Only the already-running local stdio Runner owns that authority.
 	httpRuntime := startRuntimeWithConfig(t, serverConfigPath, true)
@@ -1000,8 +984,28 @@ validation:
 
 	projectID := createRuntimeProject(t, httpRuntime, workspacePath)
 	featureID := createRuntimeFeature(t, httpRuntime, projectID)
+	const validationRunnerSession = "m0-validation-runner-session"
+	const validationRunnerWorker = "m0-validation-runner-worker"
 	requestJSON(t, http.MethodPost, httpRuntime.baseURL+"/api/v1/projects/"+projectID+"/sessions", "Bearer "+httpRuntime.token,
-		`{"id":"m0-session","role":"backend","client_type":"rest-api","capacity":5}`, http.StatusOK, nil)
+		fmt.Sprintf(`{"id":%q,"role":"backend","client_type":"rest-api","capacity":5}`, validationRunnerSession), http.StatusOK, nil)
+	// The stdio Runner starts with its server-side delegated context: the
+	// --project binding (and derived session/worker identity) can never be
+	// supplied or overridden through tool arguments.
+	runnerProcess, err := startManagedStdioMCPClient(
+		maestroBinary,
+		append(os.Environ(), "MAESTRO_REMOTE_WRITE=false"),
+		"runner", "--config", runnerConfigPath, "--runner-id", "m0-validation-runner", "--project", projectID,
+	)
+	requireNoError(t, err, "start persistent real stdio Runner")
+	t.Cleanup(func() {
+		if closeErr := runnerProcess.Close(); closeErr != nil {
+			t.Errorf("close validation Runner: %v", closeErr)
+		}
+	})
+	runner := runnerProcess.Client
+	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	defer cancel()
+	initializeMCP(t, ctx, runner)
 	testRequirementsBytes, err := json.Marshal(map[string]any{
 		"profile_id": "go-m0-test", "profile_version": "3.0.0", "profile_digest": profileDigest,
 		"coverage_format": "go-cover", "coverage_path": "coverage.out", "min_coverage": 80,
@@ -1014,8 +1018,11 @@ validation:
 	_, _ = database.Exec("PRAGMA busy_timeout = 5000")
 
 	successTaskID := createRuntimeTask(t, httpRuntime, projectID, featureID, string(testRequirementsBytes), "validation success")
+	var claimQueueVersion int64
+	requireNoError(t, database.QueryRow(`SELECT COALESCE((SELECT version FROM project_queue_versions
+		WHERE project_id=?), 0)`, projectID).Scan(&claimQueueVersion), "read queue token before claim")
 	claimResult, claimText := callRealTool(t, ctx, runner, "get_next_task", map[string]any{
-		"project_id": projectID, "role": "backend", "session_id": "m0-session", "worker_id": "m0-worker",
+		"idempotency_key": "m0-real-claim-0000000001", "queue_version": claimQueueVersion,
 	})
 	if claimResult.IsError || !strings.Contains(claimText, successTaskID) {
 		t.Fatalf("real MCP claim did not return the queued task: is_error=%t content=%s", claimResult.IsError, claimText)
@@ -1030,9 +1037,8 @@ validation:
 		WHERE project_id=? AND task_id=? AND status='active'`, projectID, successTaskID).
 		Scan(&leaseID, &leaseVersion, &leaseExpiry), "read active Lease before MCP heartbeat")
 	heartbeatArguments := map[string]any{
-		"project_id": projectID, "task_id": successTaskID,
-		"session_id": "m0-session", "worker_id": "m0-worker",
-		"lease_id": leaseID, "lease_version": leaseVersion,
+		"work_item_id": successTaskID,
+		"lease_id":     leaseID, "lease_version": leaseVersion,
 		"idempotency_key": "m0-real-heartbeat-0001",
 	}
 	heartbeatResult, heartbeatText := callRealTool(t, ctx, runner, "heartbeat_task", heartbeatArguments)
@@ -1040,13 +1046,13 @@ validation:
 		t.Fatalf("real MCP heartbeat returned an error: %s", heartbeatText)
 	}
 	var heartbeatPayload struct {
-		TaskID       string `json:"task_id"`
+		WorkItemID   string `json:"work_item_id"`
 		LeaseID      string `json:"lease_id"`
 		LeaseVersion int64  `json:"lease_version"`
 		ExpiresAt    string `json:"expires_at"`
 	}
 	requireNoError(t, json.Unmarshal([]byte(heartbeatText), &heartbeatPayload), "decode real MCP heartbeat")
-	if heartbeatPayload.TaskID != successTaskID || heartbeatPayload.LeaseID != leaseID ||
+	if heartbeatPayload.WorkItemID != successTaskID || heartbeatPayload.LeaseID != leaseID ||
 		heartbeatPayload.LeaseVersion != leaseVersion+1 || heartbeatPayload.ExpiresAt == "" {
 		t.Fatalf("incomplete MCP heartbeat result: %+v", heartbeatPayload)
 	}
@@ -1090,7 +1096,7 @@ validation:
 	runGit(t, successWorktree, "-c", "user.name=M0 Test", "-c", "user.email=m0@example.invalid", "commit", "-m", "successful validation change")
 
 	result, resultText := callRealTool(t, ctx, runner, "submit_task_result", map[string]any{
-		"project_id": projectID, "task_id": successTaskID, "session_id": "m0-session", "worker_id": "m0-worker", "summary": "real binary validation",
+		"project_id": projectID, "task_id": successTaskID, "session_id": validationRunnerSession, "worker_id": validationRunnerWorker, "summary": "real binary validation",
 	})
 	if result.IsError {
 		t.Fatalf("successful real-binary validation returned an MCP error: %s", resultText)
@@ -1112,14 +1118,14 @@ validation:
 	}
 
 	failureTaskID := createRuntimeTask(t, httpRuntime, projectID, featureID, string(testRequirementsBytes), "validation failure")
-	failureWorktree := claimRuntimeTask(t, httpRuntime, database, projectID, failureTaskID, "m0-session", "m0-worker")
+	failureWorktree := claimRuntimeTask(t, httpRuntime, database, projectID, failureTaskID, validationRunnerSession, validationRunnerWorker)
 	failingTest := []byte("package sample\n\nimport \"testing\"\n\nfunc TestIntentionalFailure(t *testing.T) { t.Fatal(\"intentional M0 failure\") }\n")
 	requireNoError(t, os.WriteFile(filepath.Join(failureWorktree, "src", "failure_test.go"), failingTest, 0o600), "write failing test")
 	runGit(t, failureWorktree, "add", "src/failure_test.go")
 	runGit(t, failureWorktree, "-c", "user.name=M0 Test", "-c", "user.email=m0@example.invalid", "commit", "-m", "failing validation change")
 
 	result, resultText = callRealTool(t, ctx, runner, "submit_task_result", map[string]any{
-		"project_id": projectID, "task_id": failureTaskID, "session_id": "m0-session", "worker_id": "m0-worker",
+		"project_id": projectID, "task_id": failureTaskID, "session_id": validationRunnerSession, "worker_id": validationRunnerWorker,
 	})
 	if !result.IsError || !strings.Contains(resultText, "TEST_FAILED") {
 		t.Fatalf("failing real-binary validation did not fail closed: is_error=%t content=%s", result.IsError, resultText)
