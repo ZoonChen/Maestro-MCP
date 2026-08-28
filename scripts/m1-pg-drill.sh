@@ -132,7 +132,8 @@ assert not [w for w in report.get("warnings",[]) if "violation" in w], report["w
 print("reconcile clean: coverage + status + invariants ✓")' "$WORK/reconcile.json"
 
 step "6. rollback drill (revert -> empty -> re-migrate)"
-"$BIN" migrate revert --steps 1
+# Revert every applied migration (steps is capped at the applied count).
+"$BIN" migrate revert --steps 99
 "$BIN" migrate up
 "$BIN" doctor >/dev/null && echo "schema restored from empty ✓"
 
