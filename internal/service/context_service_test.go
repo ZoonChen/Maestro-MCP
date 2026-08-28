@@ -126,7 +126,7 @@ func TestContextServiceRevalidatesDependencyStateAfterClaim(t *testing.T) {
 	require.NoError(t, svc.sessSvc.RegisterWorker(
 		context.Background(), testProjectID, "dependency-session", &model.AgentWorker{ID: "dependency-worker"},
 	))
-	claimed, err := svc.taskSvc.GetNextTaskWithVersion(
+	claimed, _, err := svc.taskSvc.GetNextTaskWithVersion(
 		context.Background(), testProjectID, "dependency-session", model.RoleBackend, "dependency-worker",
 		"dependency-claim-0001", readQueueVersion(t, svc),
 	)
@@ -286,7 +286,7 @@ func newContextClaimFixture(
 		context.Background(), testProjectID, "context-session", &model.AgentWorker{ID: "context-worker"},
 	))
 	claimKey := "context-claim-0001"
-	claimed, err := svc.taskSvc.GetNextTaskWithVersion(
+	claimed, _, err := svc.taskSvc.GetNextTaskWithVersion(
 		context.Background(), testProjectID, "context-session", model.RoleBackend, "context-worker",
 		claimKey, readQueueVersion(t, svc),
 	)

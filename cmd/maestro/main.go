@@ -23,6 +23,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/app"
 	"github.com/ZoonChen/Maestro-MCP/internal/config"
+	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -257,6 +258,8 @@ func runRunner(ctx context.Context, args []string, ioStreams streams) error {
 	bindCommonFlags(fs, &common)
 	var runnerID string
 	fs.StringVar(&runnerID, "runner-id", "local", "local Runner device identifier")
+	var boundProject string
+	fs.StringVar(&boundProject, "project", "", "server-side project binding for MCP claim tools (required for claims; identity is derived, never client-supplied)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return flag.ErrHelp
@@ -280,6 +283,16 @@ func runRunner(ctx context.Context, args []string, ioStreams streams) error {
 		return fail(exitUsage, "CONFIG_INVALID", err)
 	}
 	options.HTTPLogWriter = ioStreams.err
+	if boundProject != "" {
+		// The stdio transport's delegated context (single user, single
+		// project): session and worker identity are server-derived from the
+		// runner id and cannot be overridden by any tool argument.
+		options.MCPBinding = &maestrotools.TransportBinding{
+			ProjectID: boundProject,
+			SessionID: runnerID + "-session",
+			WorkerID:  runnerID + "-worker",
+		}
+	}
 	runtimeApp, err := app.New(ctx, options)
 	if err != nil {
 		return runtimeStartupFailure(err)

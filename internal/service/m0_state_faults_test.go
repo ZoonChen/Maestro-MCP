@@ -52,13 +52,13 @@ func TestTaskLeaseEntryPointsFailClosedWithoutDatabaseOrLease(t *testing.T) {
 func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 	t.Run("idempotency key", func(t *testing.T) {
 		svc := setupTestEnv(t)
-		_, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 			"session", model.RoleBackend, "worker", "short", 0)
 		require.ErrorIs(t, err, store.ErrInvalidParameter)
 	})
 	t.Run("stale queue version", func(t *testing.T) {
 		svc, _, version := newClaimFaultFixture(t, false, true)
-		_, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 			"claim-session", model.RoleBackend, "claim-worker", "claim-stale-version", version+1)
 		require.ErrorIs(t, err, store.ErrConcurrentConflict)
 	})
@@ -67,13 +67,13 @@ func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 		task := newTestTask("T-claim-no-session")
 		require.NoError(t, svc.taskSvc.CreateTask(context.Background(), testProjectID, task))
 		version := readQueueVersion(t, svc)
-		_, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 			"missing", model.RoleBackend, "worker", "claim-missing-session", version)
 		require.ErrorIs(t, err, store.ErrSessionNotFound)
 	})
 	t.Run("role mismatch", func(t *testing.T) {
 		svc, _, version := newClaimFaultFixture(t, false, true)
-		_, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 			"claim-session", model.RoleFrontend, "claim-worker", "claim-role-mismatch", version)
 		require.ErrorIs(t, err, store.ErrTaskNotOwned)
 	})
@@ -86,7 +86,7 @@ func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 		require.NoError(t, svc.sessSvc.RegisterWorker(ctx, testProjectID, "full-session", &model.AgentWorker{ID: "occupied"}))
 		task := newTestTask("T-capacity-full")
 		require.NoError(t, svc.taskSvc.CreateTask(ctx, testProjectID, task))
-		_, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
 			"full-session", model.RoleBackend, "new-worker", "claim-capacity-full", readQueueVersion(t, svc))
 		require.ErrorIs(t, err, store.ErrSessionCapacityFull)
 	})
@@ -95,7 +95,7 @@ func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 		_, err := svc.stores.db.Exec(`UPDATE agent_workers SET status = 'lost'
 			WHERE project_id = ? AND id = ?`, testProjectID, "claim-worker")
 		require.NoError(t, err)
-		_, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+		_, _, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 			"claim-session", model.RoleBackend, "claim-worker", "claim-worker-unavailable", version)
 		require.ErrorIs(t, err, store.ErrConcurrentConflict)
 	})
@@ -106,7 +106,7 @@ func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 			ID: "empty-session", Role: model.RoleBackend, ClientType: "test", Capacity: 1,
 		}))
 		require.NoError(t, svc.sessSvc.RegisterWorker(ctx, testProjectID, "empty-session", &model.AgentWorker{ID: "empty-worker"}))
-		_, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
 			"empty-session", model.RoleBackend, "empty-worker", "claim-empty-queue-1", readQueueVersion(t, svc))
 		require.ErrorIs(t, err, store.ErrNoAvailableTask)
 	})
@@ -120,7 +120,7 @@ func TestClaimNextTaskRejectsInvalidAuthorityAndQueueSnapshots(t *testing.T) {
 		task := newTestTask("T-bad-dependencies")
 		task.Dependencies = []byte(`{not-json`)
 		require.NoError(t, svc.stores.taskStore.Create(ctx, testProjectID, task))
-		_, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
+		_, _, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
 			"bad-json-session", model.RoleBackend, "bad-json-worker", "claim-bad-json-0001", readQueueVersion(t, svc))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "select queued task")
@@ -154,7 +154,7 @@ func TestClaimNextTaskRollsBackEveryTransactionalWriteStage(t *testing.T) {
 			svc, task, version := newClaimFaultFixture(t, false, true)
 			_, err := svc.stores.db.Exec(tt.trigger)
 			require.NoError(t, err)
-			_, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+			_, _, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 				"claim-session", model.RoleBackend, "claim-worker", "claim-stage-failure", version)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "FAIL_CLAIM_STAGE")
@@ -168,7 +168,7 @@ func TestClaimNextTaskJoinsWorkspaceAndCompensationFailures(t *testing.T) {
 	_, err := svc.stores.db.Exec(`CREATE TRIGGER fail_compensation BEFORE UPDATE ON task_leases
 		WHEN NEW.status = 'released' BEGIN SELECT RAISE(ABORT, 'FAIL_COMPENSATION'); END`)
 	require.NoError(t, err)
-	_, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
+	_, _, err = svc.taskSvc.GetNextTaskWithVersion(context.Background(), testProjectID,
 		"claim-session", model.RoleBackend, "claim-worker", "claim-compensation-fails", version)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace allocation")
@@ -182,7 +182,7 @@ func TestClaimNextTaskJoinsWorkspaceAndCompensationFailures(t *testing.T) {
 func TestFailedWorkspaceAllocationCompensatesEveryClaimResource(t *testing.T) {
 	svc, task, version := newClaimFaultFixture(t, false, true)
 	ctx := context.Background()
-	_, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
+	_, _, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
 		"claim-session", model.RoleBackend, "claim-worker", "claim-workspace-failure", version)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace allocation")

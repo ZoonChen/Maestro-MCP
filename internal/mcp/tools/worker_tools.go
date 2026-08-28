@@ -109,8 +109,8 @@ func handleGetNextTask(
 		return errorResult(fmt.Errorf("idempotency_key: %w", store.ErrInvalidParameter)), nil
 	}
 	queueVersion, err := requireIntegerArg(req, "queue_version")
-	if err != nil {
-		return errorResult(fmt.Errorf("queue_version: %w", store.ErrInvalidParameter)), nil
+	if err != nil || queueVersion < 0 {
+		return errorResult(fmt.Errorf("queue_version: %w", store.ErrInvalidParameter)), nil //nolint:nilerr // the parameter, not the transport, failed validation
 	}
 	if queueVersion < 0 {
 		return errorResult(fmt.Errorf("queue_version: %w", store.ErrInvalidParameter)), nil
@@ -268,11 +268,8 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(err), nil
 			}
 			leaseVersion, err := requireIntegerArg(req, "lease_version")
-			if err != nil {
-				return errorResult(fmt.Errorf("lease_version: %w", store.ErrInvalidParameter)), nil
-			}
-			if leaseVersion < 0 {
-				return errorResult(fmt.Errorf("lease_version: %w", store.ErrInvalidParameter)), nil
+			if err != nil || leaseVersion < 0 {
+				return errorResult(fmt.Errorf("lease_version: %w", store.ErrInvalidParameter)), nil //nolint:nilerr // the parameter, not the transport, failed validation
 			}
 			idempotencyKey, err := req.RequireString("idempotency_key")
 			if err != nil {

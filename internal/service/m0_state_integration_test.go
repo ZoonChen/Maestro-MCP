@@ -43,7 +43,7 @@ func TestM0ClaimValidateVerifyStopsBeforeVerifiedMergeFact(t *testing.T) {
 	require.NoError(t, svc.sessSvc.RegisterWorker(ctx, testProjectID, "executor-session", &model.AgentWorker{ID: "executor-worker"}))
 
 	claimQueueVersion := readQueueVersion(t, svc)
-	claimed, err := svc.taskSvc.GetNextTaskWithVersion(
+	claimed, _, err := svc.taskSvc.GetNextTaskWithVersion(
 		ctx, testProjectID, "executor-session", model.RoleBackend, "executor-worker",
 		"claim-lifecycle-0001", claimQueueVersion,
 	)
@@ -56,13 +56,13 @@ func TestM0ClaimValidateVerifyStopsBeforeVerifiedMergeFact(t *testing.T) {
 
 	// An identical retry returns the same durable result, while a different
 	// payload cannot reuse the key.
-	retry, err := svc.taskSvc.GetNextTaskWithVersion(
+	retry, _, err := svc.taskSvc.GetNextTaskWithVersion(
 		ctx, testProjectID, "executor-session", model.RoleBackend, "executor-worker",
 		"claim-lifecycle-0001", claimQueueVersion,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, claimed.ID, retry.ID)
-	_, err = svc.taskSvc.GetNextTaskWithVersion(
+	_, _, err = svc.taskSvc.GetNextTaskWithVersion(
 		ctx, testProjectID, "executor-session", model.RoleFrontend, "executor-worker",
 		"claim-lifecycle-0001", claimQueueVersion,
 	)
@@ -309,7 +309,7 @@ func TestM0ClaimWorkspaceFailureCompensatesDurableAuthority(t *testing.T) {
 	}))
 	require.NoError(t, svc.sessSvc.RegisterWorker(ctx, testProjectID, "compensate-session", &model.AgentWorker{ID: "compensate-worker"}))
 
-	_, err := svc.taskSvc.GetNextTaskWithVersion(
+	_, _, err := svc.taskSvc.GetNextTaskWithVersion(
 		ctx, testProjectID, "compensate-session", model.RoleBackend, "compensate-worker",
 		"claim-compensate-1", readQueueVersion(t, svc),
 	)
