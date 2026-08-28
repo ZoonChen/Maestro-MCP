@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-001
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: technical_lead
@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-001：Control Plane 与本地 Runner 分离
 
-> 决策状态：待评审接受。当前仓库仍是本地 SQLite 单进程原型，目标架构尚未实现。
+> 决策状态：已评审接受（I1 契约冻结 sprint；签署以契约 PR 评审批准记录为准）。当前仓库仍是本地 SQLite 单进程原型，目标架构尚未实现。
 
 ## 1. 目标与非目标
 

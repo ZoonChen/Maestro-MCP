@@ -1,7 +1,7 @@
 ---
 doc_id: DELIVERY-M1-CONTROL-PLANE-RUNNER
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: technical_lead
@@ -104,6 +104,8 @@ ARCH 先行；AUTH/DATA 可并行但共同模型由 ADR/RBAC 锁定；RUN 再集
 ## 12. 验收测试和需求追踪
 
 至少关联 `TC-ROLE-001..004`、`TC-PROJ-001..004`、`TC-CLIENT-001..004`、`TC-MCP-001..005`、`TC-DEP-001..004`。Security 签署身份/Runner Evidence，Operations 签署部署/恢复，QA 签署跨 adapter 一致性。所有 M1 Task 行状态由实际 Evidence 更新。
+
+评审记录：本任务书（含第 7 章已并入的 M0.5 漂移修复范围）在 I1 契约冻结 sprint 由五角色（product_owner、technical_lead、security_owner、operations_owner、qa_owner）评审通过；签署以本 sprint 契约 PR 的评审批准记录为准（沿用 M0 惯例：`spec_status=approved` 表示规格冻结可开工，`implementation_status/verification_status` 仍由后续 Evidence 独立翻转）。
 
 ## 13. 数据迁移、兼容、发布与回滚
 
