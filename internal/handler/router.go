@@ -23,6 +23,40 @@ type RouterOptions struct {
 	RemoteWrite    bool
 	LogWriter      io.Writer
 	IsDraining     func() bool
+
+	// Identity is the M1 identity-layer mount point (M1-AUTH-001). While
+	// nil, the M0 fail-closed shared-token AuthMiddleware keeps guarding the
+	// tree. Once the identity layer is wired (S2), Authenticate replaces the
+	// shared-token middleware, Authorize enforces the unified
+	// authorize(principal, action, resource) decision on /api/v1, and
+	// RegisterRoutes attaches the OIDC Authorization Code + PKCE endpoints
+	// under /auth.
+	Identity *IdentityMount
+}
+
+// IdentityMount is the frozen mounting contract between the router and the
+// identity layer. All three members are optional individually so the layer
+// can land incrementally, but a mounted Authenticate MUST construct the
+// server-side PrincipalContext (health paths stay anonymous) and never
+// trust self-reported role/project/session fields from the payload.
+type IdentityMount struct {
+	// Authenticate resolves the request credential (session cookie or
+	// bearer token) into a PrincipalContext on the gin context. When set it
+	// replaces the M0 shared-token AuthMiddleware for the whole tree except
+	// the /auth protocol group, whose handlers enforce their own credential
+	// rules (anonymous login/callback, cookie-bound logout).
+	Authenticate gin.HandlerFunc
+
+	// Authorize is the policy decision point applied to every /api/v1
+	// route after authentication. Deny must answer 401/403/404 per
+	// SEC-IDENTITY-RBAC section 5 and be audited without business or
+	// outbox side effects.
+	Authorize gin.HandlerFunc
+
+	// RegisterRoutes attaches protocol routes (for example OIDC login,
+	// callback, logout) to the /auth group. The group inherits the same
+	// body limit, CORS and rate-limit chain as /api/v1.
+	RegisterRoutes func(group *gin.RouterGroup)
 }
 
 func init() {
@@ -73,8 +107,27 @@ func SetupRouter(
 	// Rate limiting: 100 requests per minute per IP.
 	r.Use(RateLimit(100, time.Minute))
 
-	// Authentication fails closed when authToken is empty.
-	r.Use(AuthMiddleware(authToken))
+	// Identity protocol endpoints (OIDC Authorization Code + PKCE login,
+	// callback, logout). The group only exists when the identity layer
+	// provides its routes; without it no /auth route is exposed. Login and
+	// callback are anonymous protocol entries, so the group deliberately
+	// mounts before the authentication, drain and remote-write guards (it
+	// still carries logging, recovery, body limits, CORS and rate limits).
+	// Route handlers enforce their own credential rules (logout requires the
+	// session cookie, callback validates state/nonce).
+	if opts.Identity != nil && opts.Identity.RegisterRoutes != nil {
+		auth := r.Group("/auth")
+		opts.Identity.RegisterRoutes(auth)
+	}
+
+	// Authentication fails closed when authToken is empty. A mounted
+	// identity layer (M1) takes over the authentication decision and the
+	// shared-token middleware is retired for that tree.
+	if opts.Identity != nil && opts.Identity.Authenticate != nil {
+		r.Use(opts.Identity.Authenticate)
+	} else {
+		r.Use(AuthMiddleware(authToken))
+	}
 
 	// Once shutdown begins, all new state-changing REST and MCP calls stop at
 	// the transport boundary. Health and explicitly read-only protocol calls
@@ -101,6 +154,11 @@ func SetupRouter(
 
 	api := r.Group("/api/v1")
 	{
+		// Unified authorize(principal, action, resource) decision point for
+		// every /api/v1 route once the M1 identity layer is mounted.
+		if opts.Identity != nil && opts.Identity.Authorize != nil {
+			api.Use(opts.Identity.Authorize)
+		}
 		// Global (non-project-scoped) endpoints.
 		api.GET("/projects", ph.ListProjects)
 		api.POST("/projects", ph.CreateProject)

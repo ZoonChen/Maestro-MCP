@@ -50,6 +50,25 @@ var (
 	ErrRecoveryIntegrity     = errors.New("startup recovery could not prove state integrity")
 )
 
+// M1 identity, runner registry and event pipeline errors. The PostgreSQL
+// implementations (M1-DATA-001) must return these exact sentinels so REST,
+// MCP and background surfaces map one stable error code per condition.
+var (
+	ErrUserNotFound          = errors.New("user not found")
+	ErrMembershipNotFound    = errors.New("membership not found")
+	ErrRunnerNotFound        = errors.New("runner not found")
+	ErrRunnerRevoked         = errors.New("runner revoked")
+	ErrRunnerStatusInvalid   = errors.New("runner status invalid for this operation")
+	ErrRunnerNotBound        = errors.New("runner not bound to project")
+	ErrRunnerGenerationStale = errors.New("runner connection generation stale")
+	ErrEnrollmentInvalid     = errors.New("enrollment code invalid")
+	ErrEnrollmentExpired     = errors.New("enrollment code expired")
+	ErrEnrollmentConsumed    = errors.New("enrollment code already consumed")
+	ErrDuplicateEvent        = errors.New("event already recorded")
+	ErrOutboxClaimMismatch   = errors.New("outbox claim no longer owned by this dispatcher")
+	ErrMigrationLocked       = errors.New("schema migration held by another owner")
+)
+
 // ---------------------------------------------------------------------------
 // 过滤条件类型
 // ---------------------------------------------------------------------------
@@ -342,4 +361,169 @@ type DB interface {
 
 	// Close 关闭数据库连接。
 	Close() error
+}
+
+// ---------------------------------------------------------------------------
+// M1 PostgreSQL-era contracts (M1-DATA-001 / ADR-002 / ADR-003).
+//
+// These interfaces are the frozen persistence contract for the PostgreSQL
+// source of truth. The SQLite implementation keeps serving the M0 tables
+// unchanged until cutover; S1 lands the PG adapters in M1-P3/P4. Every
+// project-scoped method keeps projectID as the leading scope parameter so
+// one signature shape serves both drivers.
+// ---------------------------------------------------------------------------
+
+// ProjectMembershipView is the derived per-project role used to build the
+// server-side PrincipalContext; it is computed from team ownership plus
+// active memberships and never accepted from a request payload.
+type ProjectMembershipView struct {
+	ProjectID string
+	Role      string
+}
+
+// IdentityStore persists OIDC-backed users and their memberships
+// (ADR-003). Only hashes and non-sensitive claims are stored.
+type IdentityStore interface {
+	// GetOrCreateUser maps a verified issuer+subject pair to a user row.
+	// Repeated logins of the same identity return the same user idempotently.
+	GetOrCreateUser(ctx context.Context, issuer, subject, displayName string) (*model.User, error)
+
+	// GetUser returns the user by server-side ID.
+	GetUser(ctx context.Context, id string) (*model.User, error)
+
+	// UpdateUserStatus transitions invited/active/suspended/removed.
+	UpdateUserStatus(ctx context.Context, id, expectedStatus, newStatus string) error
+
+	// CreateMembership adds a team membership; (team_id, user_id) is unique.
+	CreateMembership(ctx context.Context, m *model.TeamMembership) error
+
+	// ListMembershipsByUser returns all memberships valid at the given time.
+	ListMembershipsByUser(ctx context.Context, userID, at string) ([]*model.TeamMembership, error)
+
+	// ListProjectMemberships derives the project_id -> role map used to
+	// construct PrincipalContext.ProjectMemberships.
+	ListProjectMemberships(ctx context.Context, userID string) ([]ProjectMembershipView, error)
+}
+
+// RunnerRegistryStore persists the runner device registry, one-time
+// enrollment codes and project bindings (ADR-001 / runner-security).
+type RunnerRegistryStore interface {
+	// CreateEnrollment stores a hashed one-time, project-bound code with the
+	// fixed enrollment TTL; the plaintext code is never persisted.
+	CreateEnrollment(ctx context.Context, e *model.RunnerEnrollment) error
+
+	// ConsumeEnrollment atomically consumes an unconsumed, unexpired code
+	// (compare-and-swap). Expired, unknown or reused codes return
+	// ErrEnrollmentExpired / ErrEnrollmentInvalid / ErrEnrollmentConsumed.
+	ConsumeEnrollment(ctx context.Context, enrollmentID, codeHash string) error
+
+	// CreateRunner registers a pending_approval device and its initial
+	// project binding in one transaction.
+	CreateRunner(ctx context.Context, runner *model.RunnerDevice, binding *model.RunnerBinding) error
+
+	// GetRunner returns the device by ID.
+	GetRunner(ctx context.Context, id string) (*model.RunnerDevice, error)
+
+	// UpdateRunnerStatus performs a guarded status transition
+	// (expectedStatus compare-and-swap); revoked is terminal.
+	UpdateRunnerStatus(ctx context.Context, id, expectedStatus, newStatus string) error
+
+	// BumpRunnerGeneration rotates the fencing generation on reconnect; all
+	// messages carrying an older generation must be rejected afterwards.
+	BumpRunnerGeneration(ctx context.Context, id string) (int64, error)
+
+	// UpdateRunnerHeartbeat records bounded liveness for an approved device.
+	UpdateRunnerHeartbeat(ctx context.Context, id string) error
+
+	// ListRunnersByProject lists devices bound to the project scope.
+	ListRunnersByProject(ctx context.Context, projectID string) ([]*model.RunnerDevice, error)
+
+	// RevokeRunner marks the device revoked (terminal) and stamps RevokedAt.
+	RevokeRunner(ctx context.Context, id string) error
+}
+
+// OutboxStore implements the transactional outbox (ADR-002): rows are
+// enqueued in the same transaction as the business state change and
+// dispatched at least once with FOR UPDATE SKIP LOCKED semantics.
+type OutboxStore interface {
+	// Enqueue appends a pending event bound to the caller's transaction.
+	Enqueue(ctx context.Context, e *model.OutboxEvent) error
+
+	// ClaimPending leases up to batchSize pending/retry_wait events to one
+	// dispatcher owner; competing dispatchers never claim the same row.
+	ClaimPending(ctx context.Context, batchSize int, owner, now string) ([]*model.OutboxEvent, error)
+
+	// MarkDelivered finalizes a successful dispatch for the claiming owner.
+	MarkDelivered(ctx context.Context, eventID, owner string) error
+
+	// MarkRetry schedules the next attempt with exponential backoff plus
+	// jitter; attempts exceeding the limit move the row to dead_letter.
+	MarkRetry(ctx context.Context, eventID, owner string, attempts int, availableAt string) error
+
+	// MarkDeadLetter parks an exhausted event for audited, privileged replay.
+	MarkDeadLetter(ctx context.Context, eventID, owner string) error
+}
+
+// InboxStore implements the durable inbox: verified external events are
+// persisted exactly once before any business effect is produced.
+type InboxStore interface {
+	// Record inserts a received event; it reports false when the event
+	// identity already exists so consumers stay idempotent.
+	Record(ctx context.Context, e *model.InboxEvent) (bool, error)
+
+	// ClaimProcessing guards a consumer's transition to processing.
+	ClaimProcessing(ctx context.Context, eventID string) error
+
+	// MarkProcessed records the exactly-once business completion.
+	MarkProcessed(ctx context.Context, eventID string) error
+}
+
+// IdempotencyRecord is the stored outcome of a prior write request, keyed by
+// (principal_id, project_id, operation, key) per TECH-DATA-001 section 8.
+type IdempotencyRecord struct {
+	PrincipalID     string
+	ProjectID       string
+	Operation       string
+	Key             string
+	RequestHash     string
+	ResponseStatus  int
+	ResponseSummary string
+	CreatedAt       string
+}
+
+// APIIdempotencyStore backs the mandatory write-path idempotency contract:
+// the same key with the same request hash replays the original result; the
+// same key with a different body returns ErrIdempotencyConflict.
+type APIIdempotencyStore interface {
+	LookupOrCreate(ctx context.Context, record *IdempotencyRecord) (replayed bool, existing *IdempotencyRecord, err error)
+}
+
+// Repositories is the transaction-scoped aggregate exposing every store a
+// use case may touch. Implementations MUST bind every returned store to the
+// single *sql.Tx owned by the surrounding UnitOfWork; re-entering the base
+// pool inside a transaction is a contract violation (SVC-INV / SVC-GATE-003).
+type Repositories interface {
+	Projects() ProjectStore
+	Features() FeatureStore
+	Tasks() TaskStore
+	TaskResults() TaskResultStore
+	ValidationRuns() ValidationRunStore
+	Worktrees() WorktreeStore
+	Sessions() SessionStore
+	Workers() WorkerStore
+	Contracts() ContractStore
+	ActivityLogs() ActivityLogStore
+	AuditLogs() AuditLogStore
+	Identities() IdentityStore
+	RunnerRegistry() RunnerRegistryStore
+	Outbox() OutboxStore
+	Inbox() InboxStore
+	APIIdempotency() APIIdempotencyStore
+}
+
+// UnitOfWork owns the single transaction boundary for application services
+// (TECH-SVC-001 section 4): authorization happens before Begin, and the
+// callback receives tx-scoped repositories plus the inherited context.
+type UnitOfWork interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context, r Repositories) error) error
 }

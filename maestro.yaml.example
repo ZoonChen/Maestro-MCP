@@ -50,6 +50,43 @@ allowed_origins: ["http://127.0.0.1:8080"]
 remote_write: false
 # Env override: MAESTRO_REMOTE_WRITE (must remain false outside explicit tests)
 
+# ---------------------------------------------------------------------------
+# M1 v3 sections (contract frozen by the I1 contract-freeze sprint). Each is
+# optional; the sections below are commented examples for the Compose
+# topology (docker compose --profile m1 up).
+# ---------------------------------------------------------------------------
+
+# Dual-driver database section. Omitted = M0 SQLite via db_path above.
+# database:
+#   driver: postgres                      # sqlite | postgres; empty infers from dsn presence
+#   dsn_secret_ref: "docker-secret://maestro-postgres-dsn"
+#   max_open_connections: 20              # 2..100 per config.schema.json
+# Env overrides: MAESTRO_DB_DRIVER, MAESTRO_DATABASE_DSN_REF,
+#   MAESTRO_DATABASE_DSN (resolved secret value, never in this file),
+#   MAESTRO_DATABASE_MAX_OPEN_CONNECTIONS
+
+# OIDC Authorization Code + PKCE identity source (M1-AUTH-001 wires it).
+# oidc:
+#   issuer: "https://keycloak:8443/realms/maestro"
+#   client_id: "maestro-control-plane"
+#   client_secret_ref: "docker-secret://maestro-oidc-client-secret"
+#   audience: "maestro"
+#   access_token_ttl_seconds: 900         # fixed by the machine schema
+# Env overrides: MAESTRO_OIDC_ISSUER, MAESTRO_OIDC_CLIENT_ID,
+#   MAESTRO_OIDC_CLIENT_SECRET_REF, MAESTRO_OIDC_AUDIENCE,
+#   MAESTRO_OIDC_CLIENT_SECRET (resolved value)
+
+# Runner protocol windows. heartbeat/suspect/offline/enrollment are frozen
+# constants (15/45/90/600 seconds); only lease_ttl_seconds (30..600) and
+# long_poll_seconds (1..30) are operator-tunable. Defaults shown.
+# runner:
+#   enrollment_ttl_seconds: 600
+#   lease_ttl_seconds: 90
+#   long_poll_seconds: 25
+#   heartbeat_seconds: 15
+#   suspect_seconds: 45
+#   offline_seconds: 90
+
 # Zero-trust validation runtime. The safe default has no approved profiles and
 # cannot execute on the host, so task submission fails closed. Unlike ordinary
 # runtime settings, these values intentionally have no environment overrides.

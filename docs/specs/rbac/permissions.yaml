@@ -1,3 +1,5 @@
+# Frozen at version 3.0 by the M1 I1 contract-freeze sprint. Permission
+# changes require a contract change request through the integration session.
 version: "3.0"
 default_effect: deny
 resource_hiding:

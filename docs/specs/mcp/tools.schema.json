@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
   "title": "Maestro MCP v3 Tool Catalog",
-  "description": "Authoritative catalog for the fourteen public Maestro MCP tools. Principal and resource scope are derived from the authenticated server context.",
+  "description": "Authoritative catalog for the fourteen public Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.0 is frozen by the M1 I1 contract-freeze sprint; changes require a contract change request through the integration session.",
   "type": "object",
   "required": ["version", "work_item_states", "tools"],
   "additionalProperties": false,
@@ -202,7 +202,8 @@
         "description": {"type": "string", "minLength": 1, "maxLength": 500},
         "mutating": {"const": false},
         "required_permission": {"type": "string", "minLength": 1, "maxLength": 128},
-        "input_schema": {"type": "object"}
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"}
       }
     },
     "mutatingTool": {
@@ -229,7 +230,8 @@
         },
         "idempotency": {"$ref": "#/$defs/idempotency"},
         "concurrency": {"$ref": "#/$defs/concurrency"},
-        "input_schema": {"type": "object"}
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"}
       }
     },
     "listWorkItems": {
@@ -354,6 +356,27 @@
                   "queue_version": {"type": "integer", "minimum": 0}
                 },
                 "required": ["idempotency_key", "queue_version"]
+              }
+            },
+            "output_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "lease_epoch": {"type": "integer", "minimum": 1},
+                  "queue_version": {"type": "integer", "minimum": 0},
+                  "worktree_path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "description": "Absolute worktree path allocated by the server for the claimed work item."
+                  }
+                }
               }
             }
           }
@@ -718,6 +741,27 @@
                 },
                 "required": ["idempotency_key", "queue_version"]
               }
+            },
+            "output_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+                "properties": {
+                  "work_item_id": {"type": "string", "format": "uuid"},
+                  "lease_id": {"type": "string", "format": "uuid"},
+                  "lease_version": {"type": "integer", "minimum": 1},
+                  "lease_epoch": {"type": "integer", "minimum": 1},
+                  "queue_version": {"type": "integer", "minimum": 0},
+                  "worktree_path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "description": "Absolute worktree path allocated by the server for the claimed work item."
+                  }
+                }
+              }
             }
           }
         }
@@ -917,6 +961,25 @@
               "queue_version": {"type": "integer", "minimum": 0}
             },
             "required": ["idempotency_key", "queue_version"]
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "lease_epoch": {"type": "integer", "minimum": 1},
+              "queue_version": {"type": "integer", "minimum": 0},
+              "worktree_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Absolute worktree path allocated by the server for the claimed work item."
+              }
+            }
           }
         },
         {
@@ -1245,6 +1308,25 @@
               "queue_version": {"type": "integer", "minimum": 0}
             },
             "required": ["idempotency_key", "queue_version"]
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+            "properties": {
+              "work_item_id": {"type": "string", "format": "uuid"},
+              "lease_id": {"type": "string", "format": "uuid"},
+              "lease_version": {"type": "integer", "minimum": 1},
+              "lease_epoch": {"type": "integer", "minimum": 1},
+              "queue_version": {"type": "integer", "minimum": 0},
+              "worktree_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Absolute worktree path allocated by the server for the claimed work item."
+              }
+            }
           }
         },
         {

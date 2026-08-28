@@ -1,0 +1,83 @@
+name: M1 Runtime
+
+# M1 CI extension draft (plans/stages/m1-control-plane.md P2 item 4).
+#
+# Scope for W1:
+#   - PostgreSQL service container; S1's M1-DATA-001 tests pick up
+#     MAESTRO_TEST_POSTGRES_DSN automatically once they land (until then the
+#     suite runs unchanged against SQLite and the probe below proves the
+#     service is reachable).
+#   - OIDC is exercised through test mocks (in-process JWKS/token issuer),
+#     not a real Keycloak container; S2's M1-AUTH-001 tests plug in here.
+#   - GitLab CE integration is intentionally left for W2 (m2 tasks).
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "tests/**"
+      - "scripts/**"
+      - ".go-version"
+      - ".golangci.yml"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - "Dockerfile"
+      - "docker-compose.yaml"
+      - ".github/workflows/m1-runtime.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: maestro
+          POSTGRES_PASSWORD: maestro-ci
+          POSTGRES_DB: maestro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U maestro -d maestro_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      MAESTRO_TEST_POSTGRES_DSN: postgres://maestro:maestro-ci@localhost:5432/maestro_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Verify PostgreSQL service reachability
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U maestro -d maestro_test; then
+              break
+            fi
+            sleep 2
+          done
+          pg_isready -h localhost -p 5432 -U maestro -d maestro_test
+
+      - name: Unit and integration tests with PostgreSQL service
+        run: |
+          make test
+          make vet
+
+      - name: Race detector
+        run: make test-race
