@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	mcp "github.com/mark3labs/mcp-go/mcp"
 )
@@ -79,10 +78,6 @@ func queueTokenCheck(ctx context.Context, services *Services, projectID string, 
 	return nil
 }
 
-// taskStatusName maps a model status to its wire name (identity today,
-// centralized so the v3 vocabulary stays single-sourced).
-func taskStatusName(status string) string { return status }
-
 // verifySessionRole loads the bound session and asserts its registered role.
 func verifySessionRole(ctx context.Context, services *Services, projectID, sessionID, role string) error {
 	session, err := services.Session.GetSession(ctx, projectID, sessionID)
@@ -93,19 +88,4 @@ func verifySessionRole(ctx context.Context, services *Services, projectID, sessi
 		return fmt.Errorf("bound session role %q does not match required %q: %w", session.Role, role, store.ErrTaskNotOwned)
 	}
 	return nil
-}
-
-var _ = model.TaskStatusQueued // status vocabulary guard
-
-// verifyLeaseForBoundSession resolves the bound session's PHYSICAL id (the
-// lease owner recorded by the claim) before checking lease authority; the
-// logical id stays the services' public handle.
-func verifyLeaseForBoundSession(
-	ctx context.Context, services *Services, projectID, workItemID, leaseID string, leaseVersion int64, sessionID string,
-) error {
-	session, err := services.Session.GetSession(ctx, projectID, sessionID)
-	if err != nil {
-		return fmt.Errorf("bound session is not registered: %w", err)
-	}
-	return services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, session.ID)
 }

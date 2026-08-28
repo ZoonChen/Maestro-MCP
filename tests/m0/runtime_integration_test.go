@@ -1099,13 +1099,6 @@ validation:
 	requireNoError(t, database.QueryRow(`SELECT version FROM task_leases
 		WHERE project_id=? AND id=?`, projectID, leaseID).Scan(&renewedLeaseVersion), "read lease version before submit")
 	successCommit := gitRevParse(t, successWorktree)
-	var dbgAssigned, dbgWorker sql.NullString
-	_ = database.QueryRow(`SELECT assigned_session_id, assigned_worker_id FROM tasks WHERE project_id=? AND id=?`, projectID, successTaskID).Scan(&dbgAssigned, &dbgWorker)
-	var dbgLeaseSession string
-	_ = database.QueryRow(`SELECT session_id FROM task_leases WHERE id=?`, leaseID).Scan(&dbgLeaseSession)
-	var dbgPhys, dbgExt string
-	_ = database.QueryRow(`SELECT id, COALESCE(external_id,'') FROM agent_sessions WHERE project_id=? AND COALESCE(external_id,id)=?`, projectID, validationRunnerSession).Scan(&dbgPhys, &dbgExt)
-	t.Logf("DBG lease.session=%q sess.phys=%q ext=%q", dbgLeaseSession, dbgPhys, dbgExt)
 	result, resultText := callRealTool(t, ctx, runner, "submit_task_result", map[string]any{
 		"work_item_id": successTaskID, "lease_id": leaseID, "lease_version": renewedLeaseVersion,
 		"commit_sha": successCommit, "evidence_refs": []string{"local://validation"},

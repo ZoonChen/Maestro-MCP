@@ -51,7 +51,10 @@ func registerListWorkItems(s *mcpserver.MCPServer, services *Services) {
 			offset := 0
 			if cursor := req.GetString("cursor", ""); cursor != "" {
 				parsed, parseErr := strconv.Atoi(cursor)
-				if parseErr != nil || parsed < 0 {
+				if parseErr != nil {
+					return errorResult(fmt.Errorf("cursor: %w: %v", store.ErrInvalidParameter, parseErr)), nil
+				}
+				if parsed < 0 {
 					return errorResult(fmt.Errorf("cursor: %w", store.ErrInvalidParameter)), nil
 				}
 				offset = parsed
@@ -192,7 +195,7 @@ func registerGetGitlabStatus(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithDescription("Read the GitLab integration status (MR, pipeline) for a work item."),
 			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Work item identifier")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil

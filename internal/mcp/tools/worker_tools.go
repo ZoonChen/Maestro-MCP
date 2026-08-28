@@ -345,11 +345,7 @@ func registerSubmitTaskResult(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(err), nil
 			}
 
-			physicalSession, physErr := services.Session.GetSession(ctx, projectID, sessionID)
-			if physErr != nil {
-				return errorResult(fmt.Errorf("bound session is not registered: %w", physErr)), nil
-			}
-			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, physicalSession.ID); err != nil {
+			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
 				return errorResult(fmt.Errorf("submission rejected: %w", err)), nil
 			}
 
@@ -357,7 +353,7 @@ func registerSubmitTaskResult(s *mcpserver.MCPServer, services *Services) {
 			if summaryStr != "" {
 				summary = &summaryStr
 			}
-			if err := services.Validation.SubmitAndValidate(ctx, projectID, workItemID, physicalSession.ID, workerID, summary); err != nil {
+			if err := services.Validation.SubmitAndValidate(ctx, projectID, workItemID, sessionID, workerID, summary); err != nil {
 				return errorResult(fmt.Errorf("submission failed: %w", err)), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"validating","validation":"in_progress"}`, workItemID)), nil
@@ -409,11 +405,10 @@ func registerReportBlocker(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(err), nil
 			}
 
-			if err := verifyLeaseForBoundSession(ctx, services, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
+			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
 				return errorResult(fmt.Errorf("blocker rejected: %w", err)), nil
 			}
-			physicalSession, _ := services.Session.GetSession(ctx, projectID, sessionID)
-			if err := services.Task.ReportBlocker(ctx, projectID, workItemID, physicalSession.ID, reason); err != nil {
+			if err := services.Task.ReportBlocker(ctx, projectID, workItemID, sessionID, reason); err != nil {
 				return errorResult(fmt.Errorf("failed to report blocker: %w", err)), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"blocked"}`, workItemID)), nil

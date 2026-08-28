@@ -1092,12 +1092,18 @@ func (s *TaskService) ActiveLeaseSnapshot(ctx context.Context, projectID, taskID
 func (s *TaskService) VerifyLeaseAuthority(
 	ctx context.Context, projectID, taskID, leaseID string, expectedVersion int64, sessionID string,
 ) error {
-	var ownerSession string
 	var version int64
+	// The store never exposes physical session keys above its boundary, so
+	// ownership is enforced by the join against the logical id projection.
 	err := s.db.QueryRowContext(ctx, `
-		SELECT session_id, version FROM task_leases
-		WHERE id = ? AND project_id = ? AND task_id = ? AND status = 'active'`,
-		leaseID, projectID, taskID).Scan(&ownerSession, &version)
+		SELECT lease.version
+		FROM task_leases lease
+		JOIN agent_sessions sess
+		  ON sess.project_id = lease.project_id AND sess.id = lease.session_id
+		WHERE lease.id = ? AND lease.project_id = ? AND lease.task_id = ?
+		  AND lease.status = 'active'
+		  AND COALESCE(sess.external_id, sess.id) = ?`,
+		leaseID, projectID, taskID, sessionID).Scan(&version)
 	if err == sql.ErrNoRows {
 		var task *model.Task
 		if task, err = s.taskStore.GetByID(ctx, projectID, taskID); err != nil {
@@ -1110,9 +1116,6 @@ func (s *TaskService) VerifyLeaseAuthority(
 	}
 	if err != nil {
 		return fmt.Errorf("VerifyLeaseAuthority: lookup: %w", err)
-	}
-	if ownerSession != sessionID {
-		return fmt.Errorf("VerifyLeaseAuthority: %w: lease belongs to %s", store.ErrTaskNotOwned, ownerSession)
 	}
 	if version != expectedVersion {
 		return fmt.Errorf("VerifyLeaseAuthority: %w: presented %d, stored %d", store.ErrLeaseVersionMismatch, expectedVersion, version)

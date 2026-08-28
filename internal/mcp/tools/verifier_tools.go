@@ -141,7 +141,7 @@ func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(err), nil
 			}
 
-			if err := verifyLeaseForBoundSession(ctx, services, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
+			if err := services.Task.VerifyLeaseAuthority(ctx, projectID, workItemID, leaseID, leaseVersion, sessionID); err != nil {
 				return errorResult(fmt.Errorf("verdict rejected: %w", err)), nil
 			}
 
@@ -158,8 +158,7 @@ func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 			default:
 				return errorResult(fmt.Errorf("decision: %w", store.ErrInvalidParameter)), nil
 			}
-			physicalSession, _ := services.Session.GetSession(ctx, projectID, sessionID)
-			if err := services.Task.SubmitVerification(ctx, projectID, physicalSession.ID, workerID, workItemID, passed, summary); err != nil {
+			if err := services.Task.SubmitVerification(ctx, projectID, sessionID, workerID, workItemID, passed, summary); err != nil {
 				return errorResult(fmt.Errorf("verification verdict failed: %w", err)), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"decision":%q,"status":%q}`,
