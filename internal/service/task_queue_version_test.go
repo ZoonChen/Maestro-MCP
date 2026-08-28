@@ -203,7 +203,7 @@ func TestQueueVersionRejectsStaleClaimAfterOrderingEdit(t *testing.T) {
 	staleVersion := readQueueVersion(t, svc)
 	task.Priority = model.PriorityHigh
 	require.NoError(t, svc.taskSvc.UpdateTask(ctx, testProjectID, task))
-	_, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
+	_, _, err := svc.taskSvc.GetNextTaskWithVersion(ctx, testProjectID,
 		"stale-claim-session", model.RoleBackend, "stale-claim-worker",
 		"stale-queue-claim-0001", staleVersion)
 	require.ErrorIs(t, err, store.ErrConcurrentConflict)

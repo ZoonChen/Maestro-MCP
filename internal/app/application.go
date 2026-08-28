@@ -62,6 +62,10 @@ type Options struct {
 	// value intentionally has no approved profiles and disables host execution,
 	// so submission fails closed until the operator injects versioned policy.
 	TestExecution service.TestExecutionConfig
+	// MCPBinding is the server-side transport scope for MCP claim tools
+	// (M1-MCP-001): project, session and worker identity are assigned here,
+	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
+	MCPBinding *maestrotools.TransportBinding
 	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
 	// registers none; readiness keeps its local-baseline semantics until a
 	// stream wires PostgreSQL/OIDC/runner-pool probes.
@@ -238,6 +242,7 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 	)
 
 	mcpServices := &maestrotools.Services{
+		Binding:    opts.MCPBinding,
 		Project:    projectService,
 		Feature:    featureService,
 		Task:       taskService,

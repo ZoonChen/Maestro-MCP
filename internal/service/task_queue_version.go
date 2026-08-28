@@ -91,3 +91,18 @@ func bumpProjectQueueVersionTx(ctx context.Context, tx *sql.Tx, projectID string
 	}
 	return nil
 }
+
+// CurrentQueueVersion returns the project's claim-queue CAS token. Projects
+// that never had a claim start at 0, matching the catalog's minimum.
+func (s *TaskService) CurrentQueueVersion(ctx context.Context, projectID string) (int64, error) {
+	var version int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT version FROM project_queue_versions WHERE project_id = ?`, projectID).Scan(&version)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read queue version for %s: %w", projectID, err)
+	}
+	return version, nil
+}
