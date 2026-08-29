@@ -23,6 +23,8 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/app"
 	"github.com/ZoonChen/Maestro-MCP/internal/config"
+	"github.com/ZoonChen/Maestro-MCP/internal/handler"
+	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -232,6 +234,17 @@ func runServer(ctx context.Context, args []string, ioStreams streams) error {
 	options, err := applicationOptions(cfg)
 	if err != nil {
 		return fail(exitUsage, "CONFIG_INVALID", err)
+	}
+	// PostgreSQL control-plane composition (M1 interim): the M0 task
+	// substrate stays on SQLite until the work-item cutover while
+	// identity, the Runner registry and the v3 Runner API bind to the
+	// PostgreSQL source of truth.
+	if cfg.PostgresEnabled() {
+		composed, composeErr := composePostgresSurfaces(ctx, cfg, &options)
+		if composeErr != nil {
+			return composeErr
+		}
+		options = composed
 	}
 	options.MaintenanceOwner = true
 	options.HTTPLogWriter = ioStreams.err
@@ -542,6 +555,86 @@ func mustMarshalReport(report *store.ImportReport) []byte {
 		return []byte("{}")
 	}
 	return append(encoded, '\n')
+}
+
+// composePostgresSurfaces binds the PostgreSQL-backed identity and Runner
+// surfaces into the application options. Every failure is fatal: a
+// half-configured identity layer must never start.
+func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *app.Options) (app.Options, error) {
+	database, err := store.OpenPostgres(ctx, cfg.Database.DSN)
+	if err != nil {
+		return *options, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+	if err := store.ValidatePostgresSchema(ctx, database); err != nil {
+		_ = database.Close()
+		return *options, postgresMigrationFailure(err)
+	}
+	pgStore, err := store.NewPostgresStore(database)
+	if err != nil {
+		_ = database.Close()
+		return *options, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", err)
+	}
+
+	policy, err := identity.EmbeddedPolicy()
+	if err != nil {
+		_ = database.Close()
+		return *options, fail(exitUsage, "CONFIG_INVALID", err)
+	}
+
+	// OIDC identity: issuer/audience from trusted configuration; the
+	// principal resolver derives memberships from the registry.
+	if cfg.OIDC != nil {
+		verifier, verifierErr := identity.NewTokenVerifier(cfg.OIDC.Issuer, cfg.OIDC.Audience, nil)
+		if verifierErr != nil {
+			_ = database.Close()
+			return *options, fail(exitUsage, "CONFIG_INVALID", verifierErr)
+		}
+		middleware := handler.NewOIDCMiddleware(policy, verifier, identity.NewStoreResolver(pgStore.Identities()))
+		options.Identity = middleware.IdentityMount()
+	}
+
+	// v3 Runner API: requires the device-token secret from the
+	// environment (secrets never live in the config file). Without it the
+	// Runner API stays unexposed — honest degradation, never a fake.
+	if tokenSecret := os.Getenv("MAESTRO_RUNNER_TOKEN_SECRET"); tokenSecret != "" {
+		tokens, tokenErr := identity.NewDeviceTokenMinter(tokenSecret, nil)
+		if tokenErr != nil {
+			_ = database.Close()
+			return *options, fail(exitUsage, "CONFIG_INVALID", tokenErr)
+		}
+		admin := options.Identity != nil
+		var adminMiddleware *handler.OIDCMiddleware
+		if admin {
+			// Reuse the mounted identity middleware for admin routes: the
+			// same verifier and resolver instance govern both surfaces.
+			verifier, _ := identity.NewTokenVerifier(cfg.OIDC.Issuer, cfg.OIDC.Audience, nil)
+			adminMiddleware = handler.NewOIDCMiddleware(policy, verifier, identity.NewStoreResolver(pgStore.Identities()))
+		}
+		options.RunnerV3 = &handler.RunnerV3Options{
+			Registry: pgStore,
+			Tokens:   tokens,
+			Policy:   policy,
+			Admin:    adminMiddleware,
+		}
+	} else {
+		slog.Warn("MAESTRO_RUNNER_TOKEN_SECRET not set; the v3 Runner API stays unexposed")
+	}
+
+	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
+	// The pool lives for the process lifetime; closing happens on exit.
+	return *options, nil
+}
+
+// pgDependency reports PostgreSQL readiness into the aggregate health gate.
+type pgDependency struct{ store *store.PostgresStore }
+
+func (d pgDependency) Name() string { return "postgresql" }
+
+func (d pgDependency) Check(ctx context.Context) error {
+	if _, err := d.store.DB().ExecContext(ctx, `SELECT 1`); err != nil {
+		return fmt.Errorf("postgres readiness: %w", err)
+	}
+	return nil
 }
 
 func runtimeStartupFailure(err error) error {
