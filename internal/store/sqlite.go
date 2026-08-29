@@ -14,6 +14,9 @@ const (
 	sqliteBusyCode        = 5
 	walSetupRetryWindow   = 5 * time.Second
 	walSetupBusyTimeoutMS = 250
+	// steadyBusyTimeoutMS bounds write-lock waits once WAL is negotiated;
+	// it must exceed a worst-case concurrent schema bootstrap.
+	steadyBusyTimeoutMS = 30000
 )
 
 // SQLiteDB wraps *sql.DB and provides schema initialization.
@@ -53,7 +56,11 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	// The steady-state busy window must cover a FULL schema bootstrap by a
+	// competing migrator: under slow CI storage, eleven waiters serializing
+	// behind the first writer exceeded the previous 5s cap and surfaced
+	// SQLITE_BUSY on BEGIN IMMEDIATE.
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", steadyBusyTimeoutMS)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set busy_timeout: %w", err)
 	}
