@@ -62,6 +62,12 @@ type Options struct {
 	// value intentionally has no approved profiles and disables host execution,
 	// so submission fails closed until the operator injects versioned policy.
 	TestExecution service.TestExecutionConfig
+	// Identity mounts the OIDC authorization middleware (M1-AUTH-001);
+	// nil keeps the M0 fail-closed shared-token baseline.
+	Identity *handler.IdentityMount
+	// RunnerV3 mounts the Control Plane side of the frozen runner.yaml
+	// (M1-RUN-001); nil leaves the v3 Runner API unexposed.
+	RunnerV3 *handler.RunnerV3Options
 	// MCPBinding is the server-side transport scope for MCP claim tools
 	// (M1-MCP-001): project, session and worker identity are assigned here,
 	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
@@ -271,8 +277,12 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			RemoteWrite:    opts.RemoteWrite,
 			LogWriter:      opts.HTTPLogWriter,
 			IsDraining:     draining.Load,
+			Identity:       opts.Identity,
 		},
 	)
+	if opts.RunnerV3 != nil {
+		handler.RegisterRunnerV3(router, *opts.RunnerV3)
+	}
 
 	dependencies := &health.Registry{}
 	for _, dependency := range opts.Dependencies {
