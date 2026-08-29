@@ -115,35 +115,47 @@ func PrincipalFromContext(c *gin.Context) *model.PrincipalContext {
 // principal. Invalid, expired or unknown identities are 401 — fail closed.
 func (m *OIDCMiddleware) Authenticate(c *gin.Context) {
 	// Liveness/readiness probes stay anonymous (M0 contract); every other
-	// route requires an authenticated principal.
-	if isAnonymousHealthPath(c.Request.URL.Path) {
+	// route requires an authenticated principal. The /api/v3 Runner group
+	// carries its own scheme per runner.yaml (one public enroll route,
+	// device tokens elsewhere) and self-gates in RegisterRunnerV3.
+	if isAnonymousHealthPath(c.Request.URL.Path) || strings.HasPrefix(c.Request.URL.Path, "/api/v3/") {
 		c.Next()
 		return
 	}
+	if !m.authenticateBearer(c) {
+		return
+	}
+	c.Next()
+}
+
+// authenticateBearer verifies the bearer token and resolves the
+// principal, aborting with 401 on failure. It is shared by the global
+// middleware and self-gating v3 admin routes.
+func (m *OIDCMiddleware) authenticateBearer(c *gin.Context) bool {
 	header := c.GetHeader("Authorization")
 	parts := strings.SplitN(header, " ", 2)
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
 		c.Header("WWW-Authenticate", `Bearer realm="maestro"`)
 		c.Abort()
 		staticErrorReply(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Authentication is required")
-		return
+		return false
 	}
 	claims, err := m.verifier.Verify(strings.TrimSpace(parts[1]), m.nowFunc())
 	if err != nil {
 		c.Header("WWW-Authenticate", `Bearer realm="maestro", error="invalid_token"`)
 		c.Abort()
 		staticErrorReply(c, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "Authentication token is invalid or expired")
-		return
+		return false
 	}
 	principal, err := m.resolver.Resolve(c.Request.Context(), claims.Issuer, claims.Subject)
 	if err != nil {
 		c.Header("WWW-Authenticate", `Bearer realm="maestro", error="invalid_token"`)
 		c.Abort()
 		staticErrorReply(c, http.StatusUnauthorized, "AUTH_INVALID_TOKEN", "Authentication token is invalid or expired")
-		return
+		return false
 	}
 	c.Set(principalContextKey, principal)
-	c.Next()
+	return true
 }
 
 // Authorize enforces the unified decision on every /api/v1 route. Denials

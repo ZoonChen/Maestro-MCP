@@ -253,3 +253,50 @@ func (s pgRunnerRegistryStore) RevokeRunner(ctx context.Context, id string) erro
 	}
 	return nil
 }
+
+// EnrollmentByCodeHash resolves a live enrollment by its storage hash.
+func (s pgRunnerRegistryStore) EnrollmentByCodeHash(ctx context.Context, codeHash string) (*model.RunnerEnrollment, string, error) {
+	row := s.q.QueryRowContext(ctx, `
+		SELECT id, project_id, code_hash, expires_at, consumed_at, created_by, created_at
+		FROM runner_enrollments
+		WHERE code_hash = $1`, codeHash)
+	enrollment, projectID, err := scanPGEnrollmentWithProject(row.Scan)
+	if err != nil {
+		return nil, "", fmt.Errorf("runner registry: enrollment lookup: %w", err)
+	}
+	return enrollment, projectID, nil
+}
+
+// ProjectOfRunner resolves the runner's single project binding.
+func (s pgRunnerRegistryStore) ProjectOfRunner(ctx context.Context, runnerID string) (string, error) {
+	var projectID string
+	err := s.q.QueryRowContext(ctx, `
+		SELECT project_id FROM runner_bindings WHERE runner_id = $1`, pgArg(runnerID)).Scan(&projectID)
+	if err != nil {
+		return "", fmt.Errorf("runner registry: project binding: %w", err)
+	}
+	return projectID, nil
+}
+
+func scanPGEnrollmentWithProject(scan func(...any) error) (*model.RunnerEnrollment, string, error) {
+	var enrollment model.RunnerEnrollment
+	var expiresAt, createdAt time.Time
+	var consumedAt sql.NullTime
+	if err := scan(&enrollment.ID, &enrollment.ProjectID, &enrollment.CodeHash,
+		&expiresAt, &consumedAt, &enrollment.CreatedBy, &createdAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, "", ErrEnrollmentInvalid
+		}
+		return nil, "", err
+	}
+	enrollment.ID = pgArg(enrollment.ID)
+	enrollment.ProjectID = pgArg(enrollment.ProjectID)
+	enrollment.CreatedBy = pgArg(enrollment.CreatedBy)
+	enrollment.ExpiresAt = pgTimeString(expiresAt)
+	enrollment.CreatedAt = pgTimeString(createdAt)
+	if consumedAt.Valid {
+		at := pgTimeString(consumedAt.Time)
+		enrollment.ConsumedAt = &at
+	}
+	return &enrollment, enrollment.ProjectID, nil
+}
