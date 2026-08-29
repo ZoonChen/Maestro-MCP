@@ -1,0 +1,7 @@
+{
+  "compatible": false,
+  "breaking_locations": [
+    "requestBody",
+    "enum"
+  ]
+}

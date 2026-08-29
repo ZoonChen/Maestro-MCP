@@ -1,0 +1,6 @@
+{
+  "compatible": false,
+  "breaking_locations": [
+    "parameters.token"
+  ]
+}
