@@ -44,22 +44,15 @@ func v3PriorityToModel(priority string) (string, bool) {
 }
 
 // validTargetBranch enforces the frozen pattern's intent without Go-unsafe
-// lookaheads: printable ASCII, no leading slash, no '..' segments, none of
-// the ref-hostile characters.
+// lookaheads: printable ASCII, no leading/trailing slash, no empty inner
+// segments, no ".." traversal, no leading dot, none of the ref-hostile
+// characters.
 func validTargetBranch(branch string) bool {
-	if branch == "" || len(branch) > 255 || strings.HasPrefix(branch, "/") {
-		return false
-	}
-	if strings.ContainsAny(branch, "~^:?*[]\\") || strings.ContainsAny(branch, "\r\n\t") {
-		return false
-	}
-	for _, segment := range strings.Split(branch, "/") {
-		if segment == ".." || segment == "" && segment != branch {
-			continue
-		}
-	}
-	// Empty inner segments (double slashes) and trailing slashes are invalid.
-	if strings.Contains(branch, "//") || strings.HasSuffix(branch, "/") {
+	if branch == "" || len(branch) > 255 ||
+		strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") ||
+		strings.Contains(branch, "//") || strings.Contains(branch, "..") ||
+		strings.HasPrefix(branch, ".") || strings.HasSuffix(branch, ".lock") ||
+		strings.ContainsAny(branch, "~^:?*[]\\") || strings.ContainsAny(branch, "\r\n\t") {
 		return false
 	}
 	for _, r := range branch {
@@ -177,7 +170,7 @@ func handleCreateWorkItem(
 			}
 			encoded, encErr := json.Marshal(models)
 			if encErr != nil {
-				return errorResult(fmt.Errorf("depends_on: %w", store.ErrInvalidParameter)), nil
+				return nil, fmt.Errorf("marshal depends_on: %w", encErr)
 			}
 			dependencies = string(encoded)
 		}

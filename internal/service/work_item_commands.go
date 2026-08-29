@@ -11,6 +11,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/google/uuid"
 )
 
 // Work-item management commands for the v3 MCP surface: idempotent
@@ -70,6 +71,7 @@ func (s *TaskService) CreateWorkItem(
 		}
 	}
 
+	task.ID = "T-" + uuid.New().String()[:8]
 	task.FeatureID = featureID
 	task.Status = model.TaskStatusQueued
 	if task.Priority == "" {
@@ -183,7 +185,10 @@ func (s *TaskService) RetryWorkItem(
 	if err := bumpProjectQueueVersionTx(ctx, tx, projectID); err != nil {
 		return nil, fmt.Errorf("RetryWorkItem: queue version: %w", err)
 	}
-	detail, _ := json.Marshal(map[string]string{"reason": reason})
+	detail, marshalErr := json.Marshal(map[string]string{"reason": reason})
+	if marshalErr != nil {
+		return nil, fmt.Errorf("RetryWorkItem: encode detail: %w", marshalErr)
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO activity_log (project_id, session_id, task_id, action, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, datetime('now'))`,
