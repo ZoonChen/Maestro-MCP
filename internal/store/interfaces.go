@@ -417,6 +417,15 @@ type RunnerRegistryStore interface {
 	// ErrEnrollmentExpired / ErrEnrollmentInvalid / ErrEnrollmentConsumed.
 	ConsumeEnrollment(ctx context.Context, enrollmentID, codeHash string) error
 
+	// EnrollmentByCodeHash resolves an unconsumed, unexpired code to its
+	// enrollment and project binding; the enrollment endpoint uses this
+	// to authenticate the presented code before consuming it.
+	EnrollmentByCodeHash(ctx context.Context, codeHash string) (*model.RunnerEnrollment, string, error)
+
+	// ProjectOfRunner resolves the single project a runner is bound to;
+	// unbound runners return ErrRunnerNotBound.
+	ProjectOfRunner(ctx context.Context, runnerID string) (string, error)
+
 	// CreateRunner registers a pending_approval device and its initial
 	// project binding in one transaction.
 	CreateRunner(ctx context.Context, runner *model.RunnerDevice, binding *model.RunnerBinding) error
