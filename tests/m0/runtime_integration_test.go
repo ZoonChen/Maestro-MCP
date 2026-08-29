@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -1316,21 +1315,29 @@ func assertMCPToolCatalog(t *testing.T, ctx context.Context, mcpClient *client.C
 	if err != nil {
 		t.Fatalf("MCP tools/list: %v", err)
 	}
-	if len(result.Tools) == 0 {
-		t.Fatal("MCP tools/list returned an empty catalog")
+	// The frozen v3 catalog (docs/specs/mcp/tools.schema.json) is the exact
+	// public surface: fourteen tools, no legacy remnants, no extras.
+	frozenCatalog := map[string]bool{
+		"list_work_items": true, "get_work_item": true, "get_task_context": true,
+		"get_next_task": true, "heartbeat_task": true, "submit_task_result": true,
+		"report_blocker": true, "get_quality_status": true, "get_gitlab_status": true,
+		"create_work_item": true, "cancel_work_item": true, "retry_work_item": true,
+		"get_verification_task": true, "submit_verification": true,
 	}
+	listed := map[string]bool{}
 	for _, tool := range result.Tools {
-		switch tool.Name {
-		case "merge_task":
-			t.Fatal("merge_task must not be exposed by the M0 MCP server")
-		case "claim_batch":
-			t.Fatal("claim_batch must not bypass the one-active-execution Worker invariant")
-		case "release_worker":
-			t.Fatal("release_worker must not bypass Lease cancellation and recovery")
+		if !frozenCatalog[tool.Name] {
+			t.Fatalf("tool %q is not part of the frozen v3 catalog", tool.Name)
 		}
+		if listed[tool.Name] {
+			t.Fatalf("tool %q is registered twice", tool.Name)
+		}
+		listed[tool.Name] = true
 	}
-	if !slices.ContainsFunc(result.Tools, func(tool mcp.Tool) bool { return tool.Name == "heartbeat_task" }) {
-		t.Fatal("heartbeat_task must be present so work longer than one Lease window remains authorized")
+	for name := range frozenCatalog {
+		if !listed[name] {
+			t.Fatalf("frozen catalog tool %q missing from tools/list", name)
+		}
 	}
 }
 
