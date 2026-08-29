@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,12 +36,23 @@ func newV3Fixture(t *testing.T) *v3Fixture {
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
 	}
-	db, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
+	// Package tests run concurrently with other packages' PG suites on the
+	// same server; a dedicated database per suite avoids cross-package
+	// schema-reset deadlocks.
+	admin, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_handler_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `CREATE DATABASE maestro_handler_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_handler_test WITH (FORCE)`)
+		_ = admin.Close()
+	})
+
+	db, err := store.OpenPostgres(context.Background(), testDatabaseDSN(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
-	_, err = db.ExecContext(context.Background(),
-		`DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS maestro_meta CASCADE;`)
-	require.NoError(t, err)
 	_, err = store.ApplyPostgresMigrations(context.Background(), db)
 	require.NoError(t, err)
 
@@ -204,4 +216,15 @@ func TestRunnerV3AdminRequiresAuthentication(t *testing.T) {
 	fixture := newV3Fixture(t)
 	response := postJSON(t, fixture.router, "/api/v3/runners/some-id/approve", map[string]any{}, "")
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
+}
+
+// testDatabaseDSN rewrites the suite DSN's database name.
+func testDatabaseDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	index := strings.LastIndex(dsn, "/")
+	if index < 0 {
+		t.Fatal("MAESTRO_TEST_POSTGRES_DSN has no database path")
+	}
+	return dsn[:index+1] + "maestro_handler_test"
 }
