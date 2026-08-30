@@ -40,7 +40,8 @@ type DaemonConfig struct {
 	ClaimWaitSeconds int
 	// Capabilities advertised on every claim (schema minimum three).
 	Capabilities []string
-	// Heartbeat cadence; defaults to the frozen 15s.
+	// Heartbeat cadence; defaults to the frozen 15s (the package
+	// variable lets tests tighten the tick without sleeping).
 	HeartbeatInterval time.Duration
 	// Now/AfterSleep are injection points for tests.
 	NowFunc   func() time.Time
@@ -82,6 +83,8 @@ type Daemon struct {
 	config   DaemonConfig
 
 	generation string
+	// heartbeatInterval is the resolved cadence (config injection point).
+	heartbeatInterval time.Duration
 	// claims is the monotonically increasing idempotency sequence; keys are
 	// unique per connection so retries replay safely.
 	sequence int
@@ -104,10 +107,11 @@ func NewDaemon(client *Client, executor Executor, config DaemonConfig) (*Daemon,
 		generation = uuid.Must(uuid.NewRandom())
 	}
 	return &Daemon{
-		client:     client,
-		executor:   executor,
-		config:     config,
-		generation: generation.String(),
+		client:            client,
+		executor:          executor,
+		config:            config,
+		heartbeatInterval: config.HeartbeatInterval,
+		generation:        generation.String(),
 	}, nil
 }
 
