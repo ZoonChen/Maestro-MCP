@@ -17,6 +17,8 @@ last_verified_commit: null
 # ADR-009：采用分层类型化 Work Graph 与版本化 WorkPattern
 
 > 决策状态：draft，尚未评审。本决策只锁定建模方向与存储选型；实现未开始。当前代码中 Task 的 ParentTaskID 与 RelationType 仍是唯一存在的任务关系，且创建时不校验层级语义。
+>
+> 实现处置（2026-08-31，owner 决策）：M1-WGP/WGM/WGS 三任务整体移交 V2；V1 以单层任务闭环形态收敛（认证/Runner/领取/执行/验证/部署/备份已实测）。M0.5 阻断清单 #2（ZCode Adapter）/#6（会话-任务绑定）/#7（父子聚合）随本决策在 V2 销号，登记于 V1 复盘。
 
 ## 1. 目标与非目标
 
