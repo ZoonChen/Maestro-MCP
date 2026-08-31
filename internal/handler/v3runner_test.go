@@ -121,6 +121,21 @@ func enrollBody(code string) map[string]any {
 	}
 }
 
+func postJSONWithKey(t *testing.T, router *gin.Engine, path string, body any, token, idempotencyKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	encoded, err := json.Marshal(body)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", idempotencyKey)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
 func postJSON(t *testing.T, router *gin.Engine, path string, body any, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -168,13 +183,13 @@ func TestRunnerV3EnrollmentLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(meResponse.Body.Bytes(), &state))
 	assert.Equal(t, model.RunnerStatusPendingApproval, state.State)
 
-	// Claiming is honestly not-ready until the work-item cutover (the
-	// device must still be live here — revocation comes later).
-	claim := postJSON(t, fixture.router, "/api/v3/runner-leases/claim",
+	// Claiming is live dispatch now: a pending-approval runner is
+	// forbidden (403) even before admin approval; no-work comes after.
+	claim := postJSONWithKey(t, fixture.router, "/api/v3/runner-leases/claim",
 		map[string]any{"protocol_version": "3.0", "connection_generation": "gen",
-			"capabilities": []string{"a", "b", "c"}, "wait_seconds": 5}, credential.AccessToken)
-	assert.Equal(t, http.StatusServiceUnavailable, claim.Code)
-	assert.Contains(t, claim.Body.String(), "LEASE_DISPATCH_UNAVAILABLE")
+			"capabilities": []string{"a", "b", "c"}, "wait_seconds": 5},
+		credential.AccessToken, "daemon-test-claim-000001-q0")
+	assert.Equal(t, http.StatusForbidden, claim.Code, "body: %s", claim.Body.String())
 
 	// A project admin approves.
 	approved := fixture.adminRequest(http.MethodPost, "/api/v3/runners/"+credential.RunnerID+"/approve")
