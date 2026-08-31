@@ -182,7 +182,7 @@ CREATE TABLE leases (
     legacy_session_id     text,
     legacy_worker_id      text,
     epoch                 bigint NOT NULL CHECK (epoch > 0),
-    connection_generation bigint NOT NULL DEFAULT 1 CHECK (connection_generation > 0),
+    connection_generation text,
     nonce_hash            text,
     status                text NOT NULL CHECK (status IN (
         'active', 'completed', 'released', 'expired', 'cancelled')),

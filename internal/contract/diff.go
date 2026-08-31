@@ -138,7 +138,7 @@ func (r *DiffResult) diffResponses(location string, oldOp, newOp map[string]any)
 		if oldSchema == nil || newSchema == nil {
 			continue
 		}
-		r.diffSchema(location+".responses." + status, oldSchema, newSchema, schemaDirectionResponse)
+		r.diffSchema(location+".responses."+status, oldSchema, newSchema, schemaDirectionResponse)
 	}
 	for status := range newResponses {
 		if _, ok := oldResponses[status]; !ok {
@@ -165,7 +165,7 @@ func (r *DiffResult) diffSchema(location string, oldSchema, newSchema map[string
 			r.add(Change{Location: location + ".properties." + name, Detail: "property removed", Breaking: direction == schemaDirectionResponse})
 			continue
 		}
-		r.diffSchema(location+".properties." + name, oldProperty, newProperty, direction)
+		r.diffSchema(location+".properties."+name, oldProperty, newProperty, direction)
 	}
 	if direction == schemaDirectionRequest {
 		for name := range newProperties {

@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +69,9 @@ func RegisterRunnerV3(r *gin.Engine, options RunnerV3Options) {
 	v3.POST("/runners/enroll", handlers.enroll)
 	v3.POST("/runners/:id/approve", handlers.requireAdmin, handlers.approve)
 	v3.POST("/runners/:id/revoke", handlers.requireAdmin, handlers.revoke)
-	v3.POST("/runner-leases/claim", handlers.requireDevice, handlers.claimNotReady)
+	v3.POST("/runner-leases/claim", handlers.requireDevice, handlers.claim)
+	v3.POST("/runner-leases/:id/heartbeat", handlers.requireDevice, handlers.heartbeat)
+	v3.POST("/executions/:id/complete", handlers.requireDevice, handlers.complete)
 	v3.GET("/runners/me", handlers.requireDevice, handlers.me)
 }
 
@@ -165,12 +170,137 @@ func (h *runnerV3) revoke(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"runner_id": c.Param("id"), "state": model.RunnerStatusRevoked})
 }
 
-// claimNotReady is the honest fail-closed reply for lease claiming: the
-// work-item store still lives on the SQLite baseline; pretending to
-// serve leases would break the fencing contract.
-func (h *runnerV3) claimNotReady(c *gin.Context) {
-	staticErrorReply(c, http.StatusServiceUnavailable, "LEASE_DISPATCH_UNAVAILABLE",
-		"Lease dispatch activates with the PostgreSQL work-item cutover")
+// claim dispatches at most one queued work item to the authenticated
+// runner (runner.yaml: 200 lease or explicit no-work).
+func (h *runnerV3) claim(c *gin.Context) {
+	var body struct {
+		ProtocolVersion      string   `json:"protocol_version"`
+		ConnectionGeneration string   `json:"connection_generation"`
+		Capabilities         []string `json:"capabilities"`
+		WaitSeconds          int      `json:"wait_seconds"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.ProtocolVersion == "" ||
+		body.ConnectionGeneration == "" || body.WaitSeconds < 1 || body.WaitSeconds > 30 {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "Claim body does not match the runner contract")
+		return
+	}
+	device := c.MustGet(runnerContextKey).(*model.RunnerDevice)
+
+	// The presented queue token rides the Idempotency-Key suffix; the
+	// contract requires the key, and the daemon derives it per claim.
+	idempotencyKey := c.GetHeader("Idempotency-Key")
+	queueToken, parseErr := queueTokenFromIdempotencyKey(idempotencyKey)
+	if parseErr != nil {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
+		return
+	}
+
+	claim, err := h.registry.ClaimNextWorkItem(c.Request.Context(),
+		device.ID, body.ConnectionGeneration, queueToken, leaseTTLFromConfig())
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNoAvailableTask):
+			c.JSON(http.StatusOK, gin.H{"available": false, "retry_after_seconds": body.WaitSeconds})
+		case errors.Is(err, store.ErrConcurrentConflict):
+			staticErrorReply(c, http.StatusConflict, "CONCURRENCY_CONFLICT", "Queue token is stale; re-observe and retry")
+		case errors.Is(err, store.ErrRunnerNotFound), errors.Is(err, store.ErrRunnerNotBound):
+			staticErrorReply(c, http.StatusForbidden, "FORBIDDEN", "Runner is not bound to any project")
+		case errors.Is(err, store.ErrRunnerStatusInvalid):
+			staticErrorReply(c, http.StatusForbidden, "FORBIDDEN", "Runner is not eligible to claim")
+		default:
+			staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Lease dispatch failed")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id": claim.LeaseID, "version": claim.LeaseVersion, "epoch": claim.LeaseEpoch,
+		"execution_id": claim.ExecutionID, "work_item_id": claim.WorkItemID,
+		"project_id":    claim.ProjectID,
+		"queue_version": claim.QueueVersion,
+		"expires_at":    time.Now().UTC().Add(leaseTTLFromConfig()).Format(time.RFC3339),
+	})
+}
+
+// heartbeat renews the runner's active lease (200 on success).
+func (h *runnerV3) heartbeat(c *gin.Context) {
+	var body struct {
+		LeaseVersion         int64     `json:"lease_version"`
+		ConnectionGeneration string    `json:"connection_generation"`
+		ObservedAt           time.Time `json:"observed_at"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.LeaseVersion < 1 || body.ConnectionGeneration == "" {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "Heartbeat body does not match the runner contract")
+		return
+	}
+	device := c.MustGet(runnerContextKey).(*model.RunnerDevice)
+	newVersion, err := h.registry.RunnerLeaseHeartbeat(c.Request.Context(),
+		c.Param("id"), device.ID, body.ConnectionGeneration, body.LeaseVersion, leaseTTLFromConfig())
+	if err != nil {
+		leaseErrorReply(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"lease_id": c.Param("id"), "lease_version": newVersion})
+}
+
+// complete records the terminal execution outcome (202 accepted).
+func (h *runnerV3) complete(c *gin.Context) {
+	var body struct {
+		LeaseID              string  `json:"lease_id"`
+		LeaseVersion         int64   `json:"lease_version"`
+		ConnectionGeneration string  `json:"connection_generation"`
+		WorkspaceGeneration  int64   `json:"workspace_generation"`
+		Outcome              string  `json:"outcome"`
+		CommitSHA            *string `json:"commit_sha"`
+		Summary              string  `json:"summary"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Outcome == "" {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "Completion body does not match the runner contract")
+		return
+	}
+	if body.Outcome == "completed" && (body.CommitSHA == nil || *body.CommitSHA == "") {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A completed execution must carry its commit_sha")
+		return
+	}
+	device := c.MustGet(runnerContextKey).(*model.RunnerDevice)
+	if err := h.registry.CompleteExecution(c.Request.Context(),
+		c.Param("id"), device.ID, body.ConnectionGeneration, body.Outcome, body.CommitSHA, body.Summary); err != nil {
+		switch err {
+		case store.ErrRunnerGenerationStale, store.ErrLeaseVersionMismatch:
+			staticErrorReply(c, http.StatusConflict, "LEASE_VERSION_MISMATCH", "The lease was fenced by a newer generation")
+		case store.ErrLeaseNotFound:
+			staticErrorReply(c, http.StatusGone, "LEASE_EXPIRED", "The lease no longer exists")
+		default:
+			staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Completion failed")
+		}
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"execution_id": c.Param("id"), "outcome": body.Outcome})
+}
+
+// queueTokenFromIdempotencyKey extracts the trailing numeric queue token
+// from a daemon-shaped key (daemon-<gen>-claim-<seq>-q<token>).
+func queueTokenFromIdempotencyKey(key string) (int64, error) {
+	if key == "" {
+		return 0, fmt.Errorf("empty idempotency key")
+	}
+	index := strings.LastIndex(key, "-q")
+	if index < 0 {
+		return 0, fmt.Errorf("no queue token")
+	}
+	return strconv.ParseInt(key[index+2:], 10, 64)
+}
+
+func leaseTTLFromConfig() time.Duration { return 90 * time.Second }
+
+func leaseErrorReply(c *gin.Context, err error) {
+	switch err {
+	case store.ErrLeaseNotFound:
+		staticErrorReply(c, http.StatusGone, "LEASE_EXPIRED", "The lease no longer exists")
+	case store.ErrLeaseVersionMismatch:
+		staticErrorReply(c, http.StatusConflict, "LEASE_VERSION_MISMATCH", "The lease version is stale")
+	default:
+		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Heartbeat failed")
+	}
 }
 
 const runnerContextKey = "maestro.runner"
