@@ -176,3 +176,47 @@ func seedWorkItemFixture(t *testing.T, db *sql.DB, index int) {
 		projectID, fmt.Sprintf("018f4300-0000-7000-8000-%012d", index))
 	require.NoError(t, err)
 }
+
+func TestClaimGuardsAndErrorPaths(t *testing.T) {
+	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
+		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	db := testPostgresDB(t)
+	resetWorkItemSchema(t, db)
+	registry, err := NewPostgresStore(db)
+	require.NoError(t, err)
+	seedWorkItemFixture(t, db, 5)
+	approveRunner(t, db, 5)
+
+	// Unknown runner fails closed.
+	_, err = registry.ClaimNextWorkItem(ctx, "018f4300-0000-7000-8000-00000000dead", "gen-1", 0, 90*time.Second)
+	assert.ErrorIs(t, err, ErrRunnerNotFound)
+
+	// Revoked runners never claim.
+	seedWorkItemFixture(t, db, 6)
+	_, err = db.Exec(`UPDATE runners SET status = 'revoked' WHERE id = $1`, runnerUUID(6))
+	require.NoError(t, err)
+	_, err = registry.ClaimNextWorkItem(ctx, runnerUUID(6), "gen-1", 0, 90*time.Second)
+	assert.ErrorIs(t, err, ErrRunnerStatusInvalid)
+
+	// Heartbeat on an unknown lease is 410-mapped; known-but-stale is a
+	// version mismatch.
+	_, err = registry.RunnerLeaseHeartbeat(ctx, "018f4400-0000-7000-8000-00000000dead", runnerUUID(5), "gen-1", 1, 90*time.Second)
+	assert.ErrorIs(t, err, ErrLeaseNotFound)
+	claim, err := registry.ClaimNextWorkItem(ctx, runnerUUID(5), "gen-1", 0, 90*time.Second)
+	require.NoError(t, err)
+	_, err = registry.RunnerLeaseHeartbeat(ctx, claim.LeaseID, runnerUUID(5), "gen-1", 999, 90*time.Second)
+	assert.ErrorIs(t, err, ErrLeaseVersionMismatch)
+
+	// Completion of an unknown execution fences closed.
+	err = registry.CompleteExecution(ctx, "018f4500-0000-7000-8000-00000000dead", runnerUUID(5), "gen-1", "failed", nil, "")
+	assert.ErrorIs(t, err, ErrLeaseNotFound)
+
+	// Blocked and cancelled outcomes map honestly.
+	err = registry.CompleteExecution(ctx, claim.ExecutionID, runnerUUID(5), "gen-1", "blocked", nil, "why")
+	require.NoError(t, err)
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM work_items WHERE id = $1`, claim.WorkItemID).Scan(&status))
+	assert.Equal(t, "blocked", status)
+}
