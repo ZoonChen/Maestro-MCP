@@ -84,9 +84,9 @@ func registerCreateWorkItem(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithBoolean("expected_absent", mcp.Required(), mcp.Description("Must be true: the client key must not already exist")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("create_work_item", services.guardTool("create_work_item", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleCreateWorkItem(ctx, req, services)
-		},
+		})),
 	)
 }
 
@@ -224,9 +224,9 @@ func registerCancelWorkItem(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithNumber("expected_version", mcp.Required(), mcp.Description("Aggregate version observed by the caller")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("cancel_work_item", services.guardTool("cancel_work_item", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleCancelWorkItem(ctx, req, services)
-		},
+		})),
 	)
 }
 
@@ -271,9 +271,9 @@ func registerRetryWorkItem(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithNumber("expected_version", mcp.Required(), mcp.Description("Aggregate version observed by the caller")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("retry_work_item", services.guardTool("retry_work_item", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleRetryWorkItem(ctx, req, services)
-		},
+		})),
 	)
 }
 

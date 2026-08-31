@@ -90,9 +90,9 @@ func registerGetNextTask(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("Caller capability labels used for eligibility filtering"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_next_task", services.guardTool("get_next_task", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleGetNextTask(ctx, req, services)
-		},
+		})),
 	)
 }
 
@@ -258,7 +258,7 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("16-128 character replay key"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("heartbeat_task", services.guardTool("heartbeat_task", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			taskID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -295,7 +295,7 @@ func registerHeartbeatTask(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal heartbeat result: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		})),
 	)
 }
 
@@ -316,7 +316,7 @@ func registerSubmitTaskResult(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithString("summary", mcp.Description("Optional summary of the completed work")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("submit_task_result", services.guardTool("submit_task_result", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -357,7 +357,7 @@ func registerSubmitTaskResult(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(fmt.Errorf("submission failed: %w", err)), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"validating","validation":"in_progress"}`, workItemID)), nil
-		},
+		})),
 	)
 }
 
@@ -377,7 +377,7 @@ func registerReportBlocker(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithArray("evidence_refs", mcp.Description("Optional evidence references (max 100)")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("report_blocker", services.guardTool("report_blocker", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -412,6 +412,6 @@ func registerReportBlocker(s *mcpserver.MCPServer, services *Services) {
 				return errorResult(fmt.Errorf("failed to report blocker: %w", err)), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"status":"blocked"}`, workItemID)), nil
-		},
+		})),
 	)
 }

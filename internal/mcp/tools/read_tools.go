@@ -25,7 +25,7 @@ func registerListWorkItems(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous response")),
 			mcp.WithNumber("limit", mcp.Description("Page size (1-100, default 50)")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("list_work_items", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			projectID, _, _, err := services.Binding.scope()
 			if err != nil {
 				return errorResult(err), nil
@@ -81,7 +81,7 @@ func registerListWorkItems(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal work item list: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		}),
 	)
 }
 
@@ -92,7 +92,7 @@ func registerGetWorkItem(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithDescription("Read one work item from the authorized project."),
 			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Work item identifier")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_work_item", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -110,7 +110,7 @@ func registerGetWorkItem(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal work item: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		}),
 	)
 }
 
@@ -121,7 +121,7 @@ func registerGetTaskContext(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithDescription("Assemble the full execution context for a work item: dependencies, contracts and requirements."),
 			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Work item identifier")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_task_context", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -139,7 +139,7 @@ func registerGetTaskContext(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal task context: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		}),
 	)
 }
 
@@ -152,7 +152,7 @@ func registerGetQualityStatus(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithDescription("Read the latest validation evidence and quality gates for a work item."),
 			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Work item identifier")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_quality_status", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -182,7 +182,7 @@ func registerGetQualityStatus(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal quality status: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		}),
 	)
 }
 
@@ -195,7 +195,7 @@ func registerGetGitlabStatus(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithDescription("Read the GitLab integration status (MR, pipeline) for a work item."),
 			mcp.WithString("work_item_id", mcp.Required(), mcp.Description("Work item identifier")),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_gitlab_status", func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -212,7 +212,7 @@ func registerGetGitlabStatus(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal gitlab status: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		}),
 	)
 }
 
