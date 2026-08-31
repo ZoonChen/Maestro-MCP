@@ -394,12 +394,11 @@ func TestM2GitlabMigrationRoundTrip(t *testing.T) {
 	_, err = db.ExecContext(ctx, `SELECT 1`) // keep db used
 	require.NoError(t, err)
 	seedM2Instance(t, isolated)
-	_, err = isolated.ExecContext(ctx, `INSERT INTO evidence (id, project_id, work_item_id, authority, producer, evidence_kind, source_sha, target_sha, payload_digest, policy_version)
-		VALUES ('018f6000-0000-7000-8000-000000000001', 'p', 'w', 'merge_gate', 'gitlab', 'pipeline', 'a'.repeat(40), 'b', 'sha256:`+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"+`', 'v1')`)
-	if err == nil {
-		_, updateErr := isolated.ExecContext(ctx, `UPDATE evidence SET authority='diagnostic' WHERE id='018f6000-0000-7000-8000-000000000001'`)
-		require.Error(t, updateErr, "evidence rows must be append-only")
-	}
+	shaA, shaB, digestC := repeatChar("a", 40), repeatChar("b", 40), repeatChar("c", 64)
+	_, err = isolated.ExecContext(ctx, `INSERT INTO evidence (id, project_id, work_item_id, authority, producer, evidence_kind, source_sha, target_sha, payload_digest, policy_version) VALUES ('018f6000-0000-7000-8000-000000000001', 'p', 'w', 'merge_gate', 'gitlab', 'pipeline', $1, $2, 'sha256:' || $3, 'v1')`, shaA, shaB, digestC)
+	require.NoError(t, err, "evidence seed insert must succeed so the immutability assertion runs")
+	_, err = isolated.ExecContext(ctx, `UPDATE evidence SET authority='diagnostic' WHERE id='018f6000-0000-7000-8000-000000000001'`)
+	require.Error(t, err, "evidence rows must be append-only")
 
 	// Full revert leaves no public objects; re-apply reaches target again.
 	reverted, err := RevertPostgresMigrations(ctx, isolated, len(migrations))
@@ -421,4 +420,16 @@ func seedM2Instance(t *testing.T, db *sql.DB) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO projects (id, team_id, key, name, status) VALUES ('018f6100-0000-7000-8000-000000000002', '018f6100-0000-7000-8000-000000000001', 'm2-proj', 'M2 Proj', 'active')`)
 	require.NoError(t, err)
+}
+
+// repeatChar builds a plain run of one character; migrations tests use it
+// for SHA-shaped literals that must not depend on SQL-side string
+// functions (an earlier `'a'.repeat(40)` typo silently skipped the
+// append-only assertion it was seeding).
+func repeatChar(ch string, n int) string {
+	out := make([]byte, 0, n)
+	for range n {
+		out = append(out, ch[0])
+	}
+	return string(out)
 }

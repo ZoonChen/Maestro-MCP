@@ -117,8 +117,12 @@ func (m *OIDCMiddleware) Authenticate(c *gin.Context) {
 	// Liveness/readiness probes stay anonymous (M0 contract); every other
 	// route requires an authenticated principal. The /api/v3 Runner group
 	// carries its own scheme per runner.yaml (one public enroll route,
-	// device tokens elsewhere) and self-gates in RegisterRunnerV3.
-	if isAnonymousHealthPath(c.Request.URL.Path) || strings.HasPrefix(c.Request.URL.Path, "/api/v3/") {
+	// device tokens elsewhere) and self-gates in RegisterRunnerV3. The
+	// /webhooks/gitlab receiver authenticates with the instance's shared
+	// token per control-plane.yaml and self-gates in the ingestor.
+	if isAnonymousHealthPath(c.Request.URL.Path) ||
+		strings.HasPrefix(c.Request.URL.Path, "/api/v3/") ||
+		strings.HasPrefix(c.Request.URL.Path, "/webhooks/") {
 		c.Next()
 		return
 	}
