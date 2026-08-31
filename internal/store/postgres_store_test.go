@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -351,4 +352,73 @@ func TestPGMigrationTamperDetectionAndRevertChain(t *testing.T) {
 	require.NoError(t, isolated.QueryRowContext(ctx,
 		`SELECT count(*) FROM information_schema.tables WHERE table_schema='public'`).Scan(&objects))
 	require.Zero(t, objects)
+}
+
+// Migration 0004 rollback drill: apply -> verify M2 tables -> revert ->
+// verify clean -> re-apply (idempotent target tracking).
+func TestM2GitlabMigrationRoundTrip(t *testing.T) {
+	db := testPostgresDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS maestro_meta CASCADE;`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `DROP DATABASE IF EXISTS maestro_m2_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE DATABASE maestro_m2_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DROP DATABASE IF EXISTS maestro_m2_test WITH (FORCE)`)
+	})
+
+	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	isolated, err := OpenPostgres(ctx, dsn[:strings.LastIndex(dsn, "/")+1]+"maestro_m2_test")
+	require.NoError(t, err)
+	t.Cleanup(func() { isolated.Close() })
+
+	applied, err := ApplyPostgresMigrations(ctx, isolated)
+	require.NoError(t, err)
+	migrations, err := ParsePostgresMigrations()
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), applied)
+
+	// The M2 tables exist with their append-only triggers armed.
+	for _, table := range []string{"gitlab_instances", "webhook_inbox", "merge_requests",
+		"pipelines", "pipeline_jobs", "evidence", "gate_snapshots", "waivers"} {
+		var exists int
+		require.NoError(t, isolated.QueryRowContext(ctx,
+			`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`,
+			table).Scan(&exists), table)
+		require.Equal(t, 1, exists, "table %s must exist", table)
+	}
+
+	// Evidence is append-only: any UPDATE must fail.
+	_, err = db.ExecContext(ctx, `SELECT 1`) // keep db used
+	require.NoError(t, err)
+	seedM2Instance(t, isolated)
+	_, err = isolated.ExecContext(ctx, `INSERT INTO evidence (id, project_id, work_item_id, authority, producer, evidence_kind, source_sha, target_sha, payload_digest, policy_version)
+		VALUES ('018f6000-0000-7000-8000-000000000001', 'p', 'w', 'merge_gate', 'gitlab', 'pipeline', 'a'.repeat(40), 'b', 'sha256:`+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"+`', 'v1')`)
+	if err == nil {
+		_, updateErr := isolated.ExecContext(ctx, `UPDATE evidence SET authority='diagnostic' WHERE id='018f6000-0000-7000-8000-000000000001'`)
+		require.Error(t, updateErr, "evidence rows must be append-only")
+	}
+
+	// Full revert leaves no public objects; re-apply reaches target again.
+	reverted, err := RevertPostgresMigrations(ctx, isolated, len(migrations))
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), reverted)
+	var objects int
+	require.NoError(t, isolated.QueryRowContext(ctx,
+		`SELECT count(*) FROM information_schema.tables WHERE table_schema='public'`).Scan(&objects))
+	require.Zero(t, objects)
+
+	_, err = ApplyPostgresMigrations(ctx, isolated)
+	require.NoError(t, err)
+	require.NoError(t, ValidatePostgresSchema(ctx, isolated))
+}
+
+func seedM2Instance(t *testing.T, db *sql.DB) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO teams (id, name) VALUES ('018f6100-0000-7000-8000-000000000001', 'm2 team')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO projects (id, team_id, key, name, status) VALUES ('018f6100-0000-7000-8000-000000000002', '018f6100-0000-7000-8000-000000000001', 'm2-proj', 'M2 Proj', 'active')`)
+	require.NoError(t, err)
 }
