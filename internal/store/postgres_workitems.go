@@ -83,7 +83,7 @@ func (s *PostgresStore) ClaimNextWorkItem(
 
 	// Next eligible work item in the runner's bound project.
 	row := tx.QueryRowContext(ctx, `
-		SELECT w.id, w.project_id, w.version, w.role, COALESCE(w.role, ''), w.lease_epoch
+		SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch
 		FROM work_items w
 		JOIN runner_bindings b ON b.project_id = w.project_id
 		WHERE b.runner_id = $1 AND w.status = 'queued'
@@ -92,7 +92,7 @@ func (s *PostgresStore) ClaimNextWorkItem(
 		FOR UPDATE OF w SKIP LOCKED`, runnerID)
 
 	var claim WorkItemClaim
-	err = row.Scan(&claim.WorkItemID, &claim.ProjectID, &claim.WorkItemVersion, &claim.WorkItemRole, &claim.WorkItemRole, &claim.LeaseEpoch)
+	err = row.Scan(&claim.WorkItemID, &claim.ProjectID, &claim.WorkItemVersion, &claim.WorkItemRole, &claim.LeaseEpoch)
 	if err == sql.ErrNoRows {
 		return nil, ErrNoAvailableTask
 	}
