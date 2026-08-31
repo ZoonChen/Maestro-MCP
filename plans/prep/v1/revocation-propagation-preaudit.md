@@ -29,3 +29,12 @@
 | M0.5 十项销号 | `m05-blockers-preaudit.md`（PR #20） |
 | 无残余静态 token 路径 | `static-token-paths-audit.md`（PR #22） |
 | 授权缓存撤销传播 | 本文（口径 + 15min token 张力登记） |
+
+
+## 5. 实测补录（2026-08-31，main@84730cf）
+
+Runner 设备吊销分量的实测（静态组合 + compose PG；`/api/v3` 豁免合入后本地可测）：
+
+- 流程：enroll → approve → `/me` 200 → 吊销（runners.status='revoked'）→ 立即循环探测 `/me`。
+- **结果：26ms 首次请求即 410 `RUNNER_REVOKED`**（无决策缓存，逐请求直读注册表）——远低于 60s P99 要求。
+- 局限：吊销动作经 DB 行翻转模拟（静态组合的 API revoke 需 OIDC admin，见 #30 发现 D）；运行时效果与 API revoke 等价（同一行状态）。角色/成员撤销分量同机制（PDP 直读），P5 用 OIDC 栈补测即可。
