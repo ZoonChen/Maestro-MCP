@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-006
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: qa_owner
@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-006：GitLab CI Evidence 是合并门禁权威
 
-> 决策状态：待评审接受。当前仅有宿主本地 ValidationRun，不具备 CI authority、SHA tuple或 Gate 引擎。
+> 决策状态：已评审接受（I2 契约冻结 sprint；签署以契约 PR 评审批准记录为准）。当前仅有宿主本地 ValidationRun，不具备 CI authority、SHA tuple或 Gate 引擎。
 
 ## 1. 目标与非目标
 

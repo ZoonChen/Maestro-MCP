@@ -1,7 +1,7 @@
 ---
 doc_id: SEC-SECRETS-WEBHOOKS-SUPPLY-CHAIN
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: security_owner
@@ -58,7 +58,7 @@ Secret：`provisioned → active → rotating → revoked/destroyed`；Webhook�
 
 - `SECRET-RULE-001`：数据库只保存 provider、reference、version 和非敏感元数据。
 - `SECRET-RULE-002`：入站 Maestro Token 永不转发 GitLab；`CI_JOB_TOKEN` 只在 CI Job 生命周期内使用。
-- `WEBHOOK-RULE-001`：支持时使用 HMAC signature 与 timestamp，默认 freshness 窗口 5 分钟；兼容旧 GitLab 时用高熵 `X-Gitlab-Token` 常量时间比较。
+- `WEBHOOK-RULE-001`：支持时使用 HMAC signature 与 timestamp，默认 freshness 窗口 5 分钟；GitLab CE（自建基线，S4 实测确认）只提供静态共享 `X-Gitlab-Token`，无 HMAC 与 `X-Gitlab-Timestamp` 头——防护为高熵 token 常量时间比较 + TLS 强制 + received_at 短窗 + Event-UUID 去重，payload 一律不可信（I2 契约吸收 S4 验证偏差 2）。
 - `WEBHOOK-RULE-002`：以 GitLab webhook/event ID 去重；缺失 ID 时用 instance、project、event type、payload digest 组合，且必须告警兼容模式。
 - `SUPPLY-RULE-001`：基础镜像与运行镜像固定 digest，依赖锁定；生产制品不可在部署阶段重新构建。
 

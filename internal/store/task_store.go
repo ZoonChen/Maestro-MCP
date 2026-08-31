@@ -310,6 +310,15 @@ func (s *SQLiteTaskStore) UpdateStatusFromVersion(ctx context.Context, projectID
 	if !model.IsTaskStatus(newStatus) || !model.CanTaskTransition(expectedOldStatus, newStatus) {
 		return fmt.Errorf("task transition %s -> %s: %w", expectedOldStatus, newStatus, ErrTaskStateInvalid)
 	}
+	// The canonical machine carries the ready_for_human_merge -> done edge
+	// for the verified merge fact (M2 contract), but this GENERIC path
+	// carries no fact. Only the fact-bound transition (webhook/
+	// reconciliation ingestion) may reach done; everything else stays
+	// service-level closed until that path exists.
+	if newStatus == model.TaskStatusDone {
+		return fmt.Errorf("task transition %s -> done requires a verified merge fact: %w",
+			expectedOldStatus, ErrOperationDisabled)
+	}
 	const query = `UPDATE tasks
 		SET status = ?, version = version + 1, updated_at = datetime('now')
 		WHERE project_id = ? AND id = ? AND status = ? AND version = ?`

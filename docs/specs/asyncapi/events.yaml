@@ -1,8 +1,11 @@
 asyncapi: 3.0.0
 info:
   title: Maestro Event Catalog
-  version: 3.0.0-draft
-  description: GitLab webhook-derived and internal durable events.
+  version: 3.0.0
+  description: |
+    GitLab webhook-derived and internal durable events. Version 3.0.0 is
+    frozen by the M2 I2 contract-freeze sprint; changes require a
+    contract change request through the integration session.
   license:
     name: Internal Use Only
   tags:
@@ -169,7 +172,7 @@ components:
     GitLabWebhookPayload:
       type: object
       additionalProperties: false
-      required: [instance_id, event_kind, delivery_key]
+      required: [instance_id, event_kind, delivery_key, received_at]
       properties:
         instance_id:
           type: string
@@ -179,6 +182,22 @@ components:
         delivery_key:
           type: string
           minLength: 1
+          description: >
+            The per-delivery X-Gitlab-Event-UUID; with instance_id it is
+            the Inbox deduplication primary key (S4 CE validation
+            deviation 1: GitLab CE sends no X-Gitlab-Timestamp header,
+            so replay protection is received_at + Event-UUID dedup plus
+            a short acceptance window rather than signature timestamps).
+        webhook_id:
+          type: string
+          minLength: 1
+          description: >
+            The per-webhook X-Gitlab-Webhook-UUID; used to verify the
+            delivery belongs to the registered hook (anti-cross-wiring).
+        received_at:
+          type: string
+          format: date-time
+          description: Server receipt time; the replay-window anchor.
         payload_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
