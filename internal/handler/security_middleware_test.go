@@ -52,6 +52,29 @@ func TestAuthMiddlewareRejectsInvalidTokenWith401(t *testing.T) {
 	assert.Contains(t, w.Header().Get("WWW-Authenticate"), "invalid_token")
 }
 
+// The static-token middleware must pass /api/v3/ through so the Runner group
+// can self-gate device tokens (mirror of the OIDC middleware carve-out);
+// otherwise a device bearer is misread as a control-plane token and the v3
+// surface is unreachable in the local composition.
+func TestAuthMiddlewarePassesThroughRunnerV3Group(t *testing.T) {
+	r := gin.New()
+	r.Use(AuthMiddleware("expected"))
+	r.GET("/api/v3/runners/me", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	// A device token (not the control-plane token) must reach the route.
+	deviceReq := httptest.NewRequest(http.MethodGet, "/api/v3/runners/me", nil)
+	deviceReq.Header.Set("Authorization", "Bearer runner-device-token")
+	deviceRec := httptest.NewRecorder()
+	r.ServeHTTP(deviceRec, deviceReq)
+	assert.Equal(t, http.StatusOK, deviceRec.Code)
+
+	// No Authorization header also reaches the route; the v3 handlers own
+	// the 401 (enroll is public, device routes fail closed themselves).
+	anonymousRec := httptest.NewRecorder()
+	r.ServeHTTP(anonymousRec, httptest.NewRequest(http.MethodGet, "/api/v3/runners/me", nil))
+	assert.Equal(t, http.StatusOK, anonymousRec.Code)
+}
+
 func TestCORSUsesExactAllowlistAndSameOrigin(t *testing.T) {
 	r := gin.New()
 	r.Use(CORS("https://allowed.example"))
