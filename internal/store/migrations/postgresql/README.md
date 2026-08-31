@@ -32,6 +32,16 @@
 2. `audit_events`/`validation_runs` 由触发器完全禁止 UPDATE/DELETE；`outbox_events`/`inbox_events` 仅封套列不可变（dispatch 簿记列可迁移状态）——DATA-GATE-002 的"更新必须失败"对事件表按"封套不可变"实现，因为 ADR-002 §6 的状态机要求 status 可迁移。
 3. `work_items`/`leases` 保留 `legacy_session_id`/`legacy_worker_id` 文本列承载 M0 会话引用（M1 会话-任务绑定落地后由 connection_generation 取代）。
 
+## M2 GitLab 集成表清单（0004/0005）
+
+锚定卡 M2-GL/WHK/GIT/MR/QG 表清单全覆盖：`gitlab_instances`、`gitlab_project_mappings`、`webhook_inbox`、`webhook_deliveries`、`merge_requests`、`pipelines`、`pipeline_jobs`、`evidence`（append-only + supersedes 链）、`gate_snapshots`、`waivers`。`evidence` 与 `webhook_deliveries` 挂 `maestro_raise_immutable` 触发器（DATA-REQ-003 / WEBHOOK 审计不可变）。
+
+**偏差记录**（schema 评审项）：
+
+1. 计划中的独立 `dlq` 表由 `webhook_inbox.status='dead_letter'` 承载（S4 偏差 1 已被冻结事件目录吸收）：隔离与重试耗尽共用一行，DLQ 审计走 append-only 送达表。
+2. `evidence.pipeline_id` 是普通 FK 而非 SHA 元组外键：`pipelines` 以 uuid 键控而 evidence 携带 SHA 元组，应用层负责校验 pipeline.sha 与 evidence.source_sha 一致（README 0004 注记补登）。
+3. `0005` 补齐收件箱调度簿记：`webhook_inbox.next_attempt_at`（指数退避调度）、`lease_owner`/`claimed_at`（dispatcher 崩溃后的有界 stale 重认领，镜像 outbox 租约纪律）、`webhook_deliveries.inbox_id` 可空（验签拒绝/归档路径没有收件箱行，deny 审计仍落表）。
+
 ## SQLite → PostgreSQL 导入映射表
 
 命令：`maestro pg-import --sqlite PATH [--dry-run] [--reconcile] [--report FILE]`（目标 DSN 来自 `MAESTRO_DATABASE_DSN`/配置）。

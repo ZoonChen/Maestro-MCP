@@ -27,6 +27,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
@@ -631,9 +632,50 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		slog.Warn("MAESTRO_RUNNER_TOKEN_SECRET not set; the v3 Runner API stays unexposed")
 	}
 
+	// M2 GitLab webhook receiver: raw bodies are encrypted at rest, so the
+	// surface requires the payload key from the environment (never the
+	// config file). Without it the receiver and its inbox dispatcher stay
+	// unexposed — honest degradation, never a fake 2xx.
+	if key := os.Getenv("MAESTRO_WEBHOOK_PAYLOAD_KEY"); key != "" {
+		cipher, cipherErr := webhook.NewPayloadCipher(key)
+		if cipherErr != nil {
+			return *options, fail(exitUsage, "CONFIG_INVALID", cipherErr)
+		}
+		webhookStore := pgStore.Webhooks()
+		options.WebhookIngest = &handler.GitLabWebhookOptions{
+			Ingestor: &webhook.Ingestor{
+				Store:   webhookStore,
+				Secrets: webhook.EnvSecretResolver{},
+				Cipher:  cipher,
+			},
+		}
+		options.WebhookDispatch = &app.WebhookDispatchOptions{
+			Dispatcher: &webhook.Dispatcher{
+				Store:       webhookStore,
+				Cipher:      cipher,
+				MaxAttempts: 5,
+				BaseBackoff: 5 * time.Second,
+				MaxBackoff:  10 * time.Minute,
+			},
+			Owner: fmt.Sprintf("cp-%s-%d", hostname(), os.Getpid()),
+		}
+	} else {
+		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
+	}
+
 	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
 	// The pool lives for the process lifetime; closing happens on exit.
 	return *options, nil
+}
+
+// hostname is the dispatcher lease identity seed; a stable per-process
+// owner string makes claim audits attributable.
+func hostname() string {
+	name, err := os.Hostname()
+	if err != nil || name == "" {
+		return "unknown-host"
+	}
+	return name
 }
 
 // pgDependency reports PostgreSQL readiness into the aggregate health gate.

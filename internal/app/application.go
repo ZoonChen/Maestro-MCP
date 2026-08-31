@@ -23,6 +23,7 @@ import (
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
 	"github.com/ZoonChen/Maestro-MCP/internal/ws"
 	"github.com/gin-gonic/gin"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -68,6 +69,13 @@ type Options struct {
 	// RunnerV3 mounts the Control Plane side of the frozen runner.yaml
 	// (M1-RUN-001); nil leaves the v3 Runner API unexposed.
 	RunnerV3 *handler.RunnerV3Options
+	// WebhookIngest mounts the GitLab webhook receiver (M2-WHK-001,
+	// control-plane.yaml ingestGitLabWebhook); nil leaves the receiver
+	// unexposed — honest degradation, never a fake 2xx.
+	WebhookIngest *handler.GitLabWebhookOptions
+	// WebhookDispatch drains the webhook inbox into the outbox envelope
+	// stream; nil leaves the dispatcher unstarted (inbox accumulates).
+	WebhookDispatch *WebhookDispatchOptions
 	// MCPGuard enforces the frozen tool permissions on MCP tool calls
 	// through the same policy as REST (M1 exit gate: one authorize for
 	// every surface); nil keeps the M0 delegated-context mode.
@@ -288,6 +296,9 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 	if opts.RunnerV3 != nil {
 		handler.RegisterRunnerV3(router, *opts.RunnerV3)
 	}
+	if opts.WebhookIngest != nil {
+		handler.RegisterGitLabWebhookIngest(router, *opts.WebhookIngest)
+	}
 
 	dependencies := &health.Registry{}
 	for _, dependency := range opts.Dependencies {
@@ -340,6 +351,13 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		a.startWorktreeGC(projectService, worktreeService)
 	}
 
+	// The inbox dispatcher is process-wide: exactly one drain loop per
+	// control plane (claim races are still safe — SKIP LOCKED — but a
+	// single owner keeps backoff and audit noise minimal).
+	if opts.WebhookDispatch != nil {
+		a.startWebhookDispatch(opts.WebhookDispatch)
+	}
+
 	cleanupOnError = false
 	return a, nil
 }
@@ -364,6 +382,27 @@ func (a *Application) mountRuntimeRoutes(router *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 	router.Any("/mcp", gin.WrapH(streamable))
+}
+
+// WebhookDispatchOptions wires the webhook inbox drain loop.
+type WebhookDispatchOptions struct {
+	Dispatcher *webhook.Dispatcher
+	Owner      string        // lease identity, stable per process
+	Interval   time.Duration // poll cadence when the inbox is drained
+}
+
+func (a *Application) startWebhookDispatch(opts *WebhookDispatchOptions) {
+	interval := opts.Interval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	a.backgroundWG.Add(1)
+	go func() {
+		defer a.backgroundWG.Done()
+		opts.Dispatcher.Run(a.backgroundCtx, opts.Owner, interval, func(err error) {
+			slog.Error("webhook inbox dispatch failed", "error", err)
+		})
+	}()
 }
 
 func (a *Application) startDataGC(gc *service.GCService) {
