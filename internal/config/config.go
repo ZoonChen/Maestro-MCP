@@ -136,7 +136,7 @@ type Config struct {
 
 	AuthToken      string   `yaml:"-"`               // process Secret: MAESTRO_AUTH_TOKEN only
 	AllowedOrigins []string `yaml:"allowed_origins"` // exact browser Origin values
-	RemoteWrite    bool     `yaml:"remote_write"`    // disabled by default throughout M0
+	RemoteWrite    bool     `yaml:"remote_write"`    // engine-wide write master gate (REST, HTTP MCP, /api/v3); default off
 
 	Database DatabaseConfig `yaml:"database"`
 	OIDC     *OIDCConfig    `yaml:"oidc,omitempty"`
