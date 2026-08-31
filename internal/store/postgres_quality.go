@@ -133,13 +133,15 @@ func (s pgQualityStore) AppendEvidence(ctx context.Context, record *evidence.Rec
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO evidence (id, project_id, work_item_id, authority, producer, evidence_kind,
-			source_sha, target_sha, pipeline_id, job_id, payload_digest, policy_version, supersedes_id, attempt, status, sensitivity)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, NULLIF($9, '')::uuid, NULLIF($10, '')::uuid, $11, $12, NULLIF($13, '')::uuid, $14, $15, $16)
+			source_sha, target_sha, pipeline_id, job_id, payload_digest, policy_version, supersedes_id, attempt, status, sensitivity,
+			gitlab_pipeline_id, gitlab_job_id)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, NULLIF($9, '')::uuid, NULLIF($10, '')::uuid, $11, $12, NULLIF($13, '')::uuid, $14, $15, $16, $17, $18)
 		ON CONFLICT (id) DO NOTHING`,
 		record.EvidenceID, record.ProjectID, record.WorkItemID, record.Authority,
 		producerJSON(record), record.Kind, record.SourceSHA, record.TargetSHA,
 		pipelineFK(record), jobFK(record), digest, record.PolicyVersion, record.Supersedes,
-		record.Attempt, record.Status, sensitivityOrDefault(record))
+		record.Attempt, record.Status, sensitivityOrDefault(record),
+		nullableInt64(record.PipelineID), nullableInt64(record.JobID))
 	if err != nil {
 		return fmt.Errorf("evidence append: %w", err)
 	}
@@ -153,7 +155,8 @@ func (s pgQualityStore) ListEvidenceForWorkItem(ctx context.Context, projectID, 
 		SELECT id, project_id, work_item_id, evidence_kind, authority, source_sha, target_sha,
 			policy_version, producer, attempt, supersedes_id, status, payload_digest, sensitivity,
 			to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-			to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			gitlab_pipeline_id, gitlab_job_id
 		FROM evidence WHERE project_id = $1 AND work_item_id = $2
 		ORDER BY observed_at, id`, projectID, workItemID)
 	if err != nil {
@@ -165,12 +168,21 @@ func (s pgQualityStore) ListEvidenceForWorkItem(ctx context.Context, projectID, 
 	for rows.Next() {
 		var record evidence.Record
 		var producer, supersedes sql.NullString
+		var pipelineID, jobID sql.NullInt64
 		if err := rows.Scan(&record.EvidenceID, &record.ProjectID, &record.WorkItemID,
 			&record.Kind, &record.Authority, &record.SourceSHA, &record.TargetSHA,
 			&record.PolicyVersion, &producer, &record.Attempt, &supersedes, &record.Status,
 			&record.Digest, &record.Sensitivity,
-			&record.ObservedAt, &record.CreatedAt); err != nil {
+			&record.ObservedAt, &record.CreatedAt, &pipelineID, &jobID); err != nil {
 			return nil, fmt.Errorf("evidence list: scan: %w", err)
+		}
+		if pipelineID.Valid {
+			value := pipelineID.Int64
+			record.PipelineID = &value
+		}
+		if jobID.Valid {
+			value := jobID.Int64
+			record.JobID = &value
 		}
 		if err := json.Unmarshal([]byte(producer.String), &record.Producer); err != nil {
 			return nil, fmt.Errorf("evidence list: producer decode: %w", err)
@@ -411,6 +423,14 @@ func producerJSON(record *evidence.Record) string {
 func contentDigest(encoded []byte) string {
 	digest := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+// nullableInt64 maps an absent optional integer to SQL NULL.
+func nullableInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 // sensitivityOrDefault keeps the wire-required sensitivity field honest:

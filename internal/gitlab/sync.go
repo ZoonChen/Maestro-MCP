@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/ZoonChen/Maestro-MCP/internal/evidence"
 )
 
 // MergeRequestRecord is the projection of one merge-request payload.
@@ -49,6 +51,7 @@ type JobRecord struct {
 	Name          string
 	Status        string
 	Stage         string
+	Ref           string
 }
 
 // SyncStore is the persistence contract for projection writes and the
@@ -72,18 +75,26 @@ type SyncStore interface {
 
 	UpsertPipeline(ctx context.Context, rec PipelineRecord) error
 	UpsertJob(ctx context.Context, rec JobRecord) error
+
+	// BranchTuple resolves the MR projection's binding and SHA tuple
+	// for a source branch (evidence ingestion).
+	BranchTuple(ctx context.Context, projectID, sourceBranch string) (workItemID, sourceSHA, targetSHA string, complete bool, err error)
 }
 
 // Syncer applies one verified raw webhook body to the projections.
+// Ingest (optional) turns completed gate-named jobs into evidence and
+// re-evaluates the bound tuple.
 type Syncer struct {
-	Store SyncStore
+	Store  SyncStore
+	Ingest *EvidenceIngestor
 }
 
 // ApplyOutcome summarizes one applied delivery.
 type ApplyOutcome struct {
-	Kind         string
-	Transitioned bool // a work item moved ready_for_human_merge -> done
-	Withheld     bool // a merged fact arrived outside ready: recorded, not applied
+	Kind            string
+	Transitioned    bool // a work item moved ready_for_human_merge -> done
+	Withheld        bool // a merged fact arrived outside ready: recorded, not applied
+	EvidenceApplied bool // a completed gate-named job produced evidence
 }
 
 // mrPayload reads just the fields the projection needs.
@@ -130,6 +141,8 @@ type jobPayload struct {
 	Name       string `json:"build_name"`
 	Status     string `json:"build_status"`
 	Stage      string `json:"stage"`
+	Ref        string `json:"ref"`
+	SHA        string `json:"sha"`
 }
 
 // ApplyBody dispatches one raw body by its kind marker. The caller has
@@ -191,6 +204,13 @@ func (s *Syncer) ApplyMergeRequestRecord(ctx context.Context, projectID string, 
 	if err := s.Store.UpsertMergeRequest(ctx, projectID, rec, workItemID); err != nil {
 		return ApplyOutcome{}, err
 	}
+	// Tuple completion re-evaluates: evidence may already be waiting
+	// from jobs that ran before the MR projection carried both SHAs.
+	if s.Ingest != nil && workItemID != "" && rec.SourceSHA != "" && rec.TargetSHA != "" {
+		if err := s.Ingest.OnTupleComplete(ctx, TupleFor(projectID, workItemID, rec)); err != nil {
+			return ApplyOutcome{}, err
+		}
+	}
 	if rec.State != "merged" || rec.MergeCommit == "" || projectID == "" || workItemID == "" {
 		return ApplyOutcome{Kind: "merge_request"}, nil
 	}
@@ -239,7 +259,7 @@ func (s *Syncer) applyJob(ctx context.Context, instanceID string, body []byte) (
 	if payload.ProjectID < 1 || payload.PipelineID < 1 || payload.JobID < 1 {
 		return ApplyOutcome{}, fmt.Errorf("gitlab sync: job payload lacks project/pipeline/job")
 	}
-	if err := s.Store.UpsertJob(ctx, JobRecord{
+	job := JobRecord{
 		InstanceID:    instanceID,
 		GitlabProject: payload.ProjectID,
 		PipelineID:    payload.PipelineID,
@@ -247,10 +267,33 @@ func (s *Syncer) applyJob(ctx context.Context, instanceID string, body []byte) (
 		Name:          payload.Name,
 		Status:        payload.Status,
 		Stage:         payload.Stage,
-	}); err != nil {
+		Ref:           payload.Ref,
+	}
+	if err := s.Store.UpsertJob(ctx, job); err != nil {
 		return ApplyOutcome{}, err
 	}
+	if s.Ingest != nil {
+		projectID, err := s.Store.MappingProject(ctx, instanceID, payload.ProjectID)
+		if err != nil {
+			return ApplyOutcome{}, err
+		}
+		if applied, ingestErr := s.Ingest.IngestJob(ctx, projectID, job, payload.SHA); ingestErr != nil {
+			return ApplyOutcome{}, ingestErr
+		} else if applied {
+			return ApplyOutcome{Kind: "job", EvidenceApplied: true}, nil
+		}
+	}
 	return ApplyOutcome{Kind: "job"}, nil
+}
+
+// TupleFor builds the evaluation tuple from an MR record.
+func TupleFor(projectID, workItemID string, rec MergeRequestRecord) evidence.Tuple {
+	return evidence.Tuple{
+		ProjectID:  projectID,
+		WorkItemID: workItemID,
+		SourceSHA:  rec.SourceSHA,
+		TargetSHA:  rec.TargetSHA,
+	}
 }
 
 // WorkItemIDFromBranch reads the task marker out of the frozen task

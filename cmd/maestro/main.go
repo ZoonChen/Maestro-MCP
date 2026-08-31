@@ -23,6 +23,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/app"
 	"github.com/ZoonChen/Maestro-MCP/internal/config"
+	"github.com/ZoonChen/Maestro-MCP/internal/evidence"
 	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
@@ -662,12 +663,26 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			Owner: fmt.Sprintf("cp-%s-%d", hostname(), os.Getpid()),
 		}
 		// M2 projection sync: consumes the envelopes the dispatcher
-		// emits and drives the merged-fact done edge.
+		// emits, drives the merged-fact done edge, and turns completed
+		// gate-named jobs into evidence with immediate gate evaluation.
+		company, companyErr := evidence.CompanyPolicy()
+		if companyErr != nil {
+			return *options, fail(exitUsage, "CONFIG_INVALID", companyErr)
+		}
+		syncer := &gitlab.Syncer{
+			Store: pgStore.GitLab(),
+			Ingest: &gitlab.EvidenceIngestor{
+				Eval:          &evidence.Service{Company: company, Store: pgStore.Quality()},
+				PolicyVersion: company.Version,
+				Append:        pgStore.Quality(),
+				Tuples:        pgStore.GitLab(),
+			},
+		}
 		options.GitLabSync = &app.GitLabSyncOptions{
 			Consumer: &gitlab.Consumer{
 				Outbox:     pgStore.Outbox(),
 				Deliveries: pgStore.WebhookDeliveries(),
-				Syncer:     &gitlab.Syncer{Store: pgStore.GitLab()},
+				Syncer:     syncer,
 				Cipher:     cipher,
 				BatchSize:  16,
 			},
@@ -675,6 +690,22 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		}
 	} else {
 		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
+	}
+
+	// The shared projection syncer: webhook consumer, reconcile path
+	// and evidence ingestion all apply facts through it.
+	company, companyErr := evidence.CompanyPolicy()
+	if companyErr != nil {
+		return *options, fail(exitUsage, "CONFIG_INVALID", companyErr)
+	}
+	syncer := &gitlab.Syncer{
+		Store: pgStore.GitLab(),
+		Ingest: &gitlab.EvidenceIngestor{
+			Eval:          &evidence.Service{Company: company, Store: pgStore.Quality()},
+			PolicyVersion: company.Version,
+			Append:        pgStore.Quality(),
+			Tuples:        pgStore.GitLab(),
+		},
 	}
 
 	// M2 control-plane tree (quality + GitLab registry) under /api/v3:
@@ -692,7 +723,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			gitlabHandler = gitlabHandler.WithReconciler(&gitlab.Reconciler{
 				Mapping: pgStore.Instances(),
 				Secrets: webhook.EnvSecretResolver{},
-				Syncer:  &gitlab.Syncer{Store: pgStore.GitLab()},
+				Syncer:  syncer,
 			})
 		}
 		options.ControlPlane = &handler.ControlPlaneOptions{
