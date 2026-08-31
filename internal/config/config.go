@@ -187,6 +187,13 @@ func DefaultConfig() *Config {
 // Load decodes one strict YAML document over safe defaults. Unknown fields,
 // duplicate mapping keys, malformed values, and additional documents fail
 // closed instead of silently retaining defaults.
+//
+// Load performs only decode-time validation: cross-field rules that
+// environment overrides can still satisfy (a file declaring
+// database.driver=postgres with the DSN supplied via
+// MAESTRO_DATABASE_DSN) are enforced by Validate AFTER ApplyEnvOverrides
+// — loadRuntimeConfig and ApplyEnvOverrides both call it, so a value the
+// environment can rescue must never fail here (V1 drill finding #1).
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
@@ -208,9 +215,6 @@ func Load(path string) (*Config, error) {
 			err = errors.New("multiple YAML documents are not allowed")
 		}
 		return cfg, fmt.Errorf("decode config: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return cfg, err
 	}
 	return cfg, nil
 }
