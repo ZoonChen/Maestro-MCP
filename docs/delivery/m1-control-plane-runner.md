@@ -2,8 +2,8 @@
 doc_id: DELIVERY-M1-CONTROL-PLANE-RUNNER
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
-verification_status: unverified
+implementation_status: implemented
+verification_status: passed
 owner_role: technical_lead
 approver_roles: [product_owner, technical_lead, security_owner, operations_owner, qa_owner]
 introduced_in: M1
@@ -11,7 +11,7 @@ authority_for: [m1_scope, m1_work_packages, m1_exit_gate]
 related_adrs: [ADR-001, ADR-002, ADR-003, ADR-004, ADR-008]
 related_specs: [../specs/openapi/control-plane.yaml, ../specs/openapi/runner.yaml, ../specs/rbac/permissions.yaml]
 related_tests: [../testing/integration-test-plan.md, ../testing/mcp-test-guide.md]
-last_verified_commit: null
+last_verified_commit: HEAD
 ---
 
 # M1：Control Plane、OIDC、PostgreSQL 与本地 Runner
