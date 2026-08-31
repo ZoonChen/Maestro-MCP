@@ -19,3 +19,8 @@
 
 - 后续沙箱演练的 hook URL 需更新为新路径（含 instance_id）。
 - 静态组合下人类 /api/v3 面（注册表/质量）仍为 OIDC 专属（同 #50 结论口径）；onboarding REST 的组合级演练归 Keycloak 栈时段。
+
+## 4. 增量补录（分支头 8661abb：API client + MR reconcile）
+
+- `internal/gitlab`（含 client 与对账）+ handler 套件全绿。
+- **演练约束发现**：`gitlab_instances.base_url` 的 `CHECK (base_url ~ '^https://')` 使本地 http 沙箱（127.0.0.1:8181）无法注册为实例——reconcile 的真机演练需要 TLS 终接代理，或归入 Keycloak/HTTPS 组合时段。该 CHECK 是正确设计（SSRF 姿态），仅记录本地演练路径。
