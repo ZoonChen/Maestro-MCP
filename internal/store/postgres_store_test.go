@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,4 +302,53 @@ func TestPGTxStoresRollbackAndCommit(t *testing.T) {
 	require.NoError(t, store.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM outbox_events`).Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+func TestPGMigrationTamperDetectionAndRevertChain(t *testing.T) {
+	db := testPostgresDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS maestro_meta CASCADE;`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `DROP DATABASE IF EXISTS maestro_store_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE DATABASE maestro_store_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DROP DATABASE IF EXISTS maestro_store_test WITH (FORCE)`)
+	})
+
+	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	dsn = dsn[:strings.LastIndex(dsn, "/")+1] + "maestro_store_test"
+	isolated, err := OpenPostgres(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { isolated.Close() })
+
+	// A fresh database applies every embedded migration.
+	applied, err := ApplyPostgresMigrations(ctx, isolated)
+	require.NoError(t, err)
+	migrations, err := ParsePostgresMigrations()
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), applied)
+
+	// Digest tampering on ANY row fails closed on apply AND validate.
+	_, err = isolated.ExecContext(ctx, `UPDATE maestro_meta.schema_migrations SET digest = 'sha256:deadbeef'`)
+	require.NoError(t, err)
+	require.ErrorIs(t, ValidatePostgresSchema(ctx, isolated), ErrPostgresMigrationIntegrity)
+	_, err = ApplyPostgresMigrations(ctx, isolated)
+	require.ErrorIs(t, err, ErrPostgresMigrationIntegrity)
+
+	// Restoring digests then reverting everything leaves zero objects.
+	for _, migration := range migrations {
+		_, err = isolated.ExecContext(ctx,
+			`UPDATE maestro_meta.schema_migrations SET digest = $1 WHERE version = $2`,
+			migration.Digest, migration.Version)
+		require.NoError(t, err)
+	}
+	reverted, err := RevertPostgresMigrations(ctx, isolated, len(migrations))
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), reverted)
+	var objects int
+	require.NoError(t, isolated.QueryRowContext(ctx,
+		`SELECT count(*) FROM information_schema.tables WHERE table_schema='public'`).Scan(&objects))
+	require.Zero(t, objects)
 }

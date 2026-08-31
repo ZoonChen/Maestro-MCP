@@ -60,12 +60,20 @@ test-hygiene:
 
 # The M0 threshold applies to the authoritative state registry and the full
 # zero-trust validation pipeline, not to a diluted repository-wide average.
+# PG-gated suites (identity resolver, v3 runner endpoints, store
+# contracts, importer drills) only execute when MAESTRO_TEST_POSTGRES_DSN
+# is exported — the same contract the m1-runtime CI job provides.
 coverage:
 	mkdir -p $(COVERAGE_DIR)
 	$(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/state.out ./internal/model
 	$(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/validation.out ./internal/service
+	$(GO) test -covermode=atomic -coverpkg=./internal/identity,./internal/handler -coverprofile=$(COVERAGE_DIR)/identity.out ./internal/identity ./internal/handler
+	# -p 1 serializes package binaries: the PG-gated suites share the
+	# compose database and parallel schema resets deadlock each other.
+	$(GO) test -p 1 -count=1 -covermode=atomic -coverpkg=./internal/store -coverprofile=$(COVERAGE_DIR)/store.out ./internal/store ./internal/handler ./internal/identity
 	ruby scripts/core-coverage-check.rb \
-		$(COVERAGE_DIR)/state.out $(COVERAGE_DIR)/validation.out
+		$(COVERAGE_DIR)/state.out $(COVERAGE_DIR)/validation.out \
+		$(COVERAGE_DIR)/identity.out $(COVERAGE_DIR)/store.out
 
 test-race: web-build
 	$(GO) test -race ./...
