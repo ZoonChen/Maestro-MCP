@@ -104,9 +104,12 @@ func TestM0ClaimValidateVerifyStopsBeforeVerifiedMergeFact(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusReadyForHumanMerge, ready.Status)
 	require.ErrorIs(t, svc.taskSvc.MergeTask(ctx, testProjectID, task.ID, "verifier-session"), store.ErrOperationDisabled)
+	// The M2 contract opens the canonical edge; the GENERIC version-
+	// guarded path stays closed without a merge fact (the M2 webhook
+	// ingestion owns the fact-carrying transition).
 	require.ErrorIs(t,
 		svc.stores.taskStore.UpdateStatusFromVersion(ctx, testProjectID, task.ID, ready.Status, ready.Version, model.TaskStatusDone),
-		store.ErrTaskStateInvalid,
+		store.ErrOperationDisabled,
 	)
 	require.ErrorIs(t, svc.taskSvc.ConfirmMergedFact(
 		ctx, testProjectID, task.ID, "gitlab:event:1", strings.Repeat("a", 40),
