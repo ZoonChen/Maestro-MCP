@@ -26,8 +26,19 @@ func TestCanonicalTaskStateMachineExhaustive(t *testing.T) {
 	if IsTaskStatus("pending") || CanTaskTransition("unknown", "unknown") {
 		t.Fatal("legacy/unknown values must not become new domain states")
 	}
-	if CanTaskTransition(TaskStatusReadyForHumanMerge, TaskStatusDone) {
-		t.Fatal("generic state machine must not manufacture a merged fact")
+	// M2 contract freeze: the merge-fact edge EXISTS for the verified
+	// webhook/reconciliation authority to drive — but it is the ONLY way
+	// into done. No other state may reach it.
+	if !CanTaskTransition(TaskStatusReadyForHumanMerge, TaskStatusDone) {
+		t.Fatal("ready_for_human_merge -> done must exist for the verified merge fact")
+	}
+	for from := range taskTransitions {
+		if from == TaskStatusReadyForHumanMerge || from == TaskStatusDone {
+			continue
+		}
+		if CanTaskTransition(from, TaskStatusDone) {
+			t.Fatalf("state %q must not reach done directly", from)
+		}
 	}
 }
 

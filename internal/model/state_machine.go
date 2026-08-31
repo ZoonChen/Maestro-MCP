@@ -33,8 +33,12 @@ var taskTransitions = map[string]map[string]struct{}{
 	TaskStatusReadyForHumanMerge: {
 		TaskStatusValidating: {}, // SHA/evidence/policy changed
 		TaskStatusNeedsHuman: {},
-		// done is deliberately absent. M0 has no verified GitLab merge-fact
-		// authority; M2 must introduce that transition with its durable fact.
+		// The M2 merge-fact edge: only a signature-verified GitLab merged
+		// webhook (or reconciliation with matching source/target SHA and
+		// merge_commit_sha) may drive this transition, binding
+		// DATA-INV-003's merged_at/merge_commit_sha/source event ID. M2
+		// webhook ingestion enforces the fact; the machine only carries it.
+		TaskStatusDone: {},
 	},
 	TaskStatusBlocked: {
 		TaskStatusQueued:     {},

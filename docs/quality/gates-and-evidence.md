@@ -1,7 +1,7 @@
 ---
 doc_id: QUAL-GATES-EVIDENCE
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: qa_owner

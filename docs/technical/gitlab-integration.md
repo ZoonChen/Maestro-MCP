@@ -1,7 +1,7 @@
 ---
 doc_id: TECH-GL-001
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: technical_lead
@@ -86,7 +86,7 @@ Webhook 唯一 `(instance_id, external_event_id)`；无 ID 时用 raw digest+受
 
 ## 9. 安全、Secret、隐私和审计
 
-Webhook 对原始 bytes 验签，使用常量时间比较、timestamp/replay window 与 key rotation；兼容 token 模式必须显式标 legacy capability。Token 只在 Secret Store，日志仅 hash/last4；URL 防 SSRF/DNS rebinding/跨 Host redirect，TLS 不可关闭。审计 Instance/mapping/token rotation、Webhook deny/replay、API action、MR/pipeline sync、DLQ replay；payload 加密并按保留期删除。
+Webhook 验证按平台能力分级：支持 HMAC 的平台对原始 bytes 验签 + timestamp/replay window；GitLab CE（自建基线）仅有静态共享 `X-Gitlab-Token`（S4 实测），采用常量时间比较 + TLS + received_at 短窗 + `(instance_id, X-Gitlab-Event-UUID)` 去重，payload 一律不可信。两种模式都要求 key rotation 与 hook 身份校验（`X-Gitlab-Webhook-UUID`）。Token 只在 Secret Store，日志仅 hash/last4；URL 防 SSRF/DNS rebinding/跨 Host redirect，TLS 不可关闭。审计 Instance/mapping/token rotation、Webhook deny/replay、API action、MR/pipeline sync、DLQ replay；payload 加密并按保留期删除。
 
 ## 10. 质量门禁、证据与 fail-closed 规则
 

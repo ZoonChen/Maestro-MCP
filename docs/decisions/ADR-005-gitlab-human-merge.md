@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-005
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: product_owner
@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-005：GitLab 中由人最终合并
 
-> 决策状态：待评审接受。M0 已从公开 MCP 目录移除 `merge_task`，Service 层 `MergeTask` 固定返回禁用错误，无 v3 幂等契约的 merge-conflict follow-up 也被 fail-closed 禁用。GitLab MR/Pipeline/Webhook 尚未实现，`done` 的 merged webhook/对账真源仍属 M2，因此本 ADR 仍为 `not_started/unverified`。
+> 决策状态：已评审接受（I2 契约冻结 sprint；签署以契约 PR 评审批准记录为准）。M0 已从公开 MCP 目录移除 `merge_task`，Service 层 `MergeTask` 固定返回禁用错误，无 v3 幂等契约的 merge-conflict follow-up 也被 fail-closed 禁用。GitLab MR/Pipeline/Webhook 尚未实现，`done` 的 merged webhook/对账真源仍属 M2，因此本 ADR 仍为 `not_started/unverified`。
 
 ## 1. 目标与非目标
 
