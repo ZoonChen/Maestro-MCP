@@ -1,2 +1,7 @@
+ALTER TABLE waivers DROP COLUMN IF EXISTS version;
+ALTER TABLE waivers DROP COLUMN IF EXISTS merge_request_iid;
+ALTER TABLE gate_snapshots DROP COLUMN IF EXISTS version;
+ALTER TABLE evidence DROP COLUMN IF EXISTS sensitivity;
+ALTER TABLE evidence DROP COLUMN IF EXISTS status;
 ALTER TABLE evidence DROP COLUMN IF EXISTS attempt;
 DROP TABLE IF EXISTS quality_policies;

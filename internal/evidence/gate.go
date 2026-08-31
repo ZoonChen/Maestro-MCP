@@ -229,11 +229,13 @@ func validateTuple(tup Tuple) error {
 // for a new SHA).
 type StoredSnapshot struct {
 	GateID        string
+	WorkItemID    string
 	Check         string
 	SourceSHA     string
 	TargetSHA     string
 	PolicyVersion string
 	Status        string
+	Version       int64
 }
 
 func StaleGateIDs(existing []StoredSnapshot, tup Tuple) []string {

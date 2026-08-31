@@ -13,12 +13,13 @@ func TestNewWaiverValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	valid := WaiverRequestInput{
-		GateID:    StableGateID(evalTuple(), GateUnit),
-		Check:     GateUnit,
-		SourceSHA: sha(40),
-		Requester: "req-1",
-		Reason:    "infra flake documented in ticket-123",
-		ExpiresAt: evalNow.Add(48 * time.Hour),
+		GateID:          StableGateID(evalTuple(), GateUnit),
+		Check:           GateUnit,
+		SourceSHA:       sha(40),
+		MergeRequestIID: 7,
+		Requester:       "req-1",
+		Reason:          "infra flake documented in ticket-123",
+		ExpiresAt:       evalNow.Add(48 * time.Hour),
 	}
 
 	waiver, err := NewWaiver(resolved, valid, evalNow)
@@ -37,6 +38,7 @@ func TestNewWaiverValidation(t *testing.T) {
 		{"short reason", func(w *WaiverRequestInput) { w.Reason = "too short" }},
 		{"missing requester", func(w *WaiverRequestInput) { w.Requester = "" }},
 		{"bad source SHA", func(w *WaiverRequestInput) { w.SourceSHA = "not-a-sha" }},
+		{"missing merge request", func(w *WaiverRequestInput) { w.MergeRequestIID = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,12 +53,13 @@ func TestNewWaiverValidation(t *testing.T) {
 func TestWaiverLifecycle(t *testing.T) {
 	resolved, _ := ResolveEffective(testCompanyPolicy(), nil)
 	base := WaiverRequestInput{
-		GateID:    StableGateID(evalTuple(), GateUnit),
-		Check:     GateUnit,
-		SourceSHA: sha(40),
-		Requester: "req-1",
-		Reason:    "infra flake documented in ticket-456",
-		ExpiresAt: evalNow.Add(24 * time.Hour),
+		GateID:          StableGateID(evalTuple(), GateUnit),
+		Check:           GateUnit,
+		SourceSHA:       sha(40),
+		MergeRequestIID: 7,
+		Requester:       "req-1",
+		Reason:          "infra flake documented in ticket-456",
+		ExpiresAt:       evalNow.Add(24 * time.Hour),
 	}
 
 	t.Run("approve requires a distinct approver", func(t *testing.T) {

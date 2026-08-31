@@ -71,6 +71,19 @@ var routeAction = map[string]map[string]string{
 	"/api/v1/projects/:id/ws":                                {http.MethodGet: "work_item.read"},
 	"/api/v1/projects/:id/archive":                           {http.MethodPost: "project.update"},
 	"/api/v1/projects/:id/restore":                           {http.MethodPost: "project.update"},
+	// Quality (M2-QG-001, frozen control-plane.yaml Quality tag).
+	// waiver.approve is held by functional approvers only
+	// (security_owner / qa_owner with category conditions) — the deny
+	// every human role receives today is the correct frozen decision
+	// until the identity layer models functional roles.
+	"/api/v1/projects/:id/quality-policy":        {http.MethodGet: "quality.read", http.MethodPut: "project_policy.strengthen"},
+	"/api/v1/projects/:id/work-items/:wid/gates": {http.MethodGet: "quality.read"},
+	"/api/v1/projects/:id/work-items/:wid/evidence": {
+		http.MethodGet: "quality.read",
+	},
+	"/api/v1/projects/:id/gates/:gid/waivers":   {http.MethodPost: "waiver.request"},
+	"/api/v1/projects/:id/waivers/:wid/approve": {http.MethodPost: "waiver.approve"},
+	"/api/v1/projects/:id/waivers/:wid/revoke":  {http.MethodPost: "waiver.revoke"},
 }
 
 // OIDCMiddleware holds the identity wiring for one transport.

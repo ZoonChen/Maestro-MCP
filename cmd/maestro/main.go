@@ -663,6 +663,15 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
 	}
 
+	// M2 quality REST surface: the engine is deterministic and the
+	// company baseline is embedded, so the surface mounts whenever the
+	// PostgreSQL store is present.
+	quality, qualityErr := handler.NewQualityHandler(pgStore.Quality())
+	if qualityErr != nil {
+		return *options, fail(exitUsage, "CONFIG_INVALID", qualityErr)
+	}
+	options.Quality = quality
+
 	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
 	// The pool lives for the process lifetime; closing happens on exit.
 	return *options, nil

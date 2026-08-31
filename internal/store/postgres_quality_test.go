@@ -224,12 +224,13 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 	tup := qualityTuple(projectID, workItemID)
 
 	waiver, err := evidence.NewWaiver(resolved, evidence.WaiverRequestInput{
-		GateID:    evidence.StableGateID(tup, evidence.GateUnit),
-		Check:     evidence.GateUnit,
-		SourceSHA: tup.SourceSHA,
-		Requester: "user-requester",
-		Reason:    "documented infra flake ticket-999",
-		ExpiresAt: now.Add(24 * time.Hour),
+		GateID:          evidence.StableGateID(tup, evidence.GateUnit),
+		Check:           evidence.GateUnit,
+		SourceSHA:       tup.SourceSHA,
+		MergeRequestIID: 7,
+		Requester:       "user-requester",
+		Reason:          "documented infra flake ticket-999",
+		ExpiresAt:       now.Add(24 * time.Hour),
 	}, now)
 	require.NoError(t, err)
 
@@ -241,9 +242,9 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 	_, err = store.CreateWaiver(ctx, waiver, projectID, workItemID)
 	assert.ErrorIs(t, err, ErrWaiverConflict)
 
-	// Self-approval is rejected in SQL.
+	// Self-approval is rejected in SQL with its own condition.
 	err = store.ApproveWaiver(ctx, waiverID, "user-requester")
-	assert.ErrorIs(t, err, ErrWaiverConflict)
+	assert.ErrorIs(t, err, ErrWaiverSelfApprove)
 
 	// A distinct approver succeeds; double approval then conflicts.
 	require.NoError(t, store.ApproveWaiver(ctx, waiverID, "user-approver"))

@@ -13,12 +13,13 @@ type EffectivePolicy struct {
 	Provenance   []PolicyLayer
 }
 
-// PolicyLayer records one layer that contributed to the resolution.
+// PolicyLayer records one layer that contributed to the resolution
+// (the wire provenance shape).
 type PolicyLayer struct {
-	Scope    string // company | project | task
-	PolicyID string
-	Version  string
-	Digest   string
+	Scope    string `json:"scope"` // company | project | task
+	PolicyID string `json:"policy_id"`
+	Version  string `json:"version"`
+	Digest   string `json:"digest"`
 }
 
 // ErrPolicyWeakened reports a project overlay that tries to relax the

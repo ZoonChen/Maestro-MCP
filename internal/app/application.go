@@ -84,6 +84,9 @@ type Options struct {
 	// (M1-MCP-001): project, session and worker identity are assigned here,
 	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
 	MCPBinding *maestrotools.TransportBinding
+	// Quality mounts the M2 quality REST surface (M2-QG-001) onto the
+	// /api/v1 authorize tree; nil keeps it unexposed.
+	Quality *handler.QualityHandler
 	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
 	// registers none; readiness keeps its local-baseline semantics until a
 	// stream wires PostgreSQL/OIDC/runner-pool probes.
@@ -291,6 +294,7 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			LogWriter:      opts.HTTPLogWriter,
 			IsDraining:     draining.Load,
 			Identity:       opts.Identity,
+			Quality:        opts.Quality,
 		},
 	)
 	if opts.RunnerV3 != nil {
