@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -208,6 +209,7 @@ func (h *runnerV3) claim(c *gin.Context) {
 		case errors.Is(err, store.ErrRunnerStatusInvalid):
 			staticErrorReply(c, http.StatusForbidden, "FORBIDDEN", "Runner is not eligible to claim")
 		default:
+			slog.Error("v3 runner claim failed", "error", err)
 			staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Lease dispatch failed")
 		}
 		return
@@ -270,6 +272,7 @@ func (h *runnerV3) complete(c *gin.Context) {
 		case store.ErrLeaseNotFound:
 			staticErrorReply(c, http.StatusGone, "LEASE_EXPIRED", "The lease no longer exists")
 		default:
+			slog.Error("v3 runner complete failed", "error", err)
 			staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Completion failed")
 		}
 		return
@@ -299,6 +302,7 @@ func leaseErrorReply(c *gin.Context, err error) {
 	case store.ErrLeaseVersionMismatch:
 		staticErrorReply(c, http.StatusConflict, "LEASE_VERSION_MISMATCH", "The lease version is stale")
 	default:
+		slog.Error("v3 runner heartbeat failed", "error", err)
 		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Heartbeat failed")
 	}
 }

@@ -15,7 +15,12 @@ import (
 func AuthMiddleware(authToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if isAnonymousHealthPath(path) {
+		// The /api/v3 Runner group carries its own scheme per runner.yaml
+		// (one public enroll route, device tokens elsewhere) and self-gates
+		// in RegisterRunnerV3 — the same carve-out the OIDC middleware
+		// applies, so a device token is never misread as a control-plane
+		// bearer token in the static-token composition.
+		if isAnonymousHealthPath(path) || strings.HasPrefix(path, "/api/v3/") {
 			c.Next()
 			return
 		}
