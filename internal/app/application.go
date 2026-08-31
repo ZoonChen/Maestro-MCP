@@ -68,6 +68,10 @@ type Options struct {
 	// RunnerV3 mounts the Control Plane side of the frozen runner.yaml
 	// (M1-RUN-001); nil leaves the v3 Runner API unexposed.
 	RunnerV3 *handler.RunnerV3Options
+	// MCPGuard enforces the frozen tool permissions on MCP tool calls
+	// through the same policy as REST (M1 exit gate: one authorize for
+	// every surface); nil keeps the M0 delegated-context mode.
+	MCPGuard *maestrotools.ToolGuard
 	// MCPBinding is the server-side transport scope for MCP claim tools
 	// (M1-MCP-001): project, session and worker identity are assigned here,
 	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
@@ -249,6 +253,7 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 
 	mcpServices := &maestrotools.Services{
 		Binding:    opts.MCPBinding,
+		Guard:      opts.MCPGuard,
 		Project:    projectService,
 		Feature:    featureService,
 		Task:       taskService,

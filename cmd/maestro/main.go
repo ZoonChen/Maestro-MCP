@@ -593,6 +593,17 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		options.Identity = middleware.IdentityMount()
 	}
 
+	// MCP tool authorization: when the identity layer is mounted, tool
+	// calls go through the SAME frozen policy as REST.
+	if cfg.OIDC != nil {
+		guard, guardErr := maestrotools.NewToolGuard(policy)
+		if guardErr != nil {
+			_ = database.Close()
+			return *options, fail(exitUsage, "CONFIG_INVALID", guardErr)
+		}
+		options.MCPGuard = guard
+	}
+
 	// v3 Runner API: requires the device-token secret from the
 	// environment (secrets never live in the config file). Without it the
 	// Runner API stays unexposed — honest degradation, never a fake.

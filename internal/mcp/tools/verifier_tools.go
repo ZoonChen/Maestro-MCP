@@ -38,7 +38,7 @@ func registerGetVerificationTask(s *mcpserver.MCPServer, services *Services) {
 				mcp.Description("Caller capability labels used for eligibility filtering"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("get_verification_task", services.guardTool("get_verification_task", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			idempotencyKey, err := req.RequireString("idempotency_key")
 			if err != nil {
 				return errorResult(err), nil
@@ -89,7 +89,7 @@ func registerGetVerificationTask(s *mcpserver.MCPServer, services *Services) {
 				return nil, fmt.Errorf("marshal verification claim: %w", err)
 			}
 			return mcp.NewToolResultText(string(payload)), nil
-		},
+		})),
 	)
 }
 
@@ -109,7 +109,7 @@ func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithArray("evidence_refs", mcp.Required(), mcp.Description("1-100 evidence references")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("submit_verification", services.guardTool("submit_verification", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			workItemID, err := req.RequireString("work_item_id")
 			if err != nil {
 				return errorResult(err), nil
@@ -163,6 +163,6 @@ func registerSubmitVerification(s *mcpserver.MCPServer, services *Services) {
 			}
 			return mcp.NewToolResultText(fmt.Sprintf(`{"work_item_id":%q,"decision":%q,"status":%q}`,
 				workItemID, decision, resulting)), nil
-		},
+		})),
 	)
 }
