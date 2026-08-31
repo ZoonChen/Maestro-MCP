@@ -685,10 +685,20 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		if qualityErr != nil {
 			return *options, fail(exitUsage, "CONFIG_INVALID", qualityErr)
 		}
+		gitlabHandler := handler.NewGitLabHandler(pgStore.Instances())
+		if os.Getenv("MAESTRO_WEBHOOK_PAYLOAD_KEY") != "" {
+			// The reconcile path shares the syncer the webhook consumer
+			// drives, so it arms under the same presence condition.
+			gitlabHandler = gitlabHandler.WithReconciler(&gitlab.Reconciler{
+				Mapping: pgStore.Instances(),
+				Secrets: webhook.EnvSecretResolver{},
+				Syncer:  &gitlab.Syncer{Store: pgStore.GitLab()},
+			})
+		}
 		options.ControlPlane = &handler.ControlPlaneOptions{
 			Identity: identityMiddleware,
 			Quality:  quality,
-			GitLab:   handler.NewGitLabHandler(pgStore.Instances()),
+			GitLab:   gitlabHandler,
 			Scope:    pgStore.Instances(),
 		}
 	}

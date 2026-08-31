@@ -34,6 +34,9 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/gitlab/merge-requests/:iid": {
 		http.MethodGet: "project.read",
 	},
+	"/api/v3/projects/:pid/gitlab/merge-requests/:iid/reconcile": {
+		http.MethodPost: "gitlab.reconcile",
+	},
 	"/api/v3/projects/:pid/quality-policy": {
 		http.MethodGet: "quality.read",
 		http.MethodPut: "project_policy.strengthen",
@@ -99,6 +102,7 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 		group.GET("/projects/:pid/gitlab-mapping", options.GitLab.GetMapping)
 		group.PUT("/projects/:pid/gitlab-mapping", options.GitLab.PutMapping)
 		group.GET("/projects/:pid/gitlab/merge-requests/:iid", options.GitLab.GetMergeRequest)
+		group.POST("/projects/:pid/gitlab/merge-requests/:iid/reconcile", options.GitLab.ReconcileMergeRequest)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
+
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -23,16 +25,30 @@ type GitLabStore interface {
 	PutMapping(ctx context.Context, projectID, instanceID string, gitlabProjectID int64, targetBranch string, expectedVersion int64) (*store.MappingView, error)
 	MergeRequestProjection(ctx context.Context, projectID string, mrIID int64) (map[string]any, bool, error)
 	ProjectExists(ctx context.Context, projectID string) (bool, error)
+	ProjectMappingContext(ctx context.Context, projectID string) (instanceID, baseURL, botSecretRef string, gitlabProjectID int64, targetBranch string, mappingVersion int64, found bool, err error)
+}
+
+// Reconciler is the outbound reconciliation surface (nil leaves the
+// reconcile endpoint answering 503 — the connector is optional).
+type Reconciler interface {
+	ReconcileMergeRequest(ctx context.Context, projectID string, mrIID int64) (*gitlab.ReconcileOutcome, error)
 }
 
 // GitLabHandler serves the registry endpoints.
 type GitLabHandler struct {
-	store GitLabStore
+	store     GitLabStore
+	reconcile Reconciler
 }
 
 // NewGitLabHandler builds the handler.
 func NewGitLabHandler(gitlabStore GitLabStore) *GitLabHandler {
 	return &GitLabHandler{store: gitlabStore}
+}
+
+// WithReconciler arms the reconcile endpoint.
+func (h *GitLabHandler) WithReconciler(r Reconciler) *GitLabHandler {
+	h.reconcile = r
+	return h
 }
 
 type instanceCreateBody struct {
@@ -178,6 +194,67 @@ func (h *GitLabHandler) GetMergeRequest(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, projection)
+}
+
+// ReconcileMergeRequest pulls provider facts and refreshes the read
+// models (reconcileMergeRequest: gitlab.reconcile, If-Match binding
+// the CURRENT mapping version — the caller's integration view must not
+// be stale — and a substantive reason).
+func (h *GitLabHandler) ReconcileMergeRequest(c *gin.Context) {
+	projectID := c.Param("pid")
+	if c.GetHeader("Idempotency-Key") == "" {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
+		return
+	}
+	iid, ok := parseMergeRequestIID(c.Param("iid"))
+	if !ok {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "merge_request_iid must be a positive integer")
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Reason) < 8 || len(body.Reason) > 2000 {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A reason of 8-2000 characters is required")
+		return
+	}
+	_, _, _, _, _, mappingVersion, found, err := h.store.ProjectMappingContext(c.Request.Context(), projectID)
+	if err != nil {
+		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Mapping could not be resolved")
+		return
+	}
+	if !found {
+		staticErrorReply(c, http.StatusNotFound, "MAPPING_NOT_FOUND", "No GitLab mapping exists for this project")
+		return
+	}
+	match, ok := parseIfMatch(c.GetHeader("If-Match"))
+	if !ok {
+		staticErrorReply(c, http.StatusPreconditionRequired, "PRECONDITION_REQUIRED", "If-Match with the mapping version is required")
+		return
+	}
+	if match != mappingVersion {
+		staticErrorReply(c, http.StatusPreconditionFailed, "PRECONDITION_FAILED", "Mapping version mismatch")
+		return
+	}
+	if h.reconcile == nil {
+		// Request validation passed; only the optional connector is
+		// absent — honest degradation after the guards, not before.
+		staticErrorReply(c, http.StatusServiceUnavailable, "CONNECTOR_NOT_CONFIGURED", "GitLab reconciliation is not configured")
+		return
+	}
+
+	outcome, err := h.reconcile.ReconcileMergeRequest(c.Request.Context(), projectID, iid)
+	if err != nil {
+		// Provider unavailability keeps the cached projection and
+		// answers 503: reconciliation never fabricates provider state.
+		staticErrorReply(c, http.StatusServiceUnavailable, "PROVIDER_UNAVAILABLE", "GitLab provider is unavailable")
+		return
+	}
+	_ = outcome
+	c.JSON(http.StatusAccepted, gin.H{
+		"operation_id": c.GetHeader("Idempotency-Key"),
+		"status":       "accepted",
+	})
 }
 
 func parseMergeRequestIID(raw string) (int64, bool) {

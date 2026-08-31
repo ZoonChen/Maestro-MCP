@@ -415,6 +415,38 @@ func TestGitLabRegistryEndpoints(t *testing.T) {
 		assert.Equal(t, `"2"`, replaced.Header().Get("ETag"))
 	})
 
+	t.Run("reconcile endpoint guards and answers 503 without the connector", func(t *testing.T) {
+		base := "/api/v3/projects/" + qProjectID + "/gitlab/merge-requests/12/reconcile"
+
+		denied := f.request(t, f.viewerTK, http.MethodPost, base,
+			map[string]string{"If-Match": `"1"`, "Idempotency-Key": "rc0"},
+			`{"reason": "periodic drift check"}`)
+		assert.Equal(t, http.StatusForbidden, denied.Code)
+
+		missing := f.request(t, f.adminTK, http.MethodPost, base,
+			map[string]string{"Idempotency-Key": "rc1"}, `{"reason": "periodic drift check"}`)
+		assert.Equal(t, http.StatusPreconditionRequired, missing.Code)
+
+		// The lifecycle subtest created the mapping: a stale If-Match
+		// answers 412, the current version passes the guards and hits
+		// the honest 503 (connector not configured in this fixture).
+		current := f.request(t, f.adminTK, http.MethodGet,
+			"/api/v3/projects/"+qProjectID+"/gitlab-mapping", nil, "")
+		require.Equal(t, http.StatusOK, current.Code)
+		etag := current.Header().Get("ETag")
+
+		stale := f.request(t, f.adminTK, http.MethodPost, base,
+			map[string]string{"If-Match": `"9999"`, "Idempotency-Key": "rc2"},
+			`{"reason": "periodic drift check"}`)
+		assert.Equal(t, http.StatusPreconditionFailed, stale.Code)
+
+		unavailable := f.request(t, f.adminTK, http.MethodPost, base,
+			map[string]string{"If-Match": etag, "Idempotency-Key": "rc3"},
+			`{"reason": "periodic drift check"}`)
+		assert.Equal(t, http.StatusServiceUnavailable, unavailable.Code)
+		assert.Contains(t, unavailable.Body.String(), "CONNECTOR_NOT_CONFIGURED")
+	})
+
 	t.Run("unknown project scope hides", func(t *testing.T) {
 		response := f.request(t, f.adminTK, http.MethodGet,
 			"/api/v3/projects/018f7500-0000-7000-8000-00000000dead/gitlab-mapping", nil, "")

@@ -183,16 +183,37 @@ func (s pgInstanceStore) PutMapping(ctx context.Context, projectID, instanceID s
 	return view, nil
 }
 
+// ProjectMappingContext resolves the reconcile scope (Reconciler's
+// MappingContext): instance identity, egress target, bot credential
+// reference, numeric project, target branch and the mapping version
+// the reconcile If-Match binds.
+func (s pgInstanceStore) ProjectMappingContext(ctx context.Context, projectID string) (string, string, string, int64, string, int64, bool, error) {
+	var instanceID, baseURL, botRef, targetBranch string
+	var numericID, version int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT i.id::text, i.base_url, i.bot_credential_ref, m.gitlab_project_id,
+			COALESCE(m.default_branch, ''), m.version
+		FROM gitlab_project_mappings m JOIN gitlab_instances i ON i.id = m.gitlab_instance_id
+		WHERE m.project_id = $1`, projectID).
+		Scan(&instanceID, &baseURL, &botRef, &numericID, &targetBranch, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", 0, "", 0, false, nil
+	}
+	if err != nil {
+		return "", "", "", 0, "", 0, false, fmt.Errorf("instances: mapping context: %w", err)
+	}
+	return instanceID, baseURL, botRef, numericID, targetBranch, version, true, nil
+}
+
 // MergeRequestProjection reads one cached MR projection with its
 // pipeline states (the frozen read model).
 func (s pgInstanceStore) MergeRequestProjection(ctx context.Context, projectID string, mrIID int64) (map[string]any, bool, error) {
-	var id, state, source, target string
-	var sourceSHA, targetSHA, mergeCommit sql.NullString
-	var workItem sql.NullString
+	var state string
+	var sourceSHA, targetSHA sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id::text, state, source_branch, target_branch, source_sha, target_sha, merge_commit_sha, work_item_id::text
-		FROM merge_requests WHERE project_id = $1 AND mr_iid = $2`, projectID, mrIID).
-		Scan(&id, &state, &source, &target, &sourceSHA, &targetSHA, &mergeCommit, &workItem)
+		SELECT state, source_sha, target_sha FROM merge_requests
+		WHERE project_id = $1 AND mr_iid = $2`, projectID, mrIID).
+		Scan(&state, &sourceSHA, &targetSHA)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -200,29 +221,26 @@ func (s pgInstanceStore) MergeRequestProjection(ctx context.Context, projectID s
 		return nil, false, fmt.Errorf("mr projection: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.gitlab_pipeline_id, p.status, p.sha FROM pipelines p
-		WHERE p.project_id = $1 AND p.ref = $2 ORDER BY p.observed_at DESC LIMIT 10`, projectID, source)
-	if err != nil {
-		return nil, false, fmt.Errorf("mr projection pipelines: %w", err)
-	}
-	defer rows.Close()
-	pipelines := []map[string]any{}
-	for rows.Next() {
-		var pipelineID int64
-		var status, sha string
-		if err := rows.Scan(&pipelineID, &status, &sha); err != nil {
-			return nil, false, fmt.Errorf("mr projection pipeline scan: %w", err)
-		}
-		pipelines = append(pipelines, map[string]any{
-			"pipeline_id": pipelineID, "status": status, "sha": sha,
-		})
+	var pipelineID int64
+	var pipelineStatus string
+	pipeErr := s.db.QueryRowContext(ctx, `
+		SELECT gitlab_pipeline_id, status FROM pipelines
+		WHERE project_id = $1 AND ref IN (
+			SELECT source_branch FROM merge_requests WHERE project_id = $1 AND mr_iid = $2
+		) ORDER BY observed_at DESC LIMIT 1`, projectID, mrIID).
+		Scan(&pipelineID, &pipelineStatus)
+	if pipeErr != nil && !errors.Is(pipeErr, sql.ErrNoRows) {
+		return nil, false, fmt.Errorf("mr projection pipelines: %w", pipeErr)
 	}
 
+	// The frozen MergeRequestProjection wire shape only; internals
+	// (branch names, work-item binding) stay server-side.
+	wireState := state
+	if wireState == "locked" {
+		wireState = "closed"
+	}
 	projection := map[string]any{
-		"id": id, "merge_request_iid": mrIID, "state": state,
-		"source_branch": source, "target_branch": target,
-		"pipelines": pipelines,
+		"iid": mrIID, "state": wireState, "stale": false,
 	}
 	if sourceSHA.Valid {
 		projection["source_sha"] = sourceSHA.String
@@ -230,11 +248,8 @@ func (s pgInstanceStore) MergeRequestProjection(ctx context.Context, projectID s
 	if targetSHA.Valid {
 		projection["target_sha"] = targetSHA.String
 	}
-	if mergeCommit.Valid {
-		projection["merge_commit_sha"] = mergeCommit.String
-	}
-	if workItem.Valid {
-		projection["work_item_id"] = workItem.String
+	if pipelineID >= 1 {
+		projection["pipeline_id"] = pipelineID
 	}
 	return projection, true, nil
 }
