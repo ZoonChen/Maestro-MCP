@@ -32,7 +32,7 @@ export PGHOST PGPORT PGUSER PGDATABASE
 echo "restore: DESTROYING schema of $PGDATABASE@$PGHOST:$PGPORT and restoring $DUMP"
 if command -v psql >/dev/null && command -v pg_restore >/dev/null; then
   psql --no-psqlrc -v ON_ERROR_STOP=1 <<SQL
-DROP SCHEMA public CASCADE;
+DROP SCHEMA IF EXISTS public CASCADE;
 DROP SCHEMA IF EXISTS maestro_meta CASCADE;
 CREATE SCHEMA public;
 SQL
@@ -42,7 +42,7 @@ else
   PG_CID="$(cd "$ROOT" && docker compose ps -q maestro-postgres 2>/dev/null || true)"
   [ -n "$PG_CID" ] || { echo "restore: no host psql and no maestro-postgres container" >&2; exit 1; }
   docker exec -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CID" psql -U "$PGUSER" -d "$PGDATABASE" \
-    -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS maestro_meta CASCADE; CREATE SCHEMA public;'
+    -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS public CASCADE; DROP SCHEMA IF EXISTS maestro_meta CASCADE; CREATE SCHEMA public;'
   docker cp "$DUMP" "$PG_CID:/tmp/restore.dump" >/dev/null
   docker exec -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CID" \
     pg_restore -U "$PGUSER" -d "$PGDATABASE" --no-owner --no-privileges /tmp/restore.dump
