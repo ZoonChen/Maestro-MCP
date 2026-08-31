@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,19 @@ func TestStoreResolverDerivesMemberships(t *testing.T) {
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
 	}
-	db, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
+	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	admin, err := store.OpenPostgres(context.Background(), dsn)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_identity_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `CREATE DATABASE maestro_identity_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_identity_test WITH (FORCE)`)
+		_ = admin.Close()
+	})
+	db, err := store.OpenPostgres(context.Background(),
+		dsn[:strings.LastIndex(dsn, "/")+1]+"maestro_identity_test")
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	_, err = db.ExecContext(context.Background(),
