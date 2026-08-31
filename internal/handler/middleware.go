@@ -69,8 +69,11 @@ func buildOriginAllowlist(allowedOrigins []string) map[string]struct{} {
 	return allowlist
 }
 
-// RemoteWriteGuard disables HTTP mutations unless they are explicitly enabled
-// by trusted server configuration. It does not affect local stdio MCP calls.
+// RemoteWriteGuard is the engine-wide write master gate: every non-read
+// request (REST mutations, HTTP MCP write tools, /api/v3 Runner mutations)
+// is rejected unless trusted server configuration enables it explicitly.
+// Default off; doubling as an emergency write stop. It does not affect
+// local stdio MCP calls.
 func RemoteWriteGuard(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		switch c.Request.Method {
