@@ -76,7 +76,7 @@ sequenceDiagram
 | 阶段 | 目标 | 任务书 | 当前状态 |
 | --- | --- | --- | --- |
 | M0 | 可运行工程基线、可信状态机、fail-closed 验证 | [M0](delivery/m0-foundation.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v0 复盘](retrospective/v0-closure-retrospective.md) |
-| M1 | Control Plane、OIDC、PostgreSQL、本地 Runner | [M1](delivery/m1-control-plane-runner.md) | 未实现 |
+| M1 | Control Plane、OIDC、PostgreSQL、本地 Runner | [M1](delivery/m1-control-plane-runner.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v1 复盘](retrospective/v1-retrospective.md) |
 | M2 | GitLab baseline、MR、Pipeline、质量门禁 | [M2](delivery/m2-gitlab-quality-loop.md) | 未实现 |
 | M3 | 前后端联调、缺陷下发、Agent 修复 | [M3](delivery/m3-integration-defect-automation.md) | 未实现 |
 | M4 | 控制台、评测、审计、可靠性和试点 | [M4](delivery/m4-governance-console.md) | 未实现 |
