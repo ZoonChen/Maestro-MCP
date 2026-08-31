@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/evidence"
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
-	"github.com/ZoonChen/Maestro-MCP/internal/service"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +38,7 @@ type qualityFixture struct {
 	adminTK  string
 	viewerTK string
 	devTK    string
+	platTK   string
 }
 
 func newQualityFixture(t *testing.T) *qualityFixture {
@@ -75,17 +76,6 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 	quality, err := NewQualityHandler(pg.Quality())
 	require.NoError(t, err)
 
-	// The project group guards on the SQLite project service (the M1
-	// hybrid posture: v1 project reads on SQLite, quality rows on PG).
-	sqlite, err := store.NewSQLiteDB(":memory:")
-	require.NoError(t, err)
-	require.NoError(t, sqlite.Init(context.Background()))
-	t.Cleanup(func() { sqlite.Close() })
-	_, err = sqlite.DB().Exec(`INSERT INTO projects (id, name, status, workspace_path, created_at)
-		VALUES ($1, 'q e2e', 'active', '/tmp/q-e2e', datetime('now'))`, qProjectID)
-	require.NoError(t, err)
-	projectService := service.NewProjectService(store.NewSQLiteProjectStore(sqlite.DB()), nil)
-
 	policy, err := identity.EmbeddedPolicy()
 	require.NoError(t, err)
 	idp := newHandlerTestIdP(t)
@@ -93,18 +83,26 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 		"admin-1":  {qProjectID: "project_admin"},
 		"viewer-1": {qProjectID: "viewer"},
 		"dev-1":    {qProjectID: "developer"},
+		"plat-1":   {qProjectID: "platform_admin"},
 	}}
 	verifier, err := identity.NewTokenVerifier(idp.server.URL, "maestro", idp.server.Client())
 	require.NoError(t, err)
 	mw := NewOIDCMiddleware(policy, verifier, resolver)
 
-	router := SetupRouter(nil, nil, nil, nil, nil, nil, projectService, nil, nil, "unused",
-		RouterOptions{Identity: mw.IdentityMount(), RemoteWrite: true, Quality: quality})
+	// The control-plane tree carries its own authentication and the
+	// frozen permission map under /api/v3.
+	router := gin.New()
+	router.Use(mw.Authenticate)
+	RegisterControlPlane(router, ControlPlaneOptions{
+		Identity: mw, Quality: quality,
+		GitLab: NewGitLabHandler(pg.Instances()), Scope: pg.Instances(),
+	})
 	return &qualityFixture{
 		router: router, db: db, pg: pg, quality: quality,
 		adminTK:  idp.signedToken(t, "admin-1"),
 		viewerTK: idp.signedToken(t, "viewer-1"),
 		devTK:    idp.signedToken(t, "dev-1"),
+		platTK:   idp.signedToken(t, "plat-1"),
 	}
 }
 
@@ -120,6 +118,7 @@ func (f *qualityFixture) request(t *testing.T, token, method, path string, heade
 	}
 	response := httptest.NewRecorder()
 	f.router.ServeHTTP(response, request)
+	t.Logf("request %s %s -> %d %s", method, path, response.Code, response.Body.String())
 	return response
 }
 
@@ -147,20 +146,20 @@ func TestQualityPolicyEndpoints(t *testing.T) {
 	f := newQualityFixture(t)
 
 	t.Run("without overlay the company baseline is effective", func(t *testing.T) {
-		response := f.request(t, f.viewerTK, http.MethodGet, "/api/v1/projects/"+qProjectID+"/quality-policy", nil, "")
+		response := f.request(t, f.viewerTK, http.MethodGet, "/api/v3/projects/"+qProjectID+"/quality-policy", nil, "")
 		require.Equal(t, http.StatusOK, response.Code)
 		assert.Contains(t, response.Body.String(), `"company-baseline"`)
 		assert.NotContains(t, response.Body.String(), "ETag")
 	})
 
 	t.Run("viewer cannot strengthen", func(t *testing.T) {
-		response := f.request(t, f.viewerTK, http.MethodPut, "/api/v1/projects/"+qProjectID+"/quality-policy",
+		response := f.request(t, f.viewerTK, http.MethodPut, "/api/v3/projects/"+qProjectID+"/quality-policy",
 			map[string]string{"If-None-Match": "*", "Idempotency-Key": "k1"}, strengtheningOverlayJSON("acme", "3.0.0", true))
 		assert.Equal(t, http.StatusForbidden, response.Code)
 	})
 
 	t.Run("create, weaken, conflict and replace", func(t *testing.T) {
-		base := "/api/v1/projects/" + qProjectID + "/quality-policy"
+		base := "/api/v3/projects/" + qProjectID + "/quality-policy"
 
 		create := f.request(t, f.adminTK, http.MethodPut, base,
 			map[string]string{"If-None-Match": "*", "Idempotency-Key": "k2"}, strengtheningOverlayJSON("acme", "3.0.0", true))
@@ -258,19 +257,19 @@ func TestQualityGatesAndEvidenceReads(t *testing.T) {
 	seedVerdictWithGate(t, f)
 
 	gates := f.request(t, f.devTK, http.MethodGet,
-		"/api/v1/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/gates", nil, "")
+		"/api/v3/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/gates", nil, "")
 	require.Equal(t, http.StatusOK, gates.Code)
 	assert.Contains(t, gates.Body.String(), `"passed"`)
 	assert.Contains(t, gates.Body.String(), `"lint_typecheck"`)
 
 	evidenceList := f.request(t, f.devTK, http.MethodGet,
-		"/api/v1/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/evidence", nil, "")
+		"/api/v3/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/evidence", nil, "")
 	require.Equal(t, http.StatusOK, evidenceList.Code)
 	assert.Contains(t, evidenceList.Body.String(), `"merge_gate"`)
 	assert.Contains(t, evidenceList.Body.String(), `"schema_version":"3.0"`)
 
 	unknown := f.request(t, f.devTK, http.MethodGet,
-		"/api/v1/projects/"+qProjectID+"/work-items/018f7500-0000-7000-8000-00000000dead/gates", nil, "")
+		"/api/v3/projects/"+qProjectID+"/work-items/018f7500-0000-7000-8000-00000000dead/gates", nil, "")
 	assert.Equal(t, http.StatusNotFound, unknown.Code)
 }
 
@@ -278,7 +277,7 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 	f := newQualityFixture(t)
 	gate := seedVerdictWithGate(t, f)
 
-	waiverPath := "/api/v1/projects/" + qProjectID + "/gates/" + gate.GateID + "/waivers"
+	waiverPath := "/api/v3/projects/" + qProjectID + "/gates/" + gate.GateID + "/waivers"
 	body := fmt.Sprintf(`{"source_sha": %q, "merge_request_iid": 7, "check": %q,
 		"reason": "documented infra flake ticket-777", "expires_at": %q}`,
 		gate.SourceSHA, gate.Check, time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339))
@@ -323,7 +322,7 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 		// even the project admin is denied — the honest fail-closed
 		// decision until functional-role identity lands.
 		response := f.request(t, f.adminTK, http.MethodPost,
-			"/api/v1/projects/"+qProjectID+"/waivers/"+waiver.ID+"/approve",
+			"/api/v3/projects/"+qProjectID+"/waivers/"+waiver.ID+"/approve",
 			map[string]string{"If-Match": `"1"`, "Idempotency-Key": "a1"},
 			`{"reason": "independent security review complete"}`)
 		assert.Equal(t, http.StatusForbidden, response.Code)
@@ -335,14 +334,90 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 		waiver := waivers[0]
 
 		missing := f.request(t, f.adminTK, http.MethodPost,
-			"/api/v1/projects/"+qProjectID+"/waivers/"+waiver.ID+"/revoke",
+			"/api/v3/projects/"+qProjectID+"/waivers/"+waiver.ID+"/revoke",
 			map[string]string{"If-Match": `"1"`, "Idempotency-Key": "r1"}, `{"reason": "short"}`)
 		assert.Equal(t, http.StatusBadRequest, missing.Code) // reason too short
 
 		revoked := f.request(t, f.adminTK, http.MethodPost,
-			"/api/v1/projects/"+qProjectID+"/waivers/"+waiver.ID+"/revoke",
+			"/api/v3/projects/"+qProjectID+"/waivers/"+waiver.ID+"/revoke",
 			map[string]string{"If-Match": `"1"`, "Idempotency-Key": "r2"}, `{"reason": "superseded by the fix"}`)
 		require.Equal(t, http.StatusOK, revoked.Code, revoked.Body.String())
 		assert.Contains(t, revoked.Body.String(), `"revoked"`)
+	})
+}
+
+func TestGitLabRegistryEndpoints(t *testing.T) {
+	f := newQualityFixture(t)
+
+	t.Run("platform listing requires the frozen permission", func(t *testing.T) {
+		denied := f.request(t, f.adminTK, http.MethodGet, "/api/v3/gitlab/instances", nil, "")
+		assert.Equal(t, http.StatusForbidden, denied.Code, "project roles never list the platform registry")
+	})
+
+	t.Run("instance create, duplicate and sanitized list", func(t *testing.T) {
+		body := `{"base_url": "https://gitlab.acme.example", "bot_secret_ref": "env:MAESTRO_GITLAB_BOT_A", "webhook_secret_ref": "env:MAESTRO_GITLAB_HOOK_A"}`
+		missing := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "i1"}, body)
+		assert.Equal(t, http.StatusPreconditionRequired, missing.Code)
+
+		created := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "i2", "If-None-Match": "*"}, body)
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+		assert.Contains(t, created.Body.String(), `"https://gitlab.acme.example"`)
+		assert.NotContains(t, created.Body.String(), "secret", "sanitized projections never carry secret refs")
+
+		duplicate := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "i3", "If-None-Match": "*"}, body)
+		assert.Equal(t, http.StatusConflict, duplicate.Code)
+
+		ipLiteral := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "i4", "If-None-Match": "*"},
+			`{"base_url": "https://10.0.0.1", "bot_secret_ref": "env:A", "webhook_secret_ref": "env:B"}`)
+		assert.Equal(t, http.StatusUnprocessableEntity, ipLiteral.Code)
+
+		httpURL := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "i5", "If-None-Match": "*"},
+			`{"base_url": "http://gitlab.acme.example", "bot_secret_ref": "env:A", "webhook_secret_ref": "env:B"}`)
+		assert.Equal(t, http.StatusUnprocessableEntity, httpURL.Code)
+	})
+
+	t.Run("mapping lifecycle with CAS", func(t *testing.T) {
+		var instance struct {
+			ID string `json:"id"`
+		}
+		created := f.request(t, f.platTK, http.MethodPost, "/api/v3/gitlab/instances",
+			map[string]string{"Idempotency-Key": "m0", "If-None-Match": "*"},
+			`{"base_url": "https://gitlab.map.example", "bot_secret_ref": "env:A", "webhook_secret_ref": "env:B"}`)
+		require.Equal(t, http.StatusCreated, created.Code)
+		require.NoError(t, json.Unmarshal(created.Body.Bytes(), &instance))
+
+		absent := f.request(t, f.adminTK, http.MethodGet, "/api/v3/projects/"+qProjectID+"/gitlab-mapping", nil, "")
+		assert.Equal(t, http.StatusNotFound, absent.Code)
+
+		body := fmt.Sprintf(`{"gitlab_instance_id": %q, "gitlab_project_numeric_id": 9001, "target_branch": "main"}`, instance.ID)
+		put := f.request(t, f.adminTK, http.MethodPut, "/api/v3/projects/"+qProjectID+"/gitlab-mapping",
+			map[string]string{"Idempotency-Key": "m1", "If-None-Match": "*"}, body)
+		require.Equal(t, http.StatusCreated, put.Code, put.Body.String())
+		assert.Equal(t, `"1"`, put.Header().Get("ETag"))
+
+		viewerPut := f.request(t, f.viewerTK, http.MethodPut, "/api/v3/projects/"+qProjectID+"/gitlab-mapping",
+			map[string]string{"Idempotency-Key": "m2", "If-None-Match": "*"}, body)
+		assert.Equal(t, http.StatusForbidden, viewerPut.Code)
+
+		stale := f.request(t, f.adminTK, http.MethodPut, "/api/v3/projects/"+qProjectID+"/gitlab-mapping",
+			map[string]string{"Idempotency-Key": "m3", "If-Match": `"9"`}, body)
+		assert.Equal(t, http.StatusPreconditionFailed, stale.Code)
+
+		replaced := f.request(t, f.adminTK, http.MethodPut, "/api/v3/projects/"+qProjectID+"/gitlab-mapping",
+			map[string]string{"Idempotency-Key": "m4", "If-Match": `"1"`},
+			fmt.Sprintf(`{"gitlab_instance_id": %q, "gitlab_project_numeric_id": 9002, "target_branch": "release"}`, instance.ID))
+		require.Equal(t, http.StatusOK, replaced.Code)
+		assert.Equal(t, `"2"`, replaced.Header().Get("ETag"))
+	})
+
+	t.Run("unknown project scope hides", func(t *testing.T) {
+		response := f.request(t, f.adminTK, http.MethodGet,
+			"/api/v3/projects/018f7500-0000-7000-8000-00000000dead/gitlab-mapping", nil, "")
+		assert.Equal(t, http.StatusNotFound, response.Code)
 	})
 }

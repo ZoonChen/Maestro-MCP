@@ -68,7 +68,7 @@ func NewQualityHandler(qualityStore QualityStore) (*QualityHandler, error) {
 // row version; without an overlay no version exists to match, so the
 // response omits the header and the PUT create path uses If-None-Match.
 func (h *QualityHandler) GetQualityPolicy(c *gin.Context) {
-	projectID := c.Param("id")
+	projectID := c.Param("pid")
 	overlay, rowVersion, err := h.store.GetProjectPolicy(c.Request.Context(), projectID)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "quality policy get failed", "error", err.Error())
@@ -97,7 +97,7 @@ func (h *QualityHandler) GetQualityPolicy(c *gin.Context) {
 // concurrency: If-None-Match:* creates, If-Match:"N" replaces; same
 // semver with different content is a conflict.
 func (h *QualityHandler) PutQualityPolicy(c *gin.Context) {
-	projectID := c.Param("id")
+	projectID := c.Param("pid")
 	if c.GetHeader("Idempotency-Key") == "" {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
 		return
@@ -187,7 +187,7 @@ func (h *QualityHandler) PutQualityPolicy(c *gin.Context) {
 // ListWorkItemGates lists the stored gate snapshots, each row bound to
 // its own exact SHA tuple and policy version (listWorkItemGates).
 func (h *QualityHandler) ListWorkItemGates(c *gin.Context) {
-	projectID, workItemID := c.Param("id"), c.Param("wid")
+	projectID, workItemID := c.Param("pid"), c.Param("wid")
 	exists, err := h.store.WorkItemExists(c.Request.Context(), projectID, workItemID)
 	if err != nil {
 		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Gates could not be listed")
@@ -223,7 +223,7 @@ func (h *QualityHandler) ListWorkItemGates(c *gin.Context) {
 // ListWorkItemEvidence lists the immutable evidence records
 // (listWorkItemEvidence), each carrying its authority and SHA tuple.
 func (h *QualityHandler) ListWorkItemEvidence(c *gin.Context) {
-	projectID, workItemID := c.Param("id"), c.Param("wid")
+	projectID, workItemID := c.Param("pid"), c.Param("wid")
 	exists, err := h.store.WorkItemExists(c.Request.Context(), projectID, workItemID)
 	if err != nil {
 		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Evidence could not be listed")
@@ -257,7 +257,7 @@ type waiverRequestBody struct {
 // current version, and the body's SHA and check must match the gate row
 // — a waiver may never bind a drifted tuple.
 func (h *QualityHandler) RequestGateWaiver(c *gin.Context) {
-	projectID, gateID := c.Param("id"), c.Param("gid")
+	projectID, gateID := c.Param("pid"), c.Param("gid")
 	if c.GetHeader("Idempotency-Key") == "" {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
 		return
@@ -350,7 +350,7 @@ func (h *QualityHandler) RevokeGateWaiver(c *gin.Context) {
 }
 
 func (h *QualityHandler) transitionWaiver(c *gin.Context, apply func(*evidence.Waiver, string, string) error) {
-	projectID, waiverID := c.Param("id"), c.Param("wid")
+	projectID, waiverID := c.Param("pid"), c.Param("wid")
 	if c.GetHeader("Idempotency-Key") == "" {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
 		return

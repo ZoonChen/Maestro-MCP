@@ -71,19 +71,6 @@ var routeAction = map[string]map[string]string{
 	"/api/v1/projects/:id/ws":                                {http.MethodGet: "work_item.read"},
 	"/api/v1/projects/:id/archive":                           {http.MethodPost: "project.update"},
 	"/api/v1/projects/:id/restore":                           {http.MethodPost: "project.update"},
-	// Quality (M2-QG-001, frozen control-plane.yaml Quality tag).
-	// waiver.approve is held by functional approvers only
-	// (security_owner / qa_owner with category conditions) — the deny
-	// every human role receives today is the correct frozen decision
-	// until the identity layer models functional roles.
-	"/api/v1/projects/:id/quality-policy":        {http.MethodGet: "quality.read", http.MethodPut: "project_policy.strengthen"},
-	"/api/v1/projects/:id/work-items/:wid/gates": {http.MethodGet: "quality.read"},
-	"/api/v1/projects/:id/work-items/:wid/evidence": {
-		http.MethodGet: "quality.read",
-	},
-	"/api/v1/projects/:id/gates/:gid/waivers":   {http.MethodPost: "waiver.request"},
-	"/api/v1/projects/:id/waivers/:wid/approve": {http.MethodPost: "waiver.approve"},
-	"/api/v1/projects/:id/waivers/:wid/revoke":  {http.MethodPost: "waiver.revoke"},
 }
 
 // OIDCMiddleware holds the identity wiring for one transport.
@@ -179,6 +166,13 @@ func (m *OIDCMiddleware) authenticateBearer(c *gin.Context) bool {
 // with "no membership" hide the resource (404); other denials are 403;
 // missing authentication surfaces as 401.
 func (m *OIDCMiddleware) Authorize(c *gin.Context) {
+	m.authorizeRoute(c, routeAction)
+}
+
+// authorizeRoute is the shared decision body for the v1 and control-
+// plane (/api/v3) trees: same policy, same deny semantics, different
+// frozen route-permission maps.
+func (m *OIDCMiddleware) authorizeRoute(c *gin.Context, actions map[string]map[string]string) {
 	principal := PrincipalFromContext(c)
 	if principal == nil {
 		c.Abort()
@@ -189,8 +183,8 @@ func (m *OIDCMiddleware) Authorize(c *gin.Context) {
 	if route == "" {
 		route = "<unmatched>"
 	}
-	actions, mapped := routeAction[route]
-	action, known := actions[c.Request.Method]
+	routeActions, mapped := actions[route]
+	action, known := routeActions[c.Request.Method]
 	if !mapped || !known {
 		c.Abort()
 		staticErrorReply(c, http.StatusForbidden, "FORBIDDEN", "No permission is mapped for this route")
