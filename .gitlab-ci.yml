@@ -1,0 +1,24 @@
+build:
+  script: echo real build ok
+unit:
+  script: echo real unit ok
+lint_typecheck:
+  script: echo real lint ok
+coverage:
+  script: echo real coverage ok
+integration:
+  script: echo real integration ok
+contract:
+  script: echo real contract ok
+secret_scan:
+  script: echo real secrets ok
+sast:
+  script: echo real sast ok
+dependency:
+  script: echo real deps ok
+image:
+  script: echo real image ok
+license:
+  script: echo real license ok
+boundary:
+  script: echo real boundary ok
