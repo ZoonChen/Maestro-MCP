@@ -2,7 +2,7 @@
 doc_id: SEC-SECRETS-WEBHOOKS-SUPPLY-CHAIN
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
+implementation_status: partial
 verification_status: unverified
 owner_role: security_owner
 approver_roles: [security_owner, technical_lead, operations_owner]

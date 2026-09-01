@@ -2,7 +2,7 @@
 doc_id: QUAL-QUALITY-POLICY
 spec_version: 3.0
 spec_status: review
-implementation_status: not_started
+implementation_status: partial
 verification_status: unverified
 owner_role: qa_owner
 approver_roles: [qa_owner, technical_lead, security_owner]

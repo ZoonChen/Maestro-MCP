@@ -2,7 +2,7 @@
 doc_id: TECH-GL-001
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
+implementation_status: partial
 verification_status: unverified
 owner_role: technical_lead
 approver_roles: [security_owner, qa_owner, operations_owner]

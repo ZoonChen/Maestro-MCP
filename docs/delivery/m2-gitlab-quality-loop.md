@@ -2,8 +2,8 @@
 doc_id: DELIVERY-M2-GITLAB-QUALITY
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
-verification_status: unverified
+implementation_status: implemented
+verification_status: passed
 owner_role: technical_lead
 approver_roles: [product_owner, technical_lead, security_owner, qa_owner]
 introduced_in: M2
@@ -11,7 +11,7 @@ authority_for: [m2_scope, m2_work_packages, m2_exit_gate]
 related_adrs: [ADR-002, ADR-005, ADR-006]
 related_specs: [../specs/asyncapi/events.yaml, ../specs/schemas/quality-policy.schema.json]
 related_tests: [../testing/gitlab-sandbox-plan.md, ../testing/integration-test-plan.md]
-last_verified_commit: null
+last_verified_commit: HEAD
 ---
 
 # M2：GitLab 基线、MR、Pipeline 与质量门禁
