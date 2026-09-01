@@ -20,7 +20,11 @@ func AuthMiddleware(authToken string) gin.HandlerFunc {
 		// in RegisterRunnerV3 — the same carve-out the OIDC middleware
 		// applies, so a device token is never misread as a control-plane
 		// bearer token in the static-token composition.
-		if isAnonymousHealthPath(path) || strings.HasPrefix(path, "/api/v3/") {
+		// The /webhooks/gitlab receiver authenticates with the instance's
+		// shared token per the frozen contract, mirroring the OIDC
+		// middleware carve-out.
+		if isAnonymousHealthPath(path) || strings.HasPrefix(path, "/api/v3/") ||
+			strings.HasPrefix(path, "/webhooks/") {
 			c.Next()
 			return
 		}
