@@ -1,0 +1,38 @@
+{
+  "id": "company-baseline",
+  "version": "3.0.0",
+  "scope": "company",
+  "required_gates": [
+    "baseline_freshness",
+    "boundary",
+    "policy_integrity",
+    "build",
+    "unit",
+    "lint_typecheck",
+    "coverage",
+    "secret_scan",
+    "sast",
+    "dependency",
+    "image",
+    "license"
+  ],
+  "coverage": {
+    "changed_lines_min_percent": 80,
+    "max_total_drop_points": 0.5
+  },
+  "security": {
+    "block_severities": ["critical", "high"],
+    "license_denylist": ["AGPL-3.0-only", "AGPL-3.0-or-later"]
+  },
+  "flaky_retry_count": 1,
+  "waiver": {
+    "max_days": 7,
+    "requires_distinct_approver": true,
+    "non_waivable_gates": [
+      "identity_isolation",
+      "sha_integrity",
+      "policy_integrity",
+      "webhook_authenticity"
+    ]
+  }
+}
