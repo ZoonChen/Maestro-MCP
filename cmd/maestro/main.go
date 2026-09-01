@@ -585,14 +585,15 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 
 	// OIDC identity: issuer/audience from trusted configuration; the
 	// principal resolver derives memberships from the registry.
+	var identityMiddleware *handler.OIDCMiddleware
 	if cfg.OIDC != nil {
 		verifier, verifierErr := identity.NewTokenVerifier(cfg.OIDC.Issuer, cfg.OIDC.Audience, nil)
 		if verifierErr != nil {
 			_ = database.Close()
 			return *options, fail(exitUsage, "CONFIG_INVALID", verifierErr)
 		}
-		middleware := handler.NewOIDCMiddleware(policy, verifier, identity.NewStoreResolver(pgStore.Identities()))
-		options.Identity = middleware.IdentityMount()
+		identityMiddleware = handler.NewOIDCMiddleware(policy, verifier, identity.NewStoreResolver(pgStore.Identities()))
+		options.Identity = identityMiddleware.IdentityMount()
 	}
 
 	// MCP tool authorization: when the identity layer is mounted, tool
@@ -676,14 +677,31 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
 	}
 
-	// M2 quality REST surface: the engine is deterministic and the
-	// company baseline is embedded, so the surface mounts whenever the
-	// PostgreSQL store is present.
-	quality, qualityErr := handler.NewQualityHandler(pgStore.Quality())
-	if qualityErr != nil {
-		return *options, fail(exitUsage, "CONFIG_INVALID", qualityErr)
+	// M2 control-plane tree (quality + GitLab registry) under /api/v3:
+	// the surfaces ride the same identity layer and embedded company
+	// baseline, so they mount whenever PostgreSQL and OIDC are present.
+	if identityMiddleware != nil {
+		quality, qualityErr := handler.NewQualityHandler(pgStore.Quality())
+		if qualityErr != nil {
+			return *options, fail(exitUsage, "CONFIG_INVALID", qualityErr)
+		}
+		gitlabHandler := handler.NewGitLabHandler(pgStore.Instances())
+		if os.Getenv("MAESTRO_WEBHOOK_PAYLOAD_KEY") != "" {
+			// The reconcile path shares the syncer the webhook consumer
+			// drives, so it arms under the same presence condition.
+			gitlabHandler = gitlabHandler.WithReconciler(&gitlab.Reconciler{
+				Mapping: pgStore.Instances(),
+				Secrets: webhook.EnvSecretResolver{},
+				Syncer:  &gitlab.Syncer{Store: pgStore.GitLab()},
+			})
+		}
+		options.ControlPlane = &handler.ControlPlaneOptions{
+			Identity: identityMiddleware,
+			Quality:  quality,
+			GitLab:   gitlabHandler,
+			Scope:    pgStore.Instances(),
+		}
 	}
-	options.Quality = quality
 
 	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
 	// The pool lives for the process lifetime; closing happens on exit.

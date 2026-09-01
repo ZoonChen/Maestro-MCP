@@ -161,12 +161,11 @@ func (s *Syncer) applyMergeRequest(ctx context.Context, instanceID string, body 
 	if payload.Project.ID < 1 || attrs.IID < 1 || attrs.SourceBranch == "" || attrs.TargetBranch == "" {
 		return ApplyOutcome{}, fmt.Errorf("gitlab sync: merge-request payload lacks project/iid/branches")
 	}
-	state := normalizeMRState(attrs.State)
 	rec := MergeRequestRecord{
 		InstanceID:    instanceID,
 		GitlabProject: payload.Project.ID,
 		IID:           attrs.IID,
-		State:         state,
+		State:         normalizeMRState(attrs.State),
 		SourceBranch:  attrs.SourceBranch,
 		TargetBranch:  attrs.TargetBranch,
 		SourceSHA:     attrs.DiffRefs.HeadSHA,
@@ -177,20 +176,25 @@ func (s *Syncer) applyMergeRequest(ctx context.Context, instanceID string, body 
 	if rec.SourceSHA == "" {
 		rec.SourceSHA = attrs.LastCommit.ID
 	}
-
 	projectID, err := s.Store.MappingProject(ctx, instanceID, payload.Project.ID)
 	if err != nil {
 		return ApplyOutcome{}, err
 	}
-	workItemID := WorkItemIDFromBranch(attrs.SourceBranch)
+	return s.ApplyMergeRequestRecord(ctx, projectID, rec, mergeFactID(instanceID, rec))
+}
+
+// ApplyMergeRequestRecord applies one MR fact (webhook-shaped or
+// provider-pulled) through the single truth path: bind by branch
+// marker, upsert the projection, drive the done edge on merged facts.
+func (s *Syncer) ApplyMergeRequestRecord(ctx context.Context, projectID string, rec MergeRequestRecord, factID string) (ApplyOutcome, error) {
+	workItemID := WorkItemIDFromBranch(rec.SourceBranch)
 	if err := s.Store.UpsertMergeRequest(ctx, projectID, rec, workItemID); err != nil {
 		return ApplyOutcome{}, err
 	}
-
-	if state != "merged" || rec.MergeCommit == "" || projectID == "" || workItemID == "" {
+	if rec.State != "merged" || rec.MergeCommit == "" || projectID == "" || workItemID == "" {
 		return ApplyOutcome{Kind: "merge_request"}, nil
 	}
-	transitioned, withheld, err := s.Store.MarkWorkItemDoneFromMerge(ctx, projectID, workItemID, rec.MergeCommit, mergeFactID(instanceID, rec))
+	transitioned, withheld, err := s.Store.MarkWorkItemDoneFromMerge(ctx, projectID, workItemID, rec.MergeCommit, factID)
 	if err != nil {
 		return ApplyOutcome{}, err
 	}

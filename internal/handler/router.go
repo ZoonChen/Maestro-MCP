@@ -24,6 +24,12 @@ type RouterOptions struct {
 	LogWriter      io.Writer
 	IsDraining     func() bool
 
+	// ControlPlane mounts the frozen control-plane.yaml human tree under
+	// its declared /api/v3 base path (quality, GitLab registry) with the
+	// same bearer authentication and frozen policy as the v1 tree; nil
+	// leaves those surfaces unexposed.
+	ControlPlane *ControlPlaneOptions
+
 	// Identity is the M1 identity-layer mount point (M1-AUTH-001). While
 	// nil, the M0 fail-closed shared-token AuthMiddleware keeps guarding the
 	// tree. Once the identity layer is wired (S2), Authenticate replaces the
@@ -227,20 +233,6 @@ func SetupRouter(
 			project.GET("/board", bh.GetBoard)
 			project.GET("/board/activity", bh.GetActivity)
 			project.POST("/worktrees/gc", bh.TriggerWorktreeGC)
-
-			// Quality (M2-QG-001): the frozen Quality tag — effective
-			// policy read/strengthen, exact-SHA gate snapshots, immutable
-			// evidence reads, and the waiver lifecycle. routeAction carries
-			// the frozen permissions; nil leaves the surface unexposed.
-			if opts.Quality != nil {
-				project.GET("/quality-policy", opts.Quality.GetQualityPolicy)
-				project.PUT("/quality-policy", opts.Quality.PutQualityPolicy)
-				project.GET("/work-items/:wid/gates", opts.Quality.ListWorkItemGates)
-				project.GET("/work-items/:wid/evidence", opts.Quality.ListWorkItemEvidence)
-				project.POST("/gates/:gid/waivers", opts.Quality.RequestGateWaiver)
-				project.POST("/waivers/:wid/approve", opts.Quality.ApproveGateWaiver)
-				project.POST("/waivers/:wid/revoke", opts.Quality.RevokeGateWaiver)
-			}
 
 			// WebSocket endpoint for real-time event streaming.
 			project.GET("/ws", func(c *gin.Context) {

@@ -22,13 +22,14 @@ type GitLabWebhookOptions struct {
 	Ingestor *webhook.Ingestor
 }
 
-// RegisterGitLabWebhookIngest mounts POST /webhooks/gitlab/{instance_id}.
+// RegisterGitLabWebhookIngest mounts the frozen receiver path under the
+// control-plane /api/v3 base (contract path alignment).
 func RegisterGitLabWebhookIngest(r *gin.Engine, options GitLabWebhookOptions) {
 	ingestor := options.Ingestor
 	if ingestor == nil {
 		return
 	}
-	r.POST("/webhooks/gitlab/:instance_id", func(c *gin.Context) {
+	r.POST("/api/v3/webhooks/gitlab/:instance_id", func(c *gin.Context) {
 		raw, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			var tooLarge *http.MaxBytesError

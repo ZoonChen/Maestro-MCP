@@ -105,7 +105,7 @@ func (f *whFixture) seedMapping(t *testing.T, webhookUUID string) {
 
 func (f *whFixture) post(t *testing.T, headers map[string]string, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/"+whInstanceID, strings.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/v3/webhooks/gitlab/"+whInstanceID, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	for key, value := range headers {
 		if value == "" {
@@ -361,7 +361,7 @@ func TestWebhookReceiverIsolatedFromBearerTree(t *testing.T) {
 	// The receiver must not require a bearer principal even when the OIDC
 	// middleware is mounted engine-wide: it self-gates on the shared token.
 	f := newWebhookFixture(t)
-	request := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/"+whInstanceID, bytes.NewReader([]byte(mrBody())))
+	request := httptest.NewRequest(http.MethodPost, "/api/v3/webhooks/gitlab/"+whInstanceID, bytes.NewReader([]byte(mrBody())))
 	request.Header.Set("Content-Type", "application/json")
 	for key, value := range validHeaders() {
 		request.Header.Set(key, value)
