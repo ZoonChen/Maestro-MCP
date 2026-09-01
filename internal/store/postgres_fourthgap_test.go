@@ -186,7 +186,9 @@ func TestIdentityUpsertAndMembershipBranches(t *testing.T) {
 	require.NoError(t, pg.DB().QueryRowContext(ctx,
 		`SELECT count(*) FROM memberships WHERE user_id = $1`, first.ID).Scan(&memberCount))
 	require.Equal(t, 1, memberCount, "the membership row landed")
-	members, err := pg.Identities().ListMembershipsByUser(ctx, first.ID, time.Now().UTC().Format(time.RFC3339Nano))
+	// The DB clock is the comparison domain: client-clock skew can make
+	// a whole-nanosecond client "now" land before valid_from.
+	members, err := pg.Identities().ListMembershipsByUser(ctx, first.ID, "")
 	require.NoError(t, err)
 	assert.Len(t, members, 1)
 	projects, err := pg.Identities().ListProjectMemberships(ctx, first.ID)
