@@ -111,7 +111,7 @@ func (b *Broker) ResolveBranchSHA(ctx context.Context, remoteURL, branch string)
 	if err := b.ValidateRemote(remoteURL); err != nil {
 		return "", false, err
 	}
-	out, err := b.runGit(ctx, "", "ls-remote", remoteURL, "refs/heads/"+branch)
+	out, err := b.runGit(ctx, "", remoteURL, "ls-remote", remoteURL, "refs/heads/"+branch)
 	if err != nil {
 		return "", false, fmt.Errorf("gitbroker: ls-remote: %w", err)
 	}
@@ -193,7 +193,7 @@ func (b *Broker) PushTaskBranch(ctx context.Context, req PushRequest) (*PushResu
 		pushArgs = []string{"push", "--force-with-lease=refs/heads/" + branch + ":",
 			req.RemoteURL, newSHA + ":refs/heads/" + branch}
 	}
-	if _, err := b.runGit(ctx, req.WorktreePath, pushArgs...); err != nil {
+	if _, err := b.runGit(ctx, req.WorktreePath, req.RemoteURL, pushArgs...); err != nil {
 		return nil, fmt.Errorf("gitbroker: push: %w", err)
 	}
 
@@ -209,7 +209,7 @@ func (b *Broker) PushTaskBranch(ctx context.Context, req PushRequest) (*PushResu
 
 // worktreeHead resolves the committed HEAD of the local worktree.
 func (b *Broker) worktreeHead(ctx context.Context, worktreePath string) (string, error) {
-	out, err := b.runGit(ctx, worktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+	out, err := b.runGit(ctx, worktreePath, "", "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("gitbroker: worktree HEAD: %w", err)
 	}
@@ -221,13 +221,14 @@ func (b *Broker) worktreeHead(ctx context.Context, worktreePath string) (string,
 }
 
 // runGit executes git with a bounded window, bounded output and a
-// scrubbed environment; credentials ride an askpass helper so they
-// never appear in argv or the environment dump of a ps listing.
-func (b *Broker) runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+// scrubbed environment; credentials ride an askpass helper resolved
+// FOR THE REMOTE so they never appear in argv or the environment dump
+// of a ps listing.
+func (b *Broker) runGit(ctx context.Context, dir, remoteURL string, args ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	askpass, cleanup, askpassErr := b.askpassHelper()
+	askpass, cleanup, askpassErr := b.askpassHelper(ctx, remoteURL)
 	if askpassErr != nil {
 		return nil, askpassErr
 	}
@@ -260,11 +261,11 @@ func (b *Broker) runGit(ctx context.Context, dir string, args ...string) ([]byte
 // askpassHelper materializes the credential as a one-shot helper
 // script; removed on completion. When no credential source is set the
 // helper answers nothing (keyless remotes like file fixtures).
-func (b *Broker) askpassHelper() (string, func(), error) {
+func (b *Broker) askpassHelper(ctx context.Context, remoteURL string) (string, func(), error) {
 	if b.Credentials == nil {
 		return "/bin/false", func() {}, nil
 	}
-	credential, err := b.Credentials.Credential(context.Background(), "")
+	credential, err := b.Credentials.Credential(ctx, remoteURL)
 	if err != nil {
 		return "", nil, err
 	}
