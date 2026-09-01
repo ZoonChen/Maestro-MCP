@@ -70,7 +70,11 @@ coverage:
 	$(GO) test -covermode=atomic -coverpkg=./internal/identity,./internal/handler -coverprofile=$(COVERAGE_DIR)/identity.out ./internal/identity ./internal/handler
 	# -p 1 serializes package binaries: the PG-gated suites share the
 	# compose database and parallel schema resets deadlock each other.
-	$(GO) test -p 1 -count=1 -covermode=atomic -coverpkg=./internal/store -coverprofile=$(COVERAGE_DIR)/store.out ./internal/store ./internal/handler ./internal/identity
+	# The gitlab/m2drill/webhook suites exercise the PG projection,
+	# registry and inbox stores end to end — without them the profile is
+	# blind to exactly the code it is meant to measure.
+	$(GO) test -p 1 -count=1 -covermode=atomic -coverpkg=./internal/store -coverprofile=$(COVERAGE_DIR)/store.out \
+		./internal/store ./internal/handler ./internal/identity ./internal/gitlab ./internal/m2drill ./internal/webhook
 	ruby scripts/core-coverage-check.rb \
 		$(COVERAGE_DIR)/state.out $(COVERAGE_DIR)/validation.out \
 		$(COVERAGE_DIR)/identity.out $(COVERAGE_DIR)/store.out
