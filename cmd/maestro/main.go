@@ -23,6 +23,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/app"
 	"github.com/ZoonChen/Maestro-MCP/internal/config"
+	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
@@ -659,9 +660,30 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			},
 			Owner: fmt.Sprintf("cp-%s-%d", hostname(), os.Getpid()),
 		}
+		// M2 projection sync: consumes the envelopes the dispatcher
+		// emits and drives the merged-fact done edge.
+		options.GitLabSync = &app.GitLabSyncOptions{
+			Consumer: &gitlab.Consumer{
+				Outbox:     pgStore.Outbox(),
+				Deliveries: pgStore.WebhookDeliveries(),
+				Syncer:     &gitlab.Syncer{Store: pgStore.GitLab()},
+				Cipher:     cipher,
+				BatchSize:  16,
+			},
+			Owner: fmt.Sprintf("gl-sync-%s-%d", hostname(), os.Getpid()),
+		}
 	} else {
 		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
 	}
+
+	// M2 quality REST surface: the engine is deterministic and the
+	// company baseline is embedded, so the surface mounts whenever the
+	// PostgreSQL store is present.
+	quality, qualityErr := handler.NewQualityHandler(pgStore.Quality())
+	if qualityErr != nil {
+		return *options, fail(exitUsage, "CONFIG_INVALID", qualityErr)
+	}
+	options.Quality = quality
 
 	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
 	// The pool lives for the process lifetime; closing happens on exit.

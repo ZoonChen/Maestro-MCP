@@ -41,7 +41,8 @@
 1. 计划中的独立 `dlq` 表由 `webhook_inbox.status='dead_letter'` 承载（S4 偏差 1 已被冻结事件目录吸收）：隔离与重试耗尽共用一行，DLQ 审计走 append-only 送达表。
 2. `evidence.pipeline_id` 是普通 FK 而非 SHA 元组外键：`pipelines` 以 uuid 键控而 evidence 携带 SHA 元组，应用层负责校验 pipeline.sha 与 evidence.source_sha 一致（README 0004 注记补登）。
 3. `0005` 补齐收件箱调度簿记：`webhook_inbox.next_attempt_at`（指数退避调度）、`lease_owner`/`claimed_at`（dispatcher 崩溃后的有界 stale 重认领，镜像 outbox 租约纪律）、`webhook_deliveries.inbox_id` 可空（验签拒绝/归档路径没有收件箱行，deny 审计仍落表）。
-4. `0006` 项目质量策略存储 `quality_policies`（单行/项目 + CAS row_version，对应 putProjectQualityPolicy 的 If-Match/If-None-Match；公司基线走二进制内嵌，不入库），并为 `evidence` 补 `attempt` 列（冻结 wire schema 必填的 flaky 重试簿记，0004 未建模）。merge_gate 证据的 `pipeline_id`/`job_id` 外键暂为 NULL，数值 GitLab ID 记录在 producer 载荷内——投影行随 S4a 连接器落地后回填（偏差注记）。
+5. `0007` 为 `work_items` 补 `merged_fact_id`（GL-INV-003：done 由 merged webhook 或对账确认并记录来源事件；SQLite 侧 task_store 已有该列，0001 建 PG 基线时未带）。
+4. `0006` 项目质量策略存储 `quality_policies`（单行/项目 + CAS row_version，对应 putProjectQualityPolicy 的 If-Match/If-None-Match；公司基线走二进制内嵌，不入库），并为 0004 未建模的冻结 wire 必填列补齐：`evidence.attempt`（flaky 重试簿记）、`evidence.status`（质量结论枚举）、`evidence.sensitivity`（数据分类，缺省 confidential）、`gate_snapshots.version` 与 `waivers.version`（ResourceVersion / If-Match）、`waivers.merge_request_iid`（豁免的 MR 绑定）。merge_gate 证据的 `pipeline_id`/`job_id` 外键暂为 NULL，数值 GitLab ID 记录在 producer 载荷内——投影行随 S4a 连接器落地后回填（偏差注记）。
 
 ## SQLite → PostgreSQL 导入映射表
 

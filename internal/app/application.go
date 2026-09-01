@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/health"
 	maestromcp "github.com/ZoonChen/Maestro-MCP/internal/mcp"
@@ -76,6 +77,10 @@ type Options struct {
 	// WebhookDispatch drains the webhook inbox into the outbox envelope
 	// stream; nil leaves the dispatcher unstarted (inbox accumulates).
 	WebhookDispatch *WebhookDispatchOptions
+	// GitLabSync drains gitlab.webhook.received envelopes into the
+	// projection sync and the merged-fact done edge; nil leaves the
+	// consumer unstarted.
+	GitLabSync *GitLabSyncOptions
 	// MCPGuard enforces the frozen tool permissions on MCP tool calls
 	// through the same policy as REST (M1 exit gate: one authorize for
 	// every surface); nil keeps the M0 delegated-context mode.
@@ -84,6 +89,9 @@ type Options struct {
 	// (M1-MCP-001): project, session and worker identity are assigned here,
 	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
 	MCPBinding *maestrotools.TransportBinding
+	// Quality mounts the M2 quality REST surface (M2-QG-001) onto the
+	// /api/v1 authorize tree; nil keeps it unexposed.
+	Quality *handler.QualityHandler
 	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
 	// registers none; readiness keeps its local-baseline semantics until a
 	// stream wires PostgreSQL/OIDC/runner-pool probes.
@@ -291,6 +299,7 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			LogWriter:      opts.HTTPLogWriter,
 			IsDraining:     draining.Load,
 			Identity:       opts.Identity,
+			Quality:        opts.Quality,
 		},
 	)
 	if opts.RunnerV3 != nil {
@@ -357,6 +366,19 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 	if opts.WebhookDispatch != nil {
 		a.startWebhookDispatch(opts.WebhookDispatch)
 	}
+	if opts.GitLabSync != nil {
+		interval := opts.GitLabSync.Interval
+		if interval <= 0 {
+			interval = 2 * time.Second
+		}
+		consumer := opts.GitLabSync.Consumer
+		owner := opts.GitLabSync.Owner
+		a.backgroundWG.Add(1)
+		go func() {
+			defer a.backgroundWG.Done()
+			consumer.Run(a.backgroundCtx, owner, interval)
+		}()
+	}
 
 	cleanupOnError = false
 	return a, nil
@@ -389,6 +411,13 @@ type WebhookDispatchOptions struct {
 	Dispatcher *webhook.Dispatcher
 	Owner      string        // lease identity, stable per process
 	Interval   time.Duration // poll cadence when the inbox is drained
+}
+
+// GitLabSyncOptions wires the outbox → projection sync consumer.
+type GitLabSyncOptions struct {
+	Consumer *gitlab.Consumer
+	Owner    string
+	Interval time.Duration
 }
 
 func (a *Application) startWebhookDispatch(opts *WebhookDispatchOptions) {

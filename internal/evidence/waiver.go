@@ -28,25 +28,28 @@ var (
 
 // Waiver mirrors the stored waiver row relevant to evaluation.
 type Waiver struct {
-	ID        string
-	GateID    string
-	Check     string
-	SourceSHA string
-	State     string
-	Requester string
-	Approver  string
-	Reason    string
-	ExpiresAt time.Time
+	ID              string
+	GateID          string
+	Check           string
+	SourceSHA       string
+	MergeRequestIID int64
+	State           string
+	Requester       string
+	Approver        string
+	Reason          string
+	ExpiresAt       time.Time
+	Version         int64
 }
 
 // WaiverRequestInput is a validated creation request.
 type WaiverRequestInput struct {
-	GateID    string
-	Check     string
-	SourceSHA string
-	Requester string
-	Reason    string
-	ExpiresAt time.Time
+	GateID          string
+	Check           string
+	SourceSHA       string
+	MergeRequestIID int64
+	Requester       string
+	Reason          string
+	ExpiresAt       time.Time
 }
 
 // maxWaiverLifetime is the frozen seven-day ceiling (waiver.max_days
@@ -80,14 +83,18 @@ func NewWaiver(policy *EffectivePolicy, input WaiverRequestInput, now time.Time)
 	if input.Requester == "" || input.Check == "" || !shaPattern.MatchString(input.SourceSHA) {
 		return nil, fmt.Errorf("waiver: requester, check and source SHA are required")
 	}
+	if input.MergeRequestIID < 1 {
+		return nil, fmt.Errorf("waiver: merge_request_iid is required")
+	}
 	return &Waiver{
-		GateID:    input.GateID,
-		Check:     input.Check,
-		SourceSHA: input.SourceSHA,
-		State:     WaiverRequested,
-		Requester: input.Requester,
-		Reason:    input.Reason,
-		ExpiresAt: input.ExpiresAt,
+		GateID:          input.GateID,
+		Check:           input.Check,
+		SourceSHA:       input.SourceSHA,
+		MergeRequestIID: input.MergeRequestIID,
+		State:           WaiverRequested,
+		Requester:       input.Requester,
+		Reason:          input.Reason,
+		ExpiresAt:       input.ExpiresAt,
 	}, nil
 }
 

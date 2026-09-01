@@ -42,13 +42,28 @@ func TestCurrentPostgresSchemaVersionMatchesFiles(t *testing.T) {
 // testPostgresDB gates PostgreSQL-backed tests on the dedicated service DSN
 // wired by .github/workflows/m1-runtime.yml; without it the suite runs the
 // SQLite baseline only.
+// testPostgresDB provisions a dedicated database for this suite:
+// package tests run in parallel with other packages' PG suites, and the
+// schema resets these tests perform must never race a sibling suite on
+// the shared default database.
 func testPostgresDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
 	}
-	db, err := OpenPostgres(context.Background(), dsn)
+	admin, err := OpenPostgres(context.Background(), dsn)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_store_suite_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `CREATE DATABASE maestro_store_suite_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_store_suite_test WITH (FORCE)`)
+		_ = admin.Close()
+	})
+	db, err := OpenPostgres(context.Background(),
+		dsn[:strings.LastIndex(dsn, "/")+1]+"maestro_store_suite_test")
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	return db

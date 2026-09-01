@@ -29,6 +29,7 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 // the GitLab numeric identifiers; Supersedes implements the append-only
 // correction chain (EVIDENCE-RULE-001) carried by the store.
 type Record struct {
+	SchemaVersion string   `json:"schema_version,omitempty"`
 	EvidenceID    string   `json:"evidence_id"`
 	ProjectID     string   `json:"project_id"`
 	WorkItemID    string   `json:"work_item_id"`
@@ -42,6 +43,10 @@ type Record struct {
 	PolicyVersion string   `json:"policy_version"`
 	Producer      Producer `json:"producer"`
 	Attempt       int      `json:"attempt"`
+	ObservedAt    string   `json:"observed_at,omitempty"`
+	CreatedAt     string   `json:"created_at,omitempty"`
+	Digest        string   `json:"digest,omitempty"`
+	Sensitivity   string   `json:"sensitivity,omitempty"`
 	Summary       string   `json:"summary,omitempty"`
 	ParserVersion string   `json:"parser_version,omitempty"`
 	Supersedes    string   `json:"supersedes_id,omitempty"`
@@ -106,8 +111,19 @@ func (r *Record) Validate() error {
 			return fmt.Errorf("evidence %s: diagnostic authority cannot have a gitlab_job producer", r.EvidenceID)
 		}
 	}
+	if r.Digest != "" && !digestPattern.MatchString(r.Digest) {
+		return fmt.Errorf("evidence %s: digest must be sha256:<hex64>", r.EvidenceID)
+	}
+	switch r.Sensitivity {
+	case "", "internal", "confidential", "restricted":
+	default:
+		return fmt.Errorf("evidence %s: sensitivity %q is outside the enum", r.EvidenceID, r.Sensitivity)
+	}
 	return nil
 }
+
+// digestPattern is the frozen content-digest shape.
+var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // MatchesTuple reports whether the record is bound to the exact SHA
 // tuple under evaluation (EVIDENCE-RULE-002/004).

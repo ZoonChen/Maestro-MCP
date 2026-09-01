@@ -32,6 +32,11 @@ type RouterOptions struct {
 	// RegisterRoutes attaches the OIDC Authorization Code + PKCE endpoints
 	// under /auth.
 	Identity *IdentityMount
+
+	// Quality mounts the frozen control-plane.yaml Quality endpoints
+	// (M2-QG-001) behind the same authorize decision as every /api/v1
+	// route; nil leaves them unexposed (non-PostgreSQL deployments).
+	Quality *QualityHandler
 }
 
 // IdentityMount is the frozen mounting contract between the router and the
@@ -222,6 +227,20 @@ func SetupRouter(
 			project.GET("/board", bh.GetBoard)
 			project.GET("/board/activity", bh.GetActivity)
 			project.POST("/worktrees/gc", bh.TriggerWorktreeGC)
+
+			// Quality (M2-QG-001): the frozen Quality tag — effective
+			// policy read/strengthen, exact-SHA gate snapshots, immutable
+			// evidence reads, and the waiver lifecycle. routeAction carries
+			// the frozen permissions; nil leaves the surface unexposed.
+			if opts.Quality != nil {
+				project.GET("/quality-policy", opts.Quality.GetQualityPolicy)
+				project.PUT("/quality-policy", opts.Quality.PutQualityPolicy)
+				project.GET("/work-items/:wid/gates", opts.Quality.ListWorkItemGates)
+				project.GET("/work-items/:wid/evidence", opts.Quality.ListWorkItemEvidence)
+				project.POST("/gates/:gid/waivers", opts.Quality.RequestGateWaiver)
+				project.POST("/waivers/:wid/approve", opts.Quality.ApproveGateWaiver)
+				project.POST("/waivers/:wid/revoke", opts.Quality.RevokeGateWaiver)
+			}
 
 			// WebSocket endpoint for real-time event streaming.
 			project.GET("/ws", func(c *gin.Context) {

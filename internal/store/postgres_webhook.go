@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
 )
@@ -31,6 +32,12 @@ type pgWebhookStore struct{ db *sql.DB }
 
 // Webhooks returns the GitLab webhook inbox store.
 func (s *PostgresStore) Webhooks() webhook.Store { return pgWebhookStore{db: s.DB()} }
+
+// WebhookDeliveries exposes the sealed-body reads the projection sync
+// consumer needs, without widening the receiver-side Store contract.
+func (s *PostgresStore) WebhookDeliveries() gitlab.RawDeliverySource {
+	return pgWebhookStore{db: s.DB()}
+}
 
 func (s pgWebhookStore) InstanceByID(ctx context.Context, instanceID string) (webhook.Instance, bool, error) {
 	var instance webhook.Instance
@@ -173,6 +180,24 @@ func (s pgWebhookStore) ClaimInbox(ctx context.Context, owner string) (*webhook.
 	row.RawBodyEncrypted = sealed
 	row.ReceivedAt = pgTimeString(receivedAt)
 	return row, nil
+}
+
+// InboxEncryptedBody reads the sealed original body and kind for one
+// delivery by its dedup key (the sync consumer's raw source).
+func (s pgWebhookStore) InboxEncryptedBody(ctx context.Context, instanceID, deliveryKey string) ([]byte, string, error) {
+	var sealed []byte
+	var kind string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT raw_body_encrypted, event_kind FROM webhook_inbox
+		WHERE gitlab_instance_id = $1 AND external_event_id = $2`, instanceID, deliveryKey).
+		Scan(&sealed, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", fmt.Errorf("webhook store: delivery %s not found", deliveryKey)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("webhook store: delivery lookup: %w", err)
+	}
+	return sealed, kind, nil
 }
 
 func (s pgWebhookStore) BeginApply(ctx context.Context) (webhook.ApplyUnit, error) {
