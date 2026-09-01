@@ -3,11 +3,13 @@ package gitlab_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/evidence"
 	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
@@ -223,4 +225,95 @@ func TestWorkItemIDFromBranch(t *testing.T) {
 	assert.Empty(t, gitlab.WorkItemIDFromBranch("feature/one"), "non-maestro prefixes are ignored")
 	assert.Empty(t, gitlab.WorkItemIDFromBranch("maestro/onlymarker"))
 	assert.Empty(t, gitlab.WorkItemIDFromBranch("maestro"))
+}
+
+func TestJobEvidenceDrivesGateEvaluation(t *testing.T) {
+	f := newSyncFixture(t)
+	company, err := evidence.CompanyPolicy()
+	require.NoError(t, err)
+	f.syncer.Ingest = &gitlab.EvidenceIngestor{
+		Eval:          &evidence.Service{Company: company, Store: f.pg.Quality()},
+		PolicyVersion: company.Version,
+		Append:        f.pg.Quality(),
+		Tuples:        f.pg.GitLab(),
+	}
+
+	sourceSHA := strings.Repeat("7", 40)
+	targetSHA := strings.Repeat("8", 40)
+	branch := "maestro/sync/" + syncWorkItem
+
+	// Pipelines land first so the job projections can resolve them.
+	f.deliver(t, "evt-pipe-777", "pipeline", fmt.Sprintf(`{
+		"object_kind": "pipeline", "project": {"id": 9001},
+		"object_attributes": {"id": 777, "sha": %q, "ref": %q, "status": "success", "source": "push"}}`, sourceSHA, branch))
+	f.deliver(t, "evt-pipe-778", "pipeline", fmt.Sprintf(`{
+		"object_kind": "pipeline", "project": {"id": 9001},
+		"object_attributes": {"id": 778, "sha": %q, "ref": %q, "status": "failed", "source": "push"}}`, sourceSHA, branch))
+
+	// Jobs arrive BEFORE the MR tuple exists: recorded as projections,
+	// no evidence (the tuple is not knowable yet), no failure.
+	for index, check := range []string{"unit", "lint_typecheck", "secret_scan", "deploy-unknown"} {
+		f.deliver(t, "evt-job-e"+string(rune('0'+index)), "job", fmt.Sprintf(`{
+			"object_kind": "job", "project_id": 9001, "pipeline_id": 777,
+			"build_id": %d, "build_name": %q, "build_status": "success", "stage": "test",
+			"ref": %q, "sha": %q}`, 8000+index, check, branch, sourceSHA))
+	}
+	for range 6 {
+		if _, err := f.consumer.ProcessBatch(context.Background(), "sync-test-consumer"); err != nil {
+			t.Fatalf("batch: %v", err)
+		}
+	}
+	records, err := f.pg.Quality().ListEvidenceForWorkItem(context.Background(), syncProject, syncWorkItem)
+	require.NoError(t, err)
+	assert.Empty(t, records, "jobs without a completed tuple produce no evidence")
+
+	// The MR completes the tuple: evaluation runs with the waiting
+	// evidence — three recognized gates pass, the unknown job name
+	// never became evidence (no auto-pass), the other nine gates stay
+	// pending-missing.
+	f.deliver(t, "evt-mr-tuple", "merge_request", fmt.Sprintf(`{
+		"object_kind": "merge_request", "project": {"id": 9001},
+		"object_attributes": {
+			"iid": 30, "state": "opened",
+			"source_branch": %q, "target_branch": "main",
+			"last_commit": {"id": %q},
+			"diff_refs": {"base_sha": %q, "head_sha": %q}
+		}}`, branch, sourceSHA, targetSHA, sourceSHA))
+	_, err = f.consumer.ProcessBatch(context.Background(), "sync-test-consumer")
+	require.NoError(t, err)
+
+	// The waiting job evidence lands once the tuple exists: re-deliver
+	// one job and confirm the gate evaluates.
+	f.deliver(t, "evt-job-unit-again", "job", fmt.Sprintf(`{
+		"object_kind": "job", "project_id": 9001, "pipeline_id": 777,
+		"build_id": 8000, "build_name": "unit", "build_status": "success", "stage": "test",
+		"ref": %q, "sha": %q}`, branch, sourceSHA))
+	_, err = f.consumer.ProcessBatch(context.Background(), "sync-test-consumer")
+	require.NoError(t, err)
+
+	snapshots, err := f.pg.Quality().ListGateSnapshots(context.Background(), syncProject, syncWorkItem)
+	require.NoError(t, err)
+	states := map[string]string{}
+	for _, snapshot := range snapshots {
+		states[snapshot.Check] = snapshot.Status
+	}
+	assert.Equal(t, "passed", states["unit"], "the gate-named job produced passing evidence")
+	assert.Equal(t, "pending", states["lint_typecheck"], "waiting evidence has not re-arrived yet")
+	assert.NotContains(t, states, "deploy-unknown", "unknown job names never map to a gate")
+	assert.NotContains(t, states, "deploy", "no fabricated gate for unknown producers")
+
+	// A failing job flips its gate to failed.
+	f.deliver(t, "evt-job-unit-fail", "job", fmt.Sprintf(`{
+		"object_kind": "job", "project_id": 9001, "pipeline_id": 778,
+		"build_id": 8100, "build_name": "unit", "build_status": "failed", "stage": "test",
+		"ref": %q, "sha": %q}`, branch, sourceSHA))
+	_, err = f.consumer.ProcessBatch(context.Background(), "sync-test-consumer")
+	require.NoError(t, err)
+	snapshots, err = f.pg.Quality().ListGateSnapshots(context.Background(), syncProject, syncWorkItem)
+	require.NoError(t, err)
+	for _, snapshot := range snapshots {
+		if snapshot.Check == "unit" {
+			assert.Equal(t, "failed", snapshot.Status, "a failed job fails its gate")
+		}
+	}
 }

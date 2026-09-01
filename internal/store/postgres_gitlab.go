@@ -113,6 +113,28 @@ func (s pgGitlabStore) MarkWorkItemDoneFromMerge(ctx context.Context, projectID,
 	return true, false, nil
 }
 
+// BranchTuple resolves the MR projection's work-item binding and SHA
+// tuple for a source branch (the evidence ingestor's resolver).
+func (s pgGitlabStore) BranchTuple(ctx context.Context, projectID, sourceBranch string) (string, string, string, bool, error) {
+	var workItem sql.NullString
+	var sourceSHA, targetSHA sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT work_item_id, source_sha, target_sha FROM merge_requests
+		WHERE project_id = $1 AND source_branch = $2
+		ORDER BY observed_at DESC LIMIT 1`, projectID, sourceBranch).
+		Scan(&workItem, &sourceSHA, &targetSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", false, nil
+	}
+	if err != nil {
+		return "", "", "", false, fmt.Errorf("gitlab sync: branch tuple: %w", err)
+	}
+	if !workItem.Valid || !sourceSHA.Valid || !targetSHA.Valid {
+		return "", "", "", false, nil
+	}
+	return workItem.String, sourceSHA.String, targetSHA.String, true, nil
+}
+
 func (s pgGitlabStore) UpsertPipeline(ctx context.Context, rec gitlab.PipelineRecord) error {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO pipelines (id, project_id, gitlab_instance_id, gitlab_project_id, gitlab_pipeline_id,
