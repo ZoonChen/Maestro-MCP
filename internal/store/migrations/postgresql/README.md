@@ -44,6 +44,7 @@
 4. `0006` 项目质量策略存储 `quality_policies`（单行/项目 + CAS row_version，对应 putProjectQualityPolicy 的 If-Match/If-None-Match；公司基线走二进制内嵌，不入库），并为 0004 未建模的冻结 wire 必填列补齐：`evidence.attempt`（flaky 重试簿记）、`evidence.status`（质量结论枚举）、`evidence.sensitivity`（数据分类，缺省 confidential）、`gate_snapshots.version` 与 `waivers.version`（ResourceVersion / If-Match）、`waivers.merge_request_iid`（豁免的 MR 绑定）。merge_gate 证据的数字 provider ID 自 0009 起独立成列；uuid 外键回填留给对账期富化。
 5. `0007` 为 `work_items` 补 `merged_fact_id`（GL-INV-003：done 由 merged webhook 或对账确认并记录来源事件；SQLite 侧 task_store 已有该列，0001 建 PG 基线时未带）。
 6. `0008` 实例/映射 ResourceVersion（wire 必需）：`gitlab_instances.version`、`gitlab_project_mappings.version`、映射行 `id`（0004 为复合外键键控，无行标识）、`UNIQUE (project_id)`（putGitLabProjectMapping 的"每项目单条当前映射"语义）。
+8. `0010` M3 九表（api_contracts / integration_runs / findings / defects / defect_occurrences / defect_task_links / budget_ledgers / budget_entries / agent_runs）：defects/findings 增加 `UNIQUE (project_id, id)` 以支撑 occurrence/link 的复合外键（投影列跨表一致性）；`one_active_fix_per_defect` 部分唯一索引承载"同 defect 单活跃修复"；SQLite 不新增表（M3 实体仅 PG）。
 7. `0009` evidence 数字 provider ID（`gitlab_pipeline_id`/`gitlab_job_id` bigint）：冻结 wire 的 pipeline_id/job_id 是整数，0004 建成 uuid 外键。数字列满足 wire 往返；uuid 外键回填仍留给对账期富化。
 
 ## SQLite → PostgreSQL 导入映射表

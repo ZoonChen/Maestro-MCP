@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS agent_runs;
+DROP TABLE IF EXISTS budget_entries;
+DROP TABLE IF EXISTS budget_ledgers;
+DROP TABLE IF EXISTS defect_task_links;
+DROP TABLE IF EXISTS defect_occurrences;
+DROP TABLE IF EXISTS defects;
+DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS integration_runs;
+DROP TABLE IF EXISTS api_contracts;
