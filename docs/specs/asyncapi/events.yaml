@@ -178,6 +178,138 @@ operations:
       $ref: "#/channels/budgetExhausted"
 components:
   schemas:
+    ContractVersionedPayload:
+      type: object
+      additionalProperties: false
+      required: [service, contract_version, canonical_hash, source_sha]
+      properties:
+        service:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contract_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        canonical_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        source_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+    ContractBreakingPayload:
+      type: object
+      additionalProperties: false
+      required: [service, consumer_hash, provider_hash, responsible_side, diff_summary]
+      properties:
+        service:
+          type: string
+          minLength: 1
+        consumer_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        provider_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        responsible_side:
+          enum: [consumer, provider, both, unknown]
+        diff_summary:
+          type: array
+          uniqueItems: true
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 200
+    FindingPayload:
+      type: object
+      additionalProperties: false
+      required: [finding_id, defect_id, source_type, severity, occurrence, evidence_refs, version]
+      properties:
+        finding_id:
+          type: string
+          format: uuid
+        defect_id:
+          type: string
+          format: uuid
+        source_type:
+          enum: [pipeline, junit, contract, sast, secret, manual_qa]
+        severity:
+          enum: [critical, high, medium, low, info]
+        occurrence:
+          type: integer
+          minimum: 1
+        evidence_refs:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        environment:
+          type: string
+          maxLength: 128
+        repro:
+          type: string
+          maxLength: 8000
+        version:
+          type: integer
+          minimum: 1
+    DefectUniquedPayload:
+      type: object
+      additionalProperties: false
+      required: [defect_id, fingerprint, occurrence, created, version]
+      properties:
+        defect_id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        occurrence:
+          type: integer
+          minimum: 1
+        created:
+          type: boolean
+        version:
+          type: integer
+          minimum: 1
+    AgentHandoffPayload:
+      type: object
+      additionalProperties: false
+      required: [execution_id, work_item_id, defect_id, handoff_reason, checkpoint_digest]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        work_item_id:
+          type: string
+          format: uuid
+        defect_id:
+          type: string
+          format: uuid
+        handoff_reason:
+          enum: [cannot_reproduce, budget_exhausted, low_confidence, high_risk, tool_limit, policy_stop, human_review_required]
+        checkpoint_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+    BudgetExhaustedPayload:
+      type: object
+      additionalProperties: false
+      required: [ledger_id, work_item_id, budget_tokens, spent_tokens, stop_reason]
+      properties:
+        ledger_id:
+          type: string
+          format: uuid
+        work_item_id:
+          type: string
+          format: uuid
+        budget_tokens:
+          type: integer
+          minimum: 1
+        spent_tokens:
+          type: integer
+          minimum: 0
+        stop_reason:
+          enum: [budget_exhausted, attempt_limit, time_limit, manual_stop, policy_stop]
     Envelope:
       type: object
       additionalProperties: false
@@ -442,139 +574,6 @@ components:
         budget_tokens:
           type: integer
           minimum: 1
-  schemas:
-    ContractVersionedPayload:
-      type: object
-      additionalProperties: false
-      required: [service, contract_version, canonical_hash, source_sha]
-      properties:
-        service:
-          type: string
-          minLength: 1
-          maxLength: 255
-        contract_version:
-          type: string
-          minLength: 1
-          maxLength: 128
-        canonical_hash:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
-        source_sha:
-          type: string
-          pattern: "^[0-9a-f]{40,64}$"
-    ContractBreakingPayload:
-      type: object
-      additionalProperties: false
-      required: [service, consumer_hash, provider_hash, responsible_side, diff_summary]
-      properties:
-        service:
-          type: string
-          minLength: 1
-        consumer_hash:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
-        provider_hash:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
-        responsible_side:
-          enum: [consumer, provider, both, unknown]
-        diff_summary:
-          type: array
-          uniqueItems: true
-          maxItems: 100
-          items:
-            type: string
-            maxLength: 200
-    FindingPayload:
-      type: object
-      additionalProperties: false
-      required: [finding_id, defect_id, source_type, severity, occurrence, evidence_refs, version]
-      properties:
-        finding_id:
-          type: string
-          format: uuid
-        defect_id:
-          type: string
-          format: uuid
-        source_type:
-          enum: [pipeline, junit, contract, sast, secret, manual_qa]
-        severity:
-          enum: [critical, high, medium, low, info]
-        occurrence:
-          type: integer
-          minimum: 1
-        evidence_refs:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-        environment:
-          type: string
-          maxLength: 128
-        repro:
-          type: string
-          maxLength: 8000
-        version:
-          type: integer
-          minimum: 1
-    DefectUniquedPayload:
-      type: object
-      additionalProperties: false
-      required: [defect_id, fingerprint, occurrence, created, version]
-      properties:
-        defect_id:
-          type: string
-          format: uuid
-        fingerprint:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
-        occurrence:
-          type: integer
-          minimum: 1
-        created:
-          type: boolean
-        version:
-          type: integer
-          minimum: 1
-    AgentHandoffPayload:
-      type: object
-      additionalProperties: false
-      required: [execution_id, work_item_id, defect_id, handoff_reason, checkpoint_digest]
-      properties:
-        execution_id:
-          type: string
-          format: uuid
-        work_item_id:
-          type: string
-          format: uuid
-        defect_id:
-          type: string
-          format: uuid
-        handoff_reason:
-          enum: [cannot_reproduce, budget_exhausted, low_confidence, high_risk, tool_limit, policy_stop, human_review_required]
-        checkpoint_digest:
-          type: string
-          pattern: "^sha256:[0-9a-f]{64}$"
-    BudgetExhaustedPayload:
-      type: object
-      additionalProperties: false
-      required: [ledger_id, work_item_id, budget_tokens, spent_tokens, stop_reason]
-      properties:
-        ledger_id:
-          type: string
-          format: uuid
-        work_item_id:
-          type: string
-          format: uuid
-        budget_tokens:
-          type: integer
-          minimum: 1
-        spent_tokens:
-          type: integer
-          minimum: 0
-        stop_reason:
-          enum: [budget_exhausted, attempt_limit, time_limit, manual_stop, policy_stop]
   messages:
     GitLabWebhookReceived:
       payload:
