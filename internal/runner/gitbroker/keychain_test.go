@@ -3,6 +3,7 @@ package gitbroker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,8 +37,14 @@ func TestKeychainCredentialResolvesPerHost(t *testing.T) {
 	require.NoError(t, err)
 
 	// The lookup key is the remote HOST, never the full URL with its
-	// path (credential scope stays per-host).
-	assert.Equal(t, "gitlab.acme.example", commands[0].args[2])
+	// path (credential scope stays per-host) — on every platform the
+	// host string must appear among the lookup arguments.
+	allArgs := ""
+	for _, command := range commands {
+		allArgs += strings.Join(command.args, " ") + " "
+	}
+	assert.Contains(t, allArgs, "gitlab.acme.example")
+	assert.NotContains(t, allArgs, "group/repo.git", "the URL path never reaches the keychain")
 	assert.Equal(t, "member@acme", credential.Username)
 	assert.Equal(t, "member-token", credential.Password)
 }
