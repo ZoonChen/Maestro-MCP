@@ -1,7 +1,7 @@
 ---
 doc_id: ADR-007
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: partial
 verification_status: unverified
 owner_role: technical_lead

@@ -1,7 +1,7 @@
 ---
 doc_id: PRD-DEFECT-TEST-ISSUES
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: product_owner
