@@ -122,6 +122,9 @@ func TestAPIIdempotencyLifecycle(t *testing.T) {
 
 func importFixturePG(t *testing.T, database string) *sql.DB {
 	t.Helper()
+	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
+		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
 	admin, err := OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	_, err = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS `+database+` WITH (FORCE)`)
