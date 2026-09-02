@@ -324,10 +324,14 @@ func (s pgQualityStore) RevokeWaiver(ctx context.Context, waiverID string) error
 // ListWaiversForWorkItem returns waiver rows with their lifecycle state.
 func (s pgQualityStore) ListWaiversForWorkItem(ctx context.Context, projectID, workItemID string) ([]evidence.Waiver, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, gate_id, source_sha, state,
-			COALESCE(requester_principal, ''), COALESCE(approver_principal, ''), reason, expires_at,
-			merge_request_iid, version
-		FROM waivers WHERE project_id = $1 AND work_item_id = $2`, projectID, workItemID)
+		SELECT w.id, w.gate_id, w.source_sha, w.state,
+			COALESCE(w.requester_principal, ''), COALESCE(w.approver_principal, ''), w.reason, w.expires_at,
+			w.merge_request_iid, w.version,
+			-- The check name lives on the bound gate row; a waiver whose
+			-- gate vanished loads with an empty check and never applies.
+			COALESCE(g.gate_id, '')
+		FROM waivers w LEFT JOIN gate_snapshots g ON g.id::text = w.gate_id AND g.project_id = w.project_id
+		WHERE w.project_id = $1 AND w.work_item_id = $2`, projectID, workItemID)
 	if err != nil {
 		return nil, fmt.Errorf("waiver: list: %w", err)
 	}
@@ -337,7 +341,7 @@ func (s pgQualityStore) ListWaiversForWorkItem(ctx context.Context, projectID, w
 		var waiver evidence.Waiver
 		if err := rows.Scan(&waiver.ID, &waiver.GateID, &waiver.SourceSHA, &waiver.State,
 			&waiver.Requester, &waiver.Approver, &waiver.Reason, &waiver.ExpiresAt,
-			&waiver.MergeRequestIID, &waiver.Version); err != nil {
+			&waiver.MergeRequestIID, &waiver.Version, &waiver.Check); err != nil {
 			return nil, fmt.Errorf("waiver: scan: %w", err)
 		}
 		waivers = append(waivers, waiver)
@@ -367,13 +371,14 @@ func (s pgQualityStore) GateSnapshotByID(ctx context.Context, projectID, gateID 
 func (s pgQualityStore) WaiverByID(ctx context.Context, projectID, waiverID string) (*evidence.Waiver, bool, error) {
 	var waiver evidence.Waiver
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, gate_id, source_sha, state,
-			COALESCE(requester_principal, ''), COALESCE(approver_principal, ''), reason, expires_at,
-			merge_request_iid, version
-		FROM waivers WHERE project_id = $1 AND id = $2`, projectID, waiverID).
+		SELECT w.id, w.gate_id, w.source_sha, w.state,
+			COALESCE(w.requester_principal, ''), COALESCE(w.approver_principal, ''), w.reason, w.expires_at,
+			w.merge_request_iid, w.version, COALESCE(g.gate_id, '')
+		FROM waivers w LEFT JOIN gate_snapshots g ON g.id::text = w.gate_id AND g.project_id = w.project_id
+		WHERE w.project_id = $1 AND w.id = $2`, projectID, waiverID).
 		Scan(&waiver.ID, &waiver.GateID, &waiver.SourceSHA, &waiver.State,
 			&waiver.Requester, &waiver.Approver, &waiver.Reason, &waiver.ExpiresAt,
-			&waiver.MergeRequestIID, &waiver.Version)
+			&waiver.MergeRequestIID, &waiver.Version, &waiver.Check)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}

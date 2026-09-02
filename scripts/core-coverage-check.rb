@@ -63,6 +63,10 @@ groups = {
       internal/store/postgres_idempotency.go
       internal/store/postgres_workitems.go
       internal/store/import_sqlite_pg.go
+      internal/store/postgres_webhook.go
+      internal/store/postgres_instances.go
+      internal/store/postgres_gitlab.go
+      internal/store/postgres_quality.go
     ]
   }
 }.freeze
