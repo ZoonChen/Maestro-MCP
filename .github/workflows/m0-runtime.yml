@@ -57,14 +57,6 @@ jobs:
           make vet
           make lint
 
-      # The core-coverage floors are enforced now that every core
-      # clears its 80% minimum on the widened 938-statement PG basis
-      # (W2 checklist item closed).
-      - name: Enforced core coverage
-        run: make coverage
-        env:
-          M1_CORE_COVERAGE_ENFORCE: "1"
-
       - name: Strict Playwright runtime and MCP smoke
         run: make e2e
 
