@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/finding-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Normalized Finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "defect_id",
+    "source_type",
+    "severity",
+    "occurrence",
+    "evidence_refs",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "finding_id": {"type": "string", "format": "uuid"},
+    "defect_id": {"type": "string", "format": "uuid"},
+    "source_type": {
+      "enum": ["pipeline", "junit", "contract", "sast", "secret", "manual_qa"]
+    },
+    "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+    "occurrence": {"type": "integer", "minimum": 1},
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "environment": {"type": "string", "maxLength": 128},
+    "repro": {"type": "string", "maxLength": 8000},
+    "task_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    },
+    "source_event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "adapter_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"source_type": {"const": "manual_qa"}}},
+      "then": {"required": ["repro"]}
+    }
+  ]
+}

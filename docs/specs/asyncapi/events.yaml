@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: Maestro Event Catalog
-  version: 3.0.0
+  version: 3.1.0
   description: |
     GitLab webhook-derived and internal durable events. Version 3.0.0 is
     frozen by the M2 I2 contract-freeze sprint; changes require a
@@ -65,6 +65,36 @@ channels:
     messages:
       event:
         $ref: "#/components/messages/AgentExecutionChanged"
+  contractVersioned:
+    address: contract.versioned
+    messages:
+      event:
+        $ref: "#/components/messages/ContractVersioned"
+  contractBreakingDetected:
+    address: contract.breaking_detected
+    messages:
+      event:
+        $ref: "#/components/messages/ContractBreakingDetected"
+  findingCreated:
+    address: finding.created
+    messages:
+      event:
+        $ref: "#/components/messages/FindingCreated"
+  defectUniqued:
+    address: defect.uniqued
+    messages:
+      event:
+        $ref: "#/components/messages/DefectUniqued"
+  agentRunHandedOff:
+    address: agent.run.handoff
+    messages:
+      event:
+        $ref: "#/components/messages/AgentRunHandedOff"
+  budgetExhausted:
+    address: budget.exhausted
+    messages:
+      event:
+        $ref: "#/components/messages/BudgetExhausted"
 operations:
   consumeGitLabWebhook:
     action: receive
@@ -116,6 +146,36 @@ operations:
     description: Publishes an Agent remediation execution state change.
     channel:
       $ref: "#/channels/agentExecutionChanged"
+  publishContractVersioned:
+    action: send
+    description: Publishes a canonicalized, hashed API contract version.
+    channel:
+      $ref: "#/channels/contractVersioned"
+  publishContractBreakingDetected:
+    action: send
+    description: Publishes a breaking-change verdict with the responsible side mapping.
+    channel:
+      $ref: "#/channels/contractBreakingDetected"
+  publishFindingCreated:
+    action: send
+    description: Publishes a normalized Finding from any of the six source adapters.
+    channel:
+      $ref: "#/channels/findingCreated"
+  publishDefectUniqued:
+    action: send
+    description: Publishes a Defect upsert (new fingerprint or occurrence increment).
+    channel:
+      $ref: "#/channels/defectUniqued"
+  publishAgentRunHandedOff:
+    action: send
+    description: Publishes an Agent run stopping and handing off to a human.
+    channel:
+      $ref: "#/channels/agentRunHandedOff"
+  publishBudgetExhausted:
+    action: send
+    description: Publishes a budget ledger reaching its stop boundary.
+    channel:
+      $ref: "#/channels/budgetExhausted"
 components:
   schemas:
     Envelope:
@@ -382,6 +442,139 @@ components:
         budget_tokens:
           type: integer
           minimum: 1
+  schemas:
+    ContractVersionedPayload:
+      type: object
+      additionalProperties: false
+      required: [service, contract_version, canonical_hash, source_sha]
+      properties:
+        service:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contract_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        canonical_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        source_sha:
+          type: string
+          pattern: "^[0-9a-f]{40,64}$"
+    ContractBreakingPayload:
+      type: object
+      additionalProperties: false
+      required: [service, consumer_hash, provider_hash, responsible_side, diff_summary]
+      properties:
+        service:
+          type: string
+          minLength: 1
+        consumer_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        provider_hash:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        responsible_side:
+          enum: [consumer, provider, both, unknown]
+        diff_summary:
+          type: array
+          uniqueItems: true
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 200
+    FindingPayload:
+      type: object
+      additionalProperties: false
+      required: [finding_id, defect_id, source_type, severity, occurrence, evidence_refs, version]
+      properties:
+        finding_id:
+          type: string
+          format: uuid
+        defect_id:
+          type: string
+          format: uuid
+        source_type:
+          enum: [pipeline, junit, contract, sast, secret, manual_qa]
+        severity:
+          enum: [critical, high, medium, low, info]
+        occurrence:
+          type: integer
+          minimum: 1
+        evidence_refs:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        environment:
+          type: string
+          maxLength: 128
+        repro:
+          type: string
+          maxLength: 8000
+        version:
+          type: integer
+          minimum: 1
+    DefectUniquedPayload:
+      type: object
+      additionalProperties: false
+      required: [defect_id, fingerprint, occurrence, created, version]
+      properties:
+        defect_id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        occurrence:
+          type: integer
+          minimum: 1
+        created:
+          type: boolean
+        version:
+          type: integer
+          minimum: 1
+    AgentHandoffPayload:
+      type: object
+      additionalProperties: false
+      required: [execution_id, work_item_id, defect_id, handoff_reason, checkpoint_digest]
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        work_item_id:
+          type: string
+          format: uuid
+        defect_id:
+          type: string
+          format: uuid
+        handoff_reason:
+          enum: [cannot_reproduce, budget_exhausted, low_confidence, high_risk, tool_limit, policy_stop, human_review_required]
+        checkpoint_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+    BudgetExhaustedPayload:
+      type: object
+      additionalProperties: false
+      required: [ledger_id, work_item_id, budget_tokens, spent_tokens, stop_reason]
+      properties:
+        ledger_id:
+          type: string
+          format: uuid
+        work_item_id:
+          type: string
+          format: uuid
+        budget_tokens:
+          type: integer
+          minimum: 1
+        spent_tokens:
+          type: integer
+          minimum: 0
+        stop_reason:
+          enum: [budget_exhausted, attempt_limit, time_limit, manual_stop, policy_stop]
   messages:
     GitLabWebhookReceived:
       payload:
@@ -483,3 +676,63 @@ components:
                 const: agent.execution.changed
               payload:
                 $ref: "#/components/schemas/AgentExecutionPayload"
+    ContractVersioned:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: contract.versioned
+              payload:
+                $ref: "#/components/schemas/ContractVersionedPayload"
+    ContractBreakingDetected:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: contract.breaking_detected
+              payload:
+                $ref: "#/components/schemas/ContractBreakingPayload"
+    FindingCreated:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: finding.created
+              payload:
+                $ref: "#/components/schemas/FindingPayload"
+    DefectUniqued:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: defect.uniqued
+              payload:
+                $ref: "#/components/schemas/DefectUniquedPayload"
+    AgentRunHandedOff:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: agent.run.handoff
+              payload:
+                $ref: "#/components/schemas/AgentHandoffPayload"
+    BudgetExhausted:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: budget.exhausted
+              payload:
+                $ref: "#/components/schemas/BudgetExhaustedPayload"

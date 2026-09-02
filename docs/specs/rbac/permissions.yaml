@@ -1,4 +1,5 @@
-# Frozen at version 3.0 by the M1 I1 contract-freeze sprint. Permission
+# Frozen at version 3.0 by the M1 I1 contract-freeze sprint; extended
+# (agent.progress.report) by the M3 I3 contract-freeze sprint. Permission
 # changes require a contract change request through the integration session.
 version: "3.0"
 default_effect: deny
@@ -55,6 +56,7 @@ roles:
       - integration_run.cancel
       - remediation_run.create
       - remediation_run.stop
+      - agent.progress.report
       - gitlab.merge_request.create
     deny:
       - quality_policy.modify
@@ -128,6 +130,7 @@ functional_approvers:
       - quality.audit.read
       - remediation_run.create
       - remediation_run.stop
+      - agent.progress.report
     conditions:
       waiver.approve:
         all:

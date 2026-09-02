@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/defect-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Unique Defect",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "defect_id",
+    "fingerprint_version",
+    "fingerprint_hash",
+    "severity",
+    "occurrence",
+    "state",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "defect_id": {"type": "string", "format": "uuid"},
+    "fingerprint_version": {"type": "integer", "minimum": 1, "maximum": 3},
+    "fingerprint_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+    "occurrence": {"type": "integer", "minimum": 1},
+    "state": {
+      "enum": ["detected", "triaged", "assigned", "reproducing", "fixing", "verifying", "resolved", "reopened", "quarantined", "ignored"]
+    },
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "sla_hours": {"type": "integer", "minimum": 1},
+    "responsible_task_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "first_seen_at": {"type": "string", "format": "date-time"},
+    "last_seen_at": {"type": "string", "format": "date-time"},
+    "resolved_at": {"type": ["string", "null"], "format": "date-time"},
+    "version": {"type": "integer", "minimum": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "resolved"}}},
+      "then": {"required": ["resolved_at"]}
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/integration-run-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Cross-Repository Integration Run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "integration_run_id",
+    "revisions",
+    "environment_profile_id",
+    "state",
+    "phase",
+    "cleanup_status",
+    "combination_digest",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "integration_run_id": {"type": "string", "format": "uuid"},
+    "revisions": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository_mapping_id", "sha"],
+        "properties": {
+          "repository_mapping_id": {"type": "string", "format": "uuid"},
+          "sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+          "contract_version": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "environment_profile_id": {"type": "string", "format": "uuid"},
+    "state": {"enum": ["waiting", "running", "passed", "failed", "cancelled", "expired"]},
+    "phase": {"enum": ["queued", "contract_check", "provisioning", "executing", "cleanup", "complete"]},
+    "cleanup_status": {"enum": ["not_started", "running", "passed", "failed"]},
+    "combination_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "lease_expires_at": {"type": ["string", "null"], "format": "date-time"},
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "uuid"}
+    },
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}
