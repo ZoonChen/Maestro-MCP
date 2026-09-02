@@ -135,11 +135,11 @@ mcp_path = File.join(ROOT, "docs/specs/mcp/tools.schema.json")
 mcp_schema = JSON.parse(File.read(mcp_path))
 catalog = Array(mcp_schema["examples"]).first || {}
 tools = Array(catalog["tools"])
-errors << "expected 14 MCP tools, got #{tools.length}" unless tools.length == 14
+errors << "expected 19 MCP tools, got #{tools.length}" unless tools.length == 19
 errors << "merge_task must not be registered" if tools.any? { |tool| tool["name"] == "merge_task" }
 
 mutating_tools = tools.select { |tool| tool["mutating"] == true }
-errors << "expected 9 mutating MCP tools, got #{mutating_tools.length}" unless mutating_tools.length == 9
+errors << "expected 10 mutating MCP tools, got #{mutating_tools.length}" unless mutating_tools.length == 10
 mcp_forbidden_fields = forbidden_scope_fields | Set.new(%w[command command_string shell argv executable network secret])
 
 tools.each do |tool|

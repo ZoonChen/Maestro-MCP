@@ -102,7 +102,7 @@ func TestToolGuardNilPolicyKeepsDelegatedContext(t *testing.T) {
 func TestToolGuardCatalogMatchesFrozenSchema(t *testing.T) {
 	guard, err := NewToolGuard(nil)
 	require.NoError(t, err)
-	require.Len(t, guard.permissions, 14, "the frozen catalog carries exactly fourteen tools")
+	require.Len(t, guard.permissions, 19, "the frozen catalog carries exactly nineteen tools")
 	for _, tool := range []string{"get_next_task", "submit_verification", "create_work_item", "get_gitlab_status"} {
 		require.Contains(t, guard.permissions, tool)
 	}

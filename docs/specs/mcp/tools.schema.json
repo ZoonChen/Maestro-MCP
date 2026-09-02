@@ -2,94 +2,303 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
   "title": "Maestro MCP v3 Tool Catalog",
-  "description": "Authoritative catalog for the fourteen public Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.0 is frozen by the M1 I1 contract-freeze sprint; changes require a contract change request through the integration session.",
+  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.1 extends the frozen 3.0 catalog with the M3 read surfaces (defect, integration run, agent run) and the single structured Agent progress write (no free-text commands); changes require a contract change request through the integration session.",
   "type": "object",
-  "required": ["version", "work_item_states", "tools"],
+  "required": [
+    "version",
+    "work_item_states",
+    "tools"
+  ],
   "additionalProperties": false,
   "properties": {
     "version": {
-      "const": "3.0"
+      "const": "3.1"
     },
     "work_item_states": {
       "$ref": "#/$defs/workItemStates"
     },
     "tools": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 19,
+      "maxItems": 19,
       "items": {
         "$ref": "#/$defs/tool"
       },
       "allOf": [
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "list_work_items"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "list_work_items"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_work_item"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_work_item"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_task_context"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_task_context"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_next_task"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_next_task"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "heartbeat_task"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "heartbeat_task"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "submit_task_result"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "submit_task_result"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "report_blocker"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "report_blocker"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_quality_status"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_quality_status"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_gitlab_status"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_gitlab_status"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "create_work_item"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "create_work_item"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "cancel_work_item"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "cancel_work_item"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "retry_work_item"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "retry_work_item"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "get_verification_task"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_verification_task"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
         },
         {
-          "contains": {"type": "object", "required": ["name"], "properties": {"name": {"const": "submit_verification"}}},
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "submit_verification"
+              }
+            }
+          },
           "minContains": 1,
           "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "list_defects"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_defect"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_integration_run"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "get_agent_run"
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "report_agent_progress"
+              }
+            }
+          }
         }
       ]
     }
@@ -126,7 +335,12 @@
         "cancel_work_item",
         "retry_work_item",
         "get_verification_task",
-        "submit_verification"
+        "submit_verification",
+        "list_defects",
+        "get_defect",
+        "get_integration_run",
+        "get_agent_run",
+        "report_agent_progress"
       ]
     },
     "idempotency": {
@@ -141,15 +355,20 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "required": {"const": true},
-        "key_field": {"const": "idempotency_key"},
+        "required": {
+          "const": true
+        },
+        "key_field": {
+          "const": "idempotency_key"
+        },
         "scope": {
           "enum": [
             "principal_project_tool",
             "principal_project_queue",
             "principal_work_item_tool",
             "principal_lease_tool",
-            "principal_verification_lease_tool"
+            "principal_verification_lease_tool",
+            "principal_project_execution"
           ]
         },
         "ttl_seconds": {
@@ -157,53 +376,155 @@
           "minimum": 300,
           "maximum": 604800
         },
-        "replay_semantics": {"const": "return_original_result"},
-        "payload_mismatch_error": {"const": "IDEMPOTENCY_KEY_REUSED"}
+        "replay_semantics": {
+          "const": "return_original_result"
+        },
+        "payload_mismatch_error": {
+          "const": "IDEMPOTENCY_KEY_REUSED"
+        }
       }
     },
     "concurrency": {
       "type": "object",
-      "required": ["strategy", "token_field", "conflict_error"],
+      "required": [
+        "strategy",
+        "token_field",
+        "conflict_error"
+      ],
       "additionalProperties": false,
       "properties": {
         "strategy": {
-          "enum": ["expected_absent", "expected_version", "lease_version", "queue_version"]
+          "enum": [
+            "expected_absent",
+            "expected_version",
+            "lease_version",
+            "queue_version"
+          ]
         },
         "token_field": {
-          "enum": ["expected_absent", "expected_version", "lease_version", "queue_version"]
+          "enum": [
+            "expected_absent",
+            "expected_version",
+            "lease_version",
+            "queue_version"
+          ]
         },
-        "conflict_error": {"const": "CONCURRENCY_CONFLICT"}
+        "conflict_error": {
+          "const": "CONCURRENCY_CONFLICT"
+        }
       },
       "allOf": [
         {
-          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "expected_absent"}}},
-          "then": {"properties": {"token_field": {"const": "expected_absent"}}}
+          "if": {
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "const": "expected_absent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "token_field": {
+                "const": "expected_absent"
+              }
+            }
+          }
         },
         {
-          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "expected_version"}}},
-          "then": {"properties": {"token_field": {"const": "expected_version"}}}
+          "if": {
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "const": "expected_version"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "token_field": {
+                "const": "expected_version"
+              }
+            }
+          }
         },
         {
-          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "lease_version"}}},
-          "then": {"properties": {"token_field": {"const": "lease_version"}}}
+          "if": {
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "const": "lease_version"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "token_field": {
+                "const": "lease_version"
+              }
+            }
+          }
         },
         {
-          "if": {"required": ["strategy"], "properties": {"strategy": {"const": "queue_version"}}},
-          "then": {"properties": {"token_field": {"const": "queue_version"}}}
+          "if": {
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "const": "queue_version"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "token_field": {
+                "const": "queue_version"
+              }
+            }
+          }
         }
       ]
     },
     "readOnlyTool": {
       "type": "object",
-      "required": ["name", "description", "mutating", "required_permission", "input_schema"],
+      "required": [
+        "name",
+        "description",
+        "mutating",
+        "required_permission",
+        "input_schema"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": {"$ref": "#/$defs/toolName"},
-        "description": {"type": "string", "minLength": 1, "maxLength": 500},
-        "mutating": {"const": false},
-        "required_permission": {"type": "string", "minLength": 1, "maxLength": 128},
-        "input_schema": {"type": "object"},
-        "output_schema": {"type": "object"}
+        "name": {
+          "$ref": "#/$defs/toolName"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "mutating": {
+          "const": false
+        },
+        "required_permission": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "output_schema": {
+          "type": "object"
+        }
       }
     },
     "mutatingTool": {
@@ -220,27 +541,53 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "name": {"$ref": "#/$defs/toolName"},
-        "description": {"type": "string", "minLength": 1, "maxLength": 500},
-        "mutating": {"const": true},
-        "required_permission": {"type": "string", "minLength": 1, "maxLength": 128},
+        "name": {
+          "$ref": "#/$defs/toolName"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "mutating": {
+          "const": true
+        },
+        "required_permission": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
         "audit_event": {
           "type": "string",
           "pattern": "^mcp\\.[a-z0-9_]+\\.(requested|recorded)$"
         },
-        "idempotency": {"$ref": "#/$defs/idempotency"},
-        "concurrency": {"$ref": "#/$defs/concurrency"},
-        "input_schema": {"type": "object"},
-        "output_schema": {"type": "object"}
+        "idempotency": {
+          "$ref": "#/$defs/idempotency"
+        },
+        "concurrency": {
+          "$ref": "#/$defs/concurrency"
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "output_schema": {
+          "type": "object"
+        }
       }
     },
     "listWorkItems": {
       "allOf": [
-        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
         {
           "properties": {
-            "name": {"const": "list_work_items"},
-            "required_permission": {"const": "work_item.read"},
+            "name": {
+              "const": "list_work_items"
+            },
+            "required_permission": {
+              "const": "work_item.read"
+            },
             "input_schema": {
               "const": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -268,8 +615,16 @@
                       ]
                     }
                   },
-                  "cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
-                  "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                  "cursor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  }
                 },
                 "required": []
               }
@@ -280,20 +635,31 @@
     },
     "getWorkItem": {
       "allOf": [
-        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_work_item"},
-            "required_permission": {"const": "work_item.read"},
+            "name": {
+              "const": "get_work_item"
+            },
+            "required_permission": {
+              "const": "work_item.read"
+            },
             "input_schema": {
               "const": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"}
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
                 },
-                "required": ["work_item_id"]
+                "required": [
+                  "work_item_id"
+                ]
               }
             }
           }
@@ -302,20 +668,31 @@
     },
     "getTaskContext": {
       "allOf": [
-        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_task_context"},
-            "required_permission": {"const": "work_item.read"},
+            "name": {
+              "const": "get_task_context"
+            },
+            "required_permission": {
+              "const": "work_item.read"
+            },
             "input_schema": {
               "const": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"}
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
                 },
-                "required": ["work_item_id"]
+                "required": [
+                  "work_item_id"
+                ]
               }
             }
           }
@@ -324,17 +701,35 @@
     },
     "getNextTask": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_next_task"},
-            "required_permission": {"const": "work_item.claim"},
-            "audit_event": {"const": "mcp.get_next_task.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_project_queue"}}},
+            "name": {
+              "const": "get_next_task"
+            },
+            "required_permission": {
+              "const": "work_item.claim"
+            },
+            "audit_event": {
+              "const": "mcp.get_next_task.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_project_queue"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "queue_version"},
-                "token_field": {"const": "queue_version"}
+                "strategy": {
+                  "const": "queue_version"
+                },
+                "token_field": {
+                  "const": "queue_version"
+                }
               }
             },
             "input_schema": {
@@ -347,15 +742,24 @@
                     "type": "array",
                     "uniqueItems": true,
                     "maxItems": 32,
-                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                    }
                   },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
                   },
-                  "queue_version": {"type": "integer", "minimum": 0}
+                  "queue_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 },
-                "required": ["idempotency_key", "queue_version"]
+                "required": [
+                  "idempotency_key",
+                  "queue_version"
+                ]
               }
             },
             "output_schema": {
@@ -363,13 +767,35 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+                "required": [
+                  "work_item_id",
+                  "lease_id",
+                  "lease_version",
+                  "lease_epoch",
+                  "queue_version",
+                  "worktree_path"
+                ],
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
-                  "lease_epoch": {"type": "integer", "minimum": 1},
-                  "queue_version": {"type": "integer", "minimum": 0},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "lease_epoch": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "queue_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
                   "worktree_path": {
                     "type": "string",
                     "minLength": 1,
@@ -385,17 +811,35 @@
     },
     "heartbeatTask": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "heartbeat_task"},
-            "required_permission": {"const": "work_item.heartbeat"},
-            "audit_event": {"const": "mcp.heartbeat_task.recorded"},
-            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "name": {
+              "const": "heartbeat_task"
+            },
+            "required_permission": {
+              "const": "work_item.heartbeat"
+            },
+            "audit_event": {
+              "const": "mcp.heartbeat_task.recorded"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_lease_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "lease_version"},
-                "token_field": {"const": "lease_version"}
+                "strategy": {
+                  "const": "lease_version"
+                },
+                "token_field": {
+                  "const": "lease_version"
+                }
               }
             },
             "input_schema": {
@@ -404,15 +848,29 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
                   }
                 },
-                "required": ["work_item_id", "lease_id", "lease_version", "idempotency_key"]
+                "required": [
+                  "work_item_id",
+                  "lease_id",
+                  "lease_version",
+                  "idempotency_key"
+                ]
               }
             }
           }
@@ -421,17 +879,35 @@
     },
     "submitTaskResult": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "submit_task_result"},
-            "required_permission": {"const": "work_item.submit"},
-            "audit_event": {"const": "mcp.submit_task_result.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "name": {
+              "const": "submit_task_result"
+            },
+            "required_permission": {
+              "const": "work_item.submit"
+            },
+            "audit_event": {
+              "const": "mcp.submit_task_result.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_lease_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "lease_version"},
-                "token_field": {"const": "lease_version"}
+                "strategy": {
+                  "const": "lease_version"
+                },
+                "token_field": {
+                  "const": "lease_version"
+                }
               }
             },
             "input_schema": {
@@ -440,20 +916,37 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "commit_sha": {
                     "type": "string",
                     "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
                   },
-                  "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
                   "evidence_refs": {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 100,
                     "uniqueItems": true,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    }
                   },
                   "idempotency_key": {
                     "type": "string",
@@ -476,17 +969,35 @@
     },
     "reportBlocker": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "report_blocker"},
-            "required_permission": {"const": "work_item.block"},
-            "audit_event": {"const": "mcp.report_blocker.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_lease_tool"}}},
+            "name": {
+              "const": "report_blocker"
+            },
+            "required_permission": {
+              "const": "work_item.block"
+            },
+            "audit_event": {
+              "const": "mcp.report_blocker.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_lease_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "lease_version"},
-                "token_field": {"const": "lease_version"}
+                "strategy": {
+                  "const": "lease_version"
+                },
+                "token_field": {
+                  "const": "lease_version"
+                }
               }
             },
             "input_schema": {
@@ -495,15 +1006,32 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
-                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
                   "evidence_refs": {
                     "type": "array",
                     "maxItems": 100,
                     "uniqueItems": true,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    }
                   },
                   "idempotency_key": {
                     "type": "string",
@@ -525,20 +1053,31 @@
     },
     "getQualityStatus": {
       "allOf": [
-        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_quality_status"},
-            "required_permission": {"const": "quality.read"},
+            "name": {
+              "const": "get_quality_status"
+            },
+            "required_permission": {
+              "const": "quality.read"
+            },
             "input_schema": {
               "const": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"}
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
                 },
-                "required": ["work_item_id"]
+                "required": [
+                  "work_item_id"
+                ]
               }
             }
           }
@@ -547,20 +1086,31 @@
     },
     "getGitLabStatus": {
       "allOf": [
-        {"$ref": "#/$defs/readOnlyTool"},
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_gitlab_status"},
-            "required_permission": {"const": "gitlab.status.read"},
+            "name": {
+              "const": "get_gitlab_status"
+            },
+            "required_permission": {
+              "const": "gitlab.status.read"
+            },
             "input_schema": {
               "const": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"}
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
                 },
-                "required": ["work_item_id"]
+                "required": [
+                  "work_item_id"
+                ]
               }
             }
           }
@@ -569,17 +1119,35 @@
     },
     "createWorkItem": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "create_work_item"},
-            "required_permission": {"const": "work_item.create"},
-            "audit_event": {"const": "mcp.create_work_item.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_project_tool"}}},
+            "name": {
+              "const": "create_work_item"
+            },
+            "required_permission": {
+              "const": "work_item.create"
+            },
+            "audit_event": {
+              "const": "mcp.create_work_item.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_project_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "expected_absent"},
-                "token_field": {"const": "expected_absent"}
+                "strategy": {
+                  "const": "expected_absent"
+                },
+                "token_field": {
+                  "const": "expected_absent"
+                }
               }
             },
             "input_schema": {
@@ -592,13 +1160,38 @@
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"
                   },
-                  "title": {"type": "string", "minLength": 1, "maxLength": 240},
-                  "description": {"type": "string", "minLength": 1, "maxLength": 20000},
-                  "kind": {
-                    "enum": ["feature", "bugfix", "test", "integration", "security", "maintenance"]
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
                   },
-                  "priority": {"enum": ["low", "normal", "high", "critical"]},
-                  "repository_id": {"type": "string", "format": "uuid"},
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000
+                  },
+                  "kind": {
+                    "enum": [
+                      "feature",
+                      "bugfix",
+                      "test",
+                      "integration",
+                      "security",
+                      "maintenance"
+                    ]
+                  },
+                  "priority": {
+                    "enum": [
+                      "low",
+                      "normal",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "repository_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
                   "target_branch": {
                     "type": "string",
                     "minLength": 1,
@@ -609,9 +1202,14 @@
                     "type": "array",
                     "maxItems": 100,
                     "uniqueItems": true,
-                    "items": {"type": "string", "format": "uuid"}
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
                   },
-                  "expected_absent": {"const": true},
+                  "expected_absent": {
+                    "const": true
+                  },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
@@ -636,17 +1234,35 @@
     },
     "cancelWorkItem": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "cancel_work_item"},
-            "required_permission": {"const": "work_item.cancel"},
-            "audit_event": {"const": "mcp.cancel_work_item.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_work_item_tool"}}},
+            "name": {
+              "const": "cancel_work_item"
+            },
+            "required_permission": {
+              "const": "work_item.cancel"
+            },
+            "audit_event": {
+              "const": "mcp.cancel_work_item.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_work_item_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "expected_version"},
-                "token_field": {"const": "expected_version"}
+                "strategy": {
+                  "const": "expected_version"
+                },
+                "token_field": {
+                  "const": "expected_version"
+                }
               }
             },
             "input_schema": {
@@ -655,15 +1271,30 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-                  "expected_version": {"type": "integer", "minimum": 0},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
                   }
                 },
-                "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+                "required": [
+                  "work_item_id",
+                  "reason",
+                  "expected_version",
+                  "idempotency_key"
+                ]
               }
             }
           }
@@ -672,17 +1303,35 @@
     },
     "retryWorkItem": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "retry_work_item"},
-            "required_permission": {"const": "work_item.retry"},
-            "audit_event": {"const": "mcp.retry_work_item.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_work_item_tool"}}},
+            "name": {
+              "const": "retry_work_item"
+            },
+            "required_permission": {
+              "const": "work_item.retry"
+            },
+            "audit_event": {
+              "const": "mcp.retry_work_item.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_work_item_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "expected_version"},
-                "token_field": {"const": "expected_version"}
+                "strategy": {
+                  "const": "expected_version"
+                },
+                "token_field": {
+                  "const": "expected_version"
+                }
               }
             },
             "input_schema": {
@@ -691,15 +1340,30 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-                  "expected_version": {"type": "integer", "minimum": 0},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
                   }
                 },
-                "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+                "required": [
+                  "work_item_id",
+                  "reason",
+                  "expected_version",
+                  "idempotency_key"
+                ]
               }
             }
           }
@@ -708,17 +1372,35 @@
     },
     "getVerificationTask": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "get_verification_task"},
-            "required_permission": {"const": "verification.claim"},
-            "audit_event": {"const": "mcp.get_verification_task.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_project_queue"}}},
+            "name": {
+              "const": "get_verification_task"
+            },
+            "required_permission": {
+              "const": "verification.claim"
+            },
+            "audit_event": {
+              "const": "mcp.get_verification_task.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_project_queue"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "queue_version"},
-                "token_field": {"const": "queue_version"}
+                "strategy": {
+                  "const": "queue_version"
+                },
+                "token_field": {
+                  "const": "queue_version"
+                }
               }
             },
             "input_schema": {
@@ -731,15 +1413,24 @@
                     "type": "array",
                     "uniqueItems": true,
                     "maxItems": 32,
-                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                    }
                   },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
                   },
-                  "queue_version": {"type": "integer", "minimum": 0}
+                  "queue_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 },
-                "required": ["idempotency_key", "queue_version"]
+                "required": [
+                  "idempotency_key",
+                  "queue_version"
+                ]
               }
             },
             "output_schema": {
@@ -747,13 +1438,35 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+                "required": [
+                  "work_item_id",
+                  "lease_id",
+                  "lease_version",
+                  "lease_epoch",
+                  "queue_version",
+                  "worktree_path"
+                ],
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
-                  "lease_epoch": {"type": "integer", "minimum": 1},
-                  "queue_version": {"type": "integer", "minimum": 0},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "lease_epoch": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "queue_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
                   "worktree_path": {
                     "type": "string",
                     "minLength": 1,
@@ -769,17 +1482,35 @@
     },
     "submitVerification": {
       "allOf": [
-        {"$ref": "#/$defs/mutatingTool"},
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
         {
           "properties": {
-            "name": {"const": "submit_verification"},
-            "required_permission": {"const": "verification.submit"},
-            "audit_event": {"const": "mcp.submit_verification.requested"},
-            "idempotency": {"properties": {"scope": {"const": "principal_verification_lease_tool"}}},
+            "name": {
+              "const": "submit_verification"
+            },
+            "required_permission": {
+              "const": "verification.submit"
+            },
+            "audit_event": {
+              "const": "mcp.submit_verification.requested"
+            },
+            "idempotency": {
+              "properties": {
+                "scope": {
+                  "const": "principal_verification_lease_tool"
+                }
+              }
+            },
             "concurrency": {
               "properties": {
-                "strategy": {"const": "lease_version"},
-                "token_field": {"const": "lease_version"}
+                "strategy": {
+                  "const": "lease_version"
+                },
+                "token_field": {
+                  "const": "lease_version"
+                }
               }
             },
             "input_schema": {
@@ -788,17 +1519,40 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "work_item_id": {"type": "string", "format": "uuid"},
-                  "verification_lease_id": {"type": "string", "format": "uuid"},
-                  "lease_version": {"type": "integer", "minimum": 1},
-                  "decision": {"enum": ["approved", "rejected", "needs_human"]},
-                  "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+                  "work_item_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "verification_lease_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "lease_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "decision": {
+                    "enum": [
+                      "approved",
+                      "rejected",
+                      "needs_human"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
                   "evidence_refs": {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 100,
                     "uniqueItems": true,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    }
                   },
                   "idempotency_key": {
                     "type": "string",
@@ -822,26 +1576,373 @@
     },
     "tool": {
       "oneOf": [
-        {"$ref": "#/$defs/listWorkItems"},
-        {"$ref": "#/$defs/getWorkItem"},
-        {"$ref": "#/$defs/getTaskContext"},
-        {"$ref": "#/$defs/getNextTask"},
-        {"$ref": "#/$defs/heartbeatTask"},
-        {"$ref": "#/$defs/submitTaskResult"},
-        {"$ref": "#/$defs/reportBlocker"},
-        {"$ref": "#/$defs/getQualityStatus"},
-        {"$ref": "#/$defs/getGitLabStatus"},
-        {"$ref": "#/$defs/createWorkItem"},
-        {"$ref": "#/$defs/cancelWorkItem"},
-        {"$ref": "#/$defs/retryWorkItem"},
-        {"$ref": "#/$defs/getVerificationTask"},
-        {"$ref": "#/$defs/submitVerification"}
+        {
+          "$ref": "#/$defs/listWorkItems"
+        },
+        {
+          "$ref": "#/$defs/getWorkItem"
+        },
+        {
+          "$ref": "#/$defs/getTaskContext"
+        },
+        {
+          "$ref": "#/$defs/getNextTask"
+        },
+        {
+          "$ref": "#/$defs/heartbeatTask"
+        },
+        {
+          "$ref": "#/$defs/submitTaskResult"
+        },
+        {
+          "$ref": "#/$defs/reportBlocker"
+        },
+        {
+          "$ref": "#/$defs/getQualityStatus"
+        },
+        {
+          "$ref": "#/$defs/getGitLabStatus"
+        },
+        {
+          "$ref": "#/$defs/createWorkItem"
+        },
+        {
+          "$ref": "#/$defs/cancelWorkItem"
+        },
+        {
+          "$ref": "#/$defs/retryWorkItem"
+        },
+        {
+          "$ref": "#/$defs/getVerificationTask"
+        },
+        {
+          "$ref": "#/$defs/submitVerification"
+        },
+        {
+          "$ref": "#/$defs/ListDefects"
+        },
+        {
+          "$ref": "#/$defs/GetDefect"
+        },
+        {
+          "$ref": "#/$defs/GetIntegrationRun"
+        },
+        {
+          "$ref": "#/$defs/GetAgentRun"
+        },
+        {
+          "$ref": "#/$defs/ReportAgentProgress"
+        }
+      ]
+    },
+    "ListDefects": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "list_defects"
+            },
+            "required_permission": {
+              "const": "quality.read"
+            },
+            "description": {
+              "const": "List normalized Defects in a project with optional state and severity filtering."
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project"
+                ],
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "states": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 10,
+                    "items": {
+                      "enum": [
+                        "detected",
+                        "triaged",
+                        "assigned",
+                        "reproducing",
+                        "fixing",
+                        "verifying",
+                        "resolved",
+                        "reopened",
+                        "quarantined",
+                        "ignored"
+                      ]
+                    }
+                  },
+                  "severities": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 5,
+                    "items": {
+                      "enum": [
+                        "critical",
+                        "high",
+                        "medium",
+                        "low",
+                        "info"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "GetDefect": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "get_defect"
+            },
+            "required_permission": {
+              "const": "quality.read"
+            },
+            "description": {
+              "const": "Read one Defect with its occurrence history and Evidence links."
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "defect_id"
+                ],
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "defect_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "GetIntegrationRun": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "get_integration_run"
+            },
+            "required_permission": {
+              "const": "quality.read"
+            },
+            "description": {
+              "const": "Read one cross-repository IntegrationRun with its exact revision combination."
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "integration_run_id"
+                ],
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "integration_run_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "GetAgentRun": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "get_agent_run"
+            },
+            "required_permission": {
+              "const": "quality.read"
+            },
+            "description": {
+              "const": "Read one Agent remediation run with its state, attempt count and budget usage."
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "execution_id"
+                ],
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "execution_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ReportAgentProgress": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "report_agent_progress"
+            },
+            "required_permission": {
+              "const": "agent.progress.report"
+            },
+            "description": {
+              "const": "Structured Agent progress report: state checkpoint, tool evidence reference and token usage. No free-text commands, no state-machine writes, no self-review."
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "project",
+                  "execution_id",
+                  "idempotency_key",
+                  "expected_version",
+                  "phase",
+                  "tokens_used"
+                ],
+                "properties": {
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "execution_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "phase": {
+                    "enum": [
+                      "eligibility_check",
+                      "reproducing",
+                      "diagnosing",
+                      "modifying",
+                      "local_verifying",
+                      "retrying",
+                      "mr_created",
+                      "ci_verifying",
+                      "awaiting_human"
+                    ]
+                  },
+                  "tool_evidence_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "tokens_used": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "handoff_reason": {
+                    "enum": [
+                      "cannot_reproduce",
+                      "budget_exhausted",
+                      "low_confidence",
+                      "high_risk",
+                      "tool_limit",
+                      "policy_stop",
+                      "human_review_required"
+                    ]
+                  }
+                }
+              }
+            },
+            "audit_event": {
+              "const": "mcp.report_agent_progress.recorded"
+            },
+            "idempotency": {
+              "const": {
+                "required": true,
+                "key_field": "idempotency_key",
+                "scope": "principal_project_execution",
+                "ttl_seconds": 86400,
+                "replay_semantics": "return_original_result",
+                "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+              }
+            },
+            "concurrency": {
+              "const": {
+                "strategy": "expected_version",
+                "token_field": "expected_version",
+                "conflict_error": "CONCURRENCY_CONFLICT"
+              }
+            }
+          }
+        }
       ]
     }
   },
   "examples": [
     {
-      "version": "3.0",
+      "version": "3.1",
       "work_item_states": [
         "draft",
         "queued",
@@ -888,8 +1989,16 @@
                   ]
                 }
               },
-              "cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
-              "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+              "cursor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              }
             },
             "required": []
           }
@@ -904,9 +2013,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"}
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              }
             },
-            "required": ["work_item_id"]
+            "required": [
+              "work_item_id"
+            ]
           }
         },
         {
@@ -919,9 +2033,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"}
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              }
             },
-            "required": ["work_item_id"]
+            "required": [
+              "work_item_id"
+            ]
           }
         },
         {
@@ -952,27 +2071,58 @@
                 "type": "array",
                 "uniqueItems": true,
                 "maxItems": 32,
-                "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                }
               },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               },
-              "queue_version": {"type": "integer", "minimum": 0}
+              "queue_version": {
+                "type": "integer",
+                "minimum": 0
+              }
             },
-            "required": ["idempotency_key", "queue_version"]
+            "required": [
+              "idempotency_key",
+              "queue_version"
+            ]
           },
           "output_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+            "required": [
+              "work_item_id",
+              "lease_id",
+              "lease_version",
+              "lease_epoch",
+              "queue_version",
+              "worktree_path"
+            ],
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
-              "lease_epoch": {"type": "integer", "minimum": 1},
-              "queue_version": {"type": "integer", "minimum": 0},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "lease_epoch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "queue_version": {
+                "type": "integer",
+                "minimum": 0
+              },
               "worktree_path": {
                 "type": "string",
                 "minLength": 1,
@@ -1006,15 +2156,29 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               }
             },
-            "required": ["work_item_id", "lease_id", "lease_version", "idempotency_key"]
+            "required": [
+              "work_item_id",
+              "lease_id",
+              "lease_version",
+              "idempotency_key"
+            ]
           }
         },
         {
@@ -1041,17 +2205,37 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
-              "commit_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
-              "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "commit_sha": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
               "evidence_refs": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
                 "uniqueItems": true,
-                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
               },
               "idempotency_key": {
                 "type": "string",
@@ -1092,22 +2276,45 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
-              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
               "evidence_refs": {
                 "type": "array",
                 "maxItems": 100,
                 "uniqueItems": true,
-                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
               },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               }
             },
-            "required": ["work_item_id", "lease_id", "lease_version", "reason", "idempotency_key"]
+            "required": [
+              "work_item_id",
+              "lease_id",
+              "lease_version",
+              "reason",
+              "idempotency_key"
+            ]
           }
         },
         {
@@ -1120,9 +2327,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"}
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              }
             },
-            "required": ["work_item_id"]
+            "required": [
+              "work_item_id"
+            ]
           }
         },
         {
@@ -1135,9 +2347,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"}
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              }
             },
-            "required": ["work_item_id"]
+            "required": [
+              "work_item_id"
+            ]
           }
         },
         {
@@ -1164,12 +2381,42 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "client_work_item_key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
-              "title": {"type": "string", "minLength": 1, "maxLength": 240},
-              "description": {"type": "string", "minLength": 1, "maxLength": 20000},
-              "kind": {"enum": ["feature", "bugfix", "test", "integration", "security", "maintenance"]},
-              "priority": {"enum": ["low", "normal", "high", "critical"]},
-              "repository_id": {"type": "string", "format": "uuid"},
+              "client_work_item_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000
+              },
+              "kind": {
+                "enum": [
+                  "feature",
+                  "bugfix",
+                  "test",
+                  "integration",
+                  "security",
+                  "maintenance"
+                ]
+              },
+              "priority": {
+                "enum": [
+                  "low",
+                  "normal",
+                  "high",
+                  "critical"
+                ]
+              },
+              "repository_id": {
+                "type": "string",
+                "format": "uuid"
+              },
               "target_branch": {
                 "type": "string",
                 "minLength": 1,
@@ -1180,9 +2427,14 @@
                 "type": "array",
                 "maxItems": 100,
                 "uniqueItems": true,
-                "items": {"type": "string", "format": "uuid"}
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               },
-              "expected_absent": {"const": true},
+              "expected_absent": {
+                "const": true
+              },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
@@ -1225,15 +2477,30 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-              "expected_version": {"type": "integer", "minimum": 0},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               }
             },
-            "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+            "required": [
+              "work_item_id",
+              "reason",
+              "expected_version",
+              "idempotency_key"
+            ]
           }
         },
         {
@@ -1260,15 +2527,30 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-              "expected_version": {"type": "integer", "minimum": 0},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               }
             },
-            "required": ["work_item_id", "reason", "expected_version", "idempotency_key"]
+            "required": [
+              "work_item_id",
+              "reason",
+              "expected_version",
+              "idempotency_key"
+            ]
           }
         },
         {
@@ -1299,27 +2581,58 @@
                 "type": "array",
                 "uniqueItems": true,
                 "maxItems": 32,
-                "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"}
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                }
               },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
               },
-              "queue_version": {"type": "integer", "minimum": 0}
+              "queue_version": {
+                "type": "integer",
+                "minimum": 0
+              }
             },
-            "required": ["idempotency_key", "queue_version"]
+            "required": [
+              "idempotency_key",
+              "queue_version"
+            ]
           },
           "output_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": ["work_item_id", "lease_id", "lease_version", "lease_epoch", "queue_version", "worktree_path"],
+            "required": [
+              "work_item_id",
+              "lease_id",
+              "lease_version",
+              "lease_epoch",
+              "queue_version",
+              "worktree_path"
+            ],
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
-              "lease_epoch": {"type": "integer", "minimum": 1},
-              "queue_version": {"type": "integer", "minimum": 0},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "lease_epoch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "queue_version": {
+                "type": "integer",
+                "minimum": 0
+              },
               "worktree_path": {
                 "type": "string",
                 "minLength": 1,
@@ -1353,17 +2666,40 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "work_item_id": {"type": "string", "format": "uuid"},
-              "verification_lease_id": {"type": "string", "format": "uuid"},
-              "lease_version": {"type": "integer", "minimum": 1},
-              "decision": {"enum": ["approved", "rejected", "needs_human"]},
-              "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "work_item_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "verification_lease_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "lease_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "decision": {
+                "enum": [
+                  "approved",
+                  "rejected",
+                  "needs_human"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
               "evidence_refs": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
                 "uniqueItems": true,
-                "items": {"type": "string", "minLength": 1, "maxLength": 2048}
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
               },
               "idempotency_key": {
                 "type": "string",
@@ -1379,6 +2715,224 @@
               "evidence_refs",
               "idempotency_key"
             ]
+          }
+        },
+        {
+          "name": "list_defects",
+          "description": "List normalized Defects in a project with optional state and severity filtering.",
+          "mutating": false,
+          "required_permission": "quality.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "project"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "states": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 10,
+                "items": {
+                  "enum": [
+                    "detected",
+                    "triaged",
+                    "assigned",
+                    "reproducing",
+                    "fixing",
+                    "verifying",
+                    "resolved",
+                    "reopened",
+                    "quarantined",
+                    "ignored"
+                  ]
+                }
+              },
+              "severities": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 5,
+                "items": {
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "info"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "get_defect",
+          "description": "Read one Defect with its occurrence history and Evidence links.",
+          "mutating": false,
+          "required_permission": "quality.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "project",
+              "defect_id"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "defect_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        },
+        {
+          "name": "get_integration_run",
+          "description": "Read one cross-repository IntegrationRun with its exact revision combination.",
+          "mutating": false,
+          "required_permission": "quality.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "project",
+              "integration_run_id"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "integration_run_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        },
+        {
+          "name": "get_agent_run",
+          "description": "Read one Agent remediation run with its state, attempt count and budget usage.",
+          "mutating": false,
+          "required_permission": "quality.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "project",
+              "execution_id"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "execution_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        },
+        {
+          "name": "report_agent_progress",
+          "description": "Structured Agent progress report: state checkpoint, tool evidence reference and token usage. No free-text commands, no state-machine writes, no self-review.",
+          "mutating": true,
+          "required_permission": "agent.progress.report",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "project",
+              "execution_id",
+              "idempotency_key",
+              "expected_version",
+              "phase",
+              "tokens_used"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "execution_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expected_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "phase": {
+                "enum": [
+                  "eligibility_check",
+                  "reproducing",
+                  "diagnosing",
+                  "modifying",
+                  "local_verifying",
+                  "retrying",
+                  "mr_created",
+                  "ci_verifying",
+                  "awaiting_human"
+                ]
+              },
+              "tool_evidence_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "tokens_used": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "handoff_reason": {
+                "enum": [
+                  "cannot_reproduce",
+                  "budget_exhausted",
+                  "low_confidence",
+                  "high_risk",
+                  "tool_limit",
+                  "policy_stop",
+                  "human_review_required"
+                ]
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 128
+              }
+            }
+          },
+          "audit_event": "mcp.report_agent_progress.recorded",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_execution",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
           }
         }
       ]

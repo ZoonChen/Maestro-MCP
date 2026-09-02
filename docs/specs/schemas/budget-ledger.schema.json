@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/budget-ledger-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Budget Ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ledger_id",
+    "work_item_id",
+    "budget_tokens",
+    "spent_tokens",
+    "state",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "ledger_id": {"type": "string", "format": "uuid"},
+    "work_item_id": {"type": "string", "format": "uuid"},
+    "budget_tokens": {"type": "integer", "minimum": 1},
+    "reserved_tokens": {"type": "integer", "minimum": 0},
+    "spent_tokens": {"type": "integer", "minimum": 0},
+    "actual_usage": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry_id", "direction", "tokens", "recorded_at"],
+        "properties": {
+          "entry_id": {"type": "string", "format": "uuid"},
+          "direction": {"enum": ["reserve", "release", "spend"]},
+          "tokens": {"type": "integer", "minimum": 1},
+          "tool_ref": {"type": "string", "minLength": 1, "maxLength": 255},
+          "recorded_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
+    "state": {"enum": ["open", "stopped", "closed"]},
+    "stop_reason": {
+      "enum": [null, "budget_exhausted", "attempt_limit", "time_limit", "manual_stop", "policy_stop"]
+    },
+    "stopped_at": {"type": ["string", "null"], "format": "date-time"},
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "stopped"}}},
+      "then": {"required": ["stop_reason", "stopped_at"]}
+    },
+    {
+      "if": {"properties": {"state": {"const": "open"}}},
+      "then": {"properties": {"stop_reason": {"const": null}, "stopped_at": {"const": null}}}
+    }
+  ]
+}

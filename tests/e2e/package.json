@@ -12,6 +12,7 @@
     "@types/ws": "^8.18.1"
   },
   "dependencies": {
+    "@asyncapi/parser": "^3.6.3",
     "ws": "^8.20.2"
   }
 }
