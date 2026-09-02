@@ -26,10 +26,18 @@ func TestKeychainCredentialResolvesPerHost(t *testing.T) {
 				name string
 				args []string
 			}{name, args})
-			if len(args) > 0 && args[len(args)-1] == "-w" {
-				return []byte("member-token\n"), nil
+			last := ""
+			if len(args) > 0 {
+				last = args[len(args)-1]
 			}
-			return []byte("keychain: \"gitlab.acme.example\"\nacct: \"member@acme\"\n"), nil
+			switch last {
+			case "-w", "password": // darwin security(1) / linux secret-tool
+				return []byte("member-token\n"), nil
+			case "username": // linux secret-tool
+				return []byte("member@acme"), nil
+			default: // darwin attribute dump
+				return []byte("keychain: \"gitlab.acme.example\"\nacct: \"member@acme\"\n"), nil
+			}
 		},
 	}
 
