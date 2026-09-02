@@ -79,5 +79,13 @@ jobs:
           make test
           make vet
 
+      # The core-coverage floors are enforced where the PG suites
+      # actually run: the pg-store core needs the compose DSN (a no-PG
+      # job collapses to the SQLite-only paths and would false-fail).
+      - name: Enforced core coverage
+        run: make coverage
+        env:
+          M1_CORE_COVERAGE_ENFORCE: "1"
+
       - name: Race detector
         run: make test-race
