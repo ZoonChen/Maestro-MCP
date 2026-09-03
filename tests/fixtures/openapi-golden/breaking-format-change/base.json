@@ -1,0 +1,1 @@
+{"openapi":"3.0.0","info":{"title":"s","version":"1"},"paths":{"/a":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"type":"object","properties":{"count":{"type":"string"}}}}}}}}}}}
