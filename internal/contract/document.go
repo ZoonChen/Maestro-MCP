@@ -17,11 +17,82 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 // RulesetVersion identifies the diff rule semantics. Any rule change must
 // bump this and update the golden fixtures.
 const RulesetVersion = "contract-ruleset-v1"
+
+// decodeSource turns JSON or YAML bytes into the generic tree the
+// parser consumes. YAML numbers decode through json.Number so both
+// forms share one numeric identity in the canonical encoding.
+func decodeSource(data []byte) (map[string]any, error) {
+	if DetectFormat(data) == FormatJSON {
+		var root map[string]any
+		decoder := json.NewDecoder(strings.NewReader(string(data)))
+		decoder.UseNumber()
+		if err := decoder.Decode(&root); err != nil {
+			return nil, fmt.Errorf("contract: invalid JSON: %w", err)
+		}
+		return root, nil
+	}
+	var raw any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("contract: invalid YAML: %w", err)
+	}
+	root, ok := normalizeYAML(raw).(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("contract: YAML root must be a mapping")
+	}
+	return root, nil
+}
+
+// normalizeYAML converts yaml.v3 typed nodes to the JSON-generic tree:
+// map[string]any, []any, string, bool, json.Number.
+func normalizeYAML(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeYAML(item)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[fmt.Sprintf("%v", key)] = normalizeYAML(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			out[index] = normalizeYAML(item)
+		}
+		return out
+	case int:
+		return json.Number(fmt.Sprintf("%d", typed))
+	case int64:
+		return json.Number(fmt.Sprintf("%d", typed))
+	case uint64:
+		return json.Number(fmt.Sprintf("%d", typed))
+	case float64:
+		return json.Number(jsonNumber(typed))
+	default:
+		return typed
+	}
+}
+
+func jsonNumber(f float64) string {
+	// Match encoding/json's number formatting so 1.5 and 2 stay
+	// distinguishable lexemes in both source forms.
+	raw, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Sprintf("%v", f)
+	}
+	return string(raw)
+}
 
 // Document is a parsed OpenAPI 3 document with its canonical form and hash.
 type Document struct {
@@ -32,14 +103,35 @@ type Document struct {
 	security      []any
 }
 
-// ParseDocument validates and parses an OpenAPI 3 JSON document. Missing
-// openapi/paths fields, a non-3.x version, or non-object shapes fail closed.
+// SourceFormat identifies the wire form a contract arrived in; both
+// forms canonicalize to the same bytes and therefore the same hash.
+type SourceFormat string
+
+const (
+	FormatJSON SourceFormat = "openapi3-json"
+	FormatYAML SourceFormat = "openapi3-yaml"
+)
+
+// DetectFormat returns the storage format for a contract source: JSON
+// when the first non-space byte is '{', YAML otherwise. The loader owns
+// no sniffing beyond this — a non-object YAML root fails in the parser.
+func DetectFormat(data []byte) SourceFormat {
+	trimmed := strings.TrimLeft(string(data), " \t\r\n")
+	if strings.HasPrefix(trimmed, "{") {
+		return FormatJSON
+	}
+	return FormatYAML
+}
+
+// ParseDocument validates and parses an OpenAPI 3 document in JSON or
+// YAML form. Missing openapi/paths fields, a non-3.x version, or
+// non-object shapes fail closed. Both forms produce identical
+// canonical bytes (JSON numbers normalize via the same UseNumber
+// pipeline), so a contract hashes the same regardless of source form.
 func ParseDocument(data []byte) (*Document, error) {
-	var root map[string]any
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
-		return nil, fmt.Errorf("contract: invalid JSON: %w", err)
+	root, err := decodeSource(data)
+	if err != nil {
+		return nil, err
 	}
 	if root == nil {
 		return nil, fmt.Errorf("contract: empty document")
@@ -91,16 +183,15 @@ func ParseDocument(data []byte) (*Document, error) {
 	return doc, nil
 }
 
-// Canonicalize re-encodes a JSON document with sorted object keys and no
-// insignificant whitespace. Numeric lexemes are preserved exactly (1.0 and 1
-// stay distinct), so canonical inputs must come from one serialization
-// pipeline to hash identically.
+// Canonicalize re-encodes a contract in either source form with sorted
+// object keys and no insignificant whitespace. Numeric lexemes are
+// preserved exactly (1.0 and 1 stay distinct), and both forms flow
+// through the same generic-tree pipeline, so a contract canonicalizes
+// identically regardless of how it arrived.
 func Canonicalize(data []byte) ([]byte, error) {
-	var value any
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("contract: invalid JSON: %w", err)
+	value, err := decodeSource(data)
+	if err != nil {
+		return nil, err
 	}
 	var builder strings.Builder
 	if err := encodeCanonical(&builder, value); err != nil {

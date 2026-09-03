@@ -97,6 +97,12 @@ func (r *DiffResult) diffOperation(path, method string, oldOp, newOp map[string]
 		if typeOf(schemaOf(oldParam)) != typeOf(schemaOf(newParam)) {
 			r.add(Change{Location: location + ".parameters." + name, Detail: "parameter type changed", Breaking: true})
 		}
+		// Flipping an existing optional parameter to required breaks
+		// every established caller that omitted it.
+		oldRequired, _ := oldParam["required"].(bool)
+		if required && !oldRequired {
+			r.add(Change{Location: location + ".parameters." + name, Detail: "parameter became required", Breaking: true})
+		}
 		r.diffEnum(location+".parameters."+name, schemaOf(oldParam), schemaOf(newParam))
 	}
 	r.diffRequestSchema(location, oldOp, newOp)
@@ -153,6 +159,7 @@ func (r *DiffResult) diffSchema(location string, oldSchema, newSchema map[string
 		return
 	}
 	r.diffEnum(location, oldSchema, newSchema)
+	r.diffDefault(location, oldSchema, newSchema, direction)
 	oldProperties, _ := oldSchema["properties"].(map[string]any)
 	newProperties, _ := newSchema["properties"].(map[string]any)
 	for name, rawOldProperty := range oldProperties {
@@ -173,6 +180,20 @@ func (r *DiffResult) diffSchema(location string, oldSchema, newSchema map[string
 				r.add(Change{Location: location + ".properties." + name, Detail: "required request property added", Breaking: true})
 			}
 		}
+	}
+}
+
+// diffDefault: dropping a request default tightens what clients may
+// send (previously-absent fields used to be filled server-side);
+// adding one loosens and never breaks. Response defaults are cosmetic.
+func (r *DiffResult) diffDefault(location string, oldSchema, newSchema map[string]any, direction schemaDirection) {
+	if direction != schemaDirectionRequest {
+		return
+	}
+	_, hadDefault := oldSchema["default"]
+	_, hasDefault := newSchema["default"]
+	if hadDefault && !hasDefault {
+		r.add(Change{Location: location, Detail: "request default removed", Breaking: true})
 	}
 }
 
