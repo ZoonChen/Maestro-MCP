@@ -37,7 +37,7 @@ last_verified_commit: null
 
 ## 3. 触发条件、输入和前置条件
 
-- 工具链锁定：Go `1.26.6`、Node `22.14.0`、npm `10.9.2`；后续升级 MUST 由独立 PR 同步 CI、容器与 SBOM。
+- 工具链锁定：Go `1.26.6`、Node `22.14.0`、npm `11.19.1`；后续升级 MUST 由独立 PR 同步 CI、容器与 SBOM。npm 10.x 仍向 registry 已退役的 `audits/quick` 端点提交 `npm audit`，会随机 400，MUST 保持 npm ≥ 11。
 - 必需输入：`go.sum`、`web/package-lock.json`、源码 commit、构建平台；缺失 lockfile MUST 失败。
 - 运行前：配置通过 JSON Schema；server 连接 PostgreSQL、OIDC metadata 与 Secret Store；runner 具有有效设备身份、OCI runtime 与受控 workspace root。
 

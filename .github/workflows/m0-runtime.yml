@@ -45,7 +45,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Pin npm
-        run: npm install --global npm@10.9.2
+        run: npm install --global npm@11.19.1
 
       - name: Build clean source graph
         run: make build
