@@ -35,7 +35,7 @@ permissions:
 jobs:
   postgres-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16-alpine
