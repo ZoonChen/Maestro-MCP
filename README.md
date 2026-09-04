@@ -88,7 +88,7 @@ AI 开发工具 ─stdio MCP→ 本地 maestro runner ─出站 HTTPS→ Control
 
 ## 本地构建与验证
 
-使用 `.go-version` 与 `.node-version` 中锁定的 Go `1.26.6`、Node `22.14.0`，并使用 npm `10.9.2`。`web/dist` 不提交；受支持的构建入口会先生成前端资源，再编译嵌入这些资源的 Go binary。
+使用 `.go-version` 与 `.node-version` 中锁定的 Go `1.26.6`、Node `22.14.0`，并使用 npm `11.19.1`。`web/dist` 不提交；受支持的构建入口会先生成前端资源，再编译嵌入这些资源的 Go binary。
 
 ```bash
 make build
