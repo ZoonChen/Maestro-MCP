@@ -1,0 +1,42 @@
+# Simulated development pipeline (project maestro-ci/dev-flow):
+# build -> unit test -> dev package, then a bridge job that promotes a green
+# default-branch run into the test-flow pipeline (dev -> test hand-off).
+# Plain shell on a multi-arch base image: the point is validating the runner
+# and pipeline mechanics, not real compilation.
+stages: [build, unit-test, package, promote]
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_BRANCH
+
+build:app:
+  stage: build
+  script:
+    - 'echo "build: compiling demo-app ${CI_COMMIT_SHORT_SHA}"'
+    - mkdir -p dist
+    - echo "dev build ${CI_COMMIT_SHA}" > dist/app.txt
+  artifacts:
+    paths: [dist/]
+    expire_in: 1 day
+
+test:unit:
+  stage: unit-test
+  script:
+    - 'echo "unit: 3 simulated cases"'
+    - grep -q "dev build" dist/app.txt
+
+package:dev:
+  stage: package
+  script:
+    - tar czf "app-dev-${CI_COMMIT_SHORT_SHA}.tgz" dist/
+    - 'echo "package: dev artifact ready (simulated image tag dev-${CI_COMMIT_SHORT_SHA})"'
+  artifacts:
+    paths: ["app-dev-*.tgz"]
+    expire_in: 3 days
+
+promote:test:
+  stage: promote
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  trigger: maestro-ci/test-flow

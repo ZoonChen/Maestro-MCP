@@ -3,7 +3,9 @@
 #
 # M1 local-first topology (plans/stages/m1-control-plane.md P2):
 #   docker compose --profile m1 up          # + maestro-postgres + keycloak
-#   docker compose --profile m1-gitlab up   # + GitLab CE (W2 integration)
+# GitLab CE lives in its own stack under deploy/gitlab/ (intranet-aligned
+# 19.3.1 + docker-executor runner) so its lifecycle never touches these
+# volumes; for the services above the m1-gitlab profile equals m1.
 # The maestro service stays on SQLite unless MAESTRO_DB_DRIVER=postgres and a
 # DSN are provided; the v3 wiring lands with M1-DATA-001.
 services:
@@ -126,33 +128,13 @@ services:
       retries: 30
       start_period: 30s
 
-  # GitLab CE is W2 integration material (M2-GL-001); the topology slot is
-  # reserved behind the m1-gitlab profile so S4 can extend it without
-  # restructuring the file.
-  gitlab-ce:
-    image: gitlab/gitlab-ce:17.9.1-ce.0
-    profiles: ["m1-gitlab"]
-    environment:
-      GITLAB_OMNIBUS_CONFIG: |
-        gitlab_rails['gitlab_shell_ssh_port'] = 2222
-    shm_size: 256m
-    volumes:
-      - gitlab-config:/etc/gitlab
-      - gitlab-logs:/var/log/gitlab
-      - gitlab-data:/var/opt/gitlab
-    ports:
-      - "127.0.0.1:${MAESTRO_GITLAB_PORT:-8181}:80"
-    restart: unless-stopped
-    networks:
-      - maestro
+  # GitLab CE moved to the standalone stack under deploy/gitlab/ (see the
+  # header note); no service is defined here anymore.
 
 volumes:
   maestro-data:
   maestro-postgres-data:
   keycloak-data:
-  gitlab-config:
-  gitlab-logs:
-  gitlab-data:
 
 networks:
   maestro:
