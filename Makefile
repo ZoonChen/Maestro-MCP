@@ -94,7 +94,8 @@ lint: web-build
 security-scan: web-deps e2e-deps
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	$(NPM) --prefix web audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
-	$(NPM) --prefix tests/e2e audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
+	$(NPM) --prefix tests/e2e audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org || \
+	  { sleep 30; $(NPM) --prefix tests/e2e audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org; }
 	docker run --rm -v $(CURDIR):/workspace:ro $(TRIVY_IMAGE) \
 		fs --exit-code 1 --severity HIGH,CRITICAL --scanners vuln,secret,misconfig \
 		--skip-dirs /workspace/.git --skip-dirs /workspace/web/node_modules \
