@@ -1,0 +1,29 @@
+# Simulated test pipeline (project maestro-ci/test-flow):
+# integration -> e2e smoke -> manual deploy gate. deploy:test is intentionally
+# `when: manual` to rehearse the approval step; the pipeline is marked success
+# once all automatic stages pass and only the manual action remains.
+stages: [integration-test, e2e-smoke, deploy-test]
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_BRANCH
+
+test:integration:
+  stage: integration-test
+  script:
+    - 'echo "integration: services wired (simulated)"'
+    - sleep 2
+
+test:e2e:
+  stage: e2e-smoke
+  script:
+    - 'echo "e2e: smoke suite passed (simulated)"'
+    - sleep 2
+
+deploy:test:
+  stage: deploy-test
+  when: manual
+  script:
+    - 'echo "deploy: released to simulated test env (manual gate passed)"'

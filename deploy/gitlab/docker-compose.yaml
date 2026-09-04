@@ -1,0 +1,60 @@
+# Standalone GitLab sandbox, version-aligned with the intranet GitLab
+# (CE 19.3.1 + docker-executor runner) so CI/CD validation results transfer.
+# Deliberately independent from the root compose: this stack never touches the
+# maestro/keycloak/postgres volumes, and the control plane is not required to
+# run it. Lifecycle: make gitlab-up | gitlab-provision | gitlab-rebuild.
+#
+# Version pins drift from the intranet on its next upgrade; bump GITLAB_VERSION
+# and GITLAB_RUNNER_VERSION together (runner must not trail GitLab by a minor).
+name: maestro-gitlab
+
+services:
+  gitlab-ce:
+    image: gitlab/gitlab-ce:${GITLAB_VERSION:-19.3.1-ce.0}
+    container_name: maestro-gitlab-ce
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8181'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    shm_size: 256m
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    ports:
+      - "127.0.0.1:${MAESTRO_GITLAB_PORT:-8181}:80"
+      - "127.0.0.1:2222:22"
+    restart: unless-stopped
+    networks:
+      - maestro-gitlab
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:${GITLAB_RUNNER_VERSION:-v19.3.1}
+    container_name: maestro-gitlab-runner
+    # Docker executor, matching the intranet runners: job containers are
+    # siblings created through the host daemon socket. config.toml is written
+    # into the named volume by provision.sh (API-issued runner token), which
+    # then restarts this service.
+    volumes:
+      - runner-config:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    depends_on:
+      gitlab-ce:
+        condition: service_healthy
+    networks:
+      - maestro-gitlab
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  runner-config:
+
+networks:
+  # Fixed name: job containers join this network (runners.docker.network_mode)
+  # so the helper image resolves http://gitlab-ce for cloning.
+  maestro-gitlab:
+    name: maestro-gitlab

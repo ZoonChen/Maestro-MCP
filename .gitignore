@@ -19,6 +19,7 @@ vendor/
 .env
 .env.*
 maestro.yaml
+deploy/gitlab/.root-pat
 
 # Runtime data
 data/

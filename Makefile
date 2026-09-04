@@ -1,5 +1,6 @@
 .PHONY: all build web-deps web-build verify-web e2e-deps e2e test test-hygiene coverage test-race vet lint security-scan image-scan clean docker-build \
-	compose-up compose-down smoke sbom verify-sbom release
+	compose-up compose-down smoke sbom verify-sbom release \
+	gitlab-up gitlab-provision gitlab-down gitlab-rebuild
 
 BINARY ?= maestro
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -145,6 +146,25 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+# Standalone GitLab sandbox (deploy/gitlab): intranet-aligned CE + docker
+# executor runner. Rebuild is the standard action after bumping the version
+# pins to follow an intranet upgrade.
+GITLAB_DIR ?= deploy/gitlab
+
+gitlab-up:
+	docker compose -f $(GITLAB_DIR)/docker-compose.yaml up -d --wait
+
+gitlab-provision:
+	$(GITLAB_DIR)/provision.sh
+
+gitlab-down:
+	docker compose -f $(GITLAB_DIR)/docker-compose.yaml down
+
+gitlab-rebuild:
+	docker compose -f $(GITLAB_DIR)/docker-compose.yaml down --volumes
+	$(MAKE) gitlab-up
+	$(MAKE) gitlab-provision
 
 smoke: build
 	MAESTRO_BINARY=$(CURDIR)/bin/$(BINARY) $(GO) test ./tests/m0 -count=1
