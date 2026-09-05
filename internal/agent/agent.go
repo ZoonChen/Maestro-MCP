@@ -205,6 +205,13 @@ func (o *Orchestrator) LocalVerifyStep(ctx RunContext, diffRef string) (StepOutc
 	return o.to(ctx, StateLocalVerifying, StateNeedsHuman, HandoffLowConfidence)
 }
 
+// MRTransitionStep records the MR creation moving the run into CI
+// verification (the machine carries the MRCreated -> CIVerifying edge;
+// this is its public driver).
+func (o *Orchestrator) MRTransitionStep(ctx RunContext) (StepOutcome, error) {
+	return o.to(ctx, StateMRCreated, StateCIVerifying, "")
+}
+
 // CIVerifyStep: green CI parks the run for human review (the ONLY
 // merge path); red CI retries while budget remains.
 func (o *Orchestrator) CIVerifyStep(ctx RunContext, mrRef string) (StepOutcome, error) {
