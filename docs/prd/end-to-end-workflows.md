@@ -2,7 +2,7 @@
 doc_id: PRD-END-TO-END-WORKFLOWS
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
+implementation_status: partial
 verification_status: unverified
 owner_role: product_owner
 approver_roles: [product_owner, technical_lead, qa_owner]
