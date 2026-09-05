@@ -52,7 +52,7 @@ func TestAgentRunPersistence(t *testing.T) {
 	run := agent.RunContext{
 		ProjectID: projectID,
 		DefectID:  "018f7e00-0000-7000-8000-0000000000d1",
-		RunID:     "018f7e00-0000-7000-8000-0000000000r1",
+		RunID:     "018f7e00-0000-7000-8000-0000000000e1",
 		Attempt:   1,
 	}
 
@@ -64,7 +64,7 @@ func TestAgentRunPersistence(t *testing.T) {
 
 	// A crashed creator's replay resumes the SAME row.
 	replay := agent.RunContext{ProjectID: projectID,
-		DefectID: run.DefectID, RunID: "018f7e00-0000-7000-8000-0000000000r2", Attempt: 1}
+		DefectID: run.DefectID, RunID: "018f7e00-0000-7000-8000-0000000000e2", Attempt: 1}
 	state, created, err = pg.AgentRuns().CreateRun(ctx, replay, 1)
 	require.NoError(t, err)
 	assert.False(t, created, "one live run per defect+attempt")
