@@ -1,7 +1,7 @@
 ---
 doc_id: DELIVERY-M4-GOVERNANCE-CONSOLE
 spec_version: 3.0
-spec_status: review
+spec_status: approved
 implementation_status: not_started
 verification_status: unverified
 owner_role: technical_lead
