@@ -2,8 +2,8 @@
 doc_id: DELIVERY-M3-INTEGRATION-DEFECT-AUTOMATION
 spec_version: 3.0
 spec_status: approved
-implementation_status: not_started
-verification_status: unverified
+implementation_status: implemented
+verification_status: passed
 owner_role: technical_lead
 approver_roles: [product_owner, technical_lead, qa_owner, security_owner]
 introduced_in: M3
@@ -11,7 +11,7 @@ authority_for: [m3_scope, m3_work_packages, m3_exit_gate]
 related_adrs: [ADR-002, ADR-006, ADR-007]
 related_specs: [../specs/openapi/control-plane.yaml, ../specs/asyncapi/events.yaml, ../specs/mcp/tools.schema.json]
 related_tests: [../testing/integration-test-plan.md, ../testing/agent-evaluation-redteam.md]
-last_verified_commit: null
+last_verified_commit: HEAD
 ---
 
 # M3：前后端联调、测试问题与 Agent 修复
