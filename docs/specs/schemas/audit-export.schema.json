@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/audit-export-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Append-Only Audit Chain Export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "export_id",
+    "project_id",
+    "range",
+    "entries",
+    "chain_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "export_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_seq", "to_seq"],
+      "properties": {
+        "from_seq": {"type": "integer", "minimum": 1},
+        "to_seq": {"type": "integer", "minimum": 1},
+        "from_time": {"type": "string", "format": "date-time"},
+        "to_time": {"type": "string", "format": "date-time"}
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "event_id", "event_type", "principal", "occurred_at"],
+        "properties": {
+          "seq": {"type": "integer", "minimum": 1},
+          "event_id": {"type": "string", "format": "uuid"},
+          "event_type": {"type": "string", "minLength": 1, "maxLength": 128},
+          "principal": {"type": "string", "minLength": 1, "maxLength": 255},
+          "occurred_at": {"type": "string", "format": "date-time"},
+          "correlation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "resource": {"type": "string", "minLength": 1, "maxLength": 255},
+          "action": {"type": "string", "minLength": 1, "maxLength": 128},
+          "decision": {"enum": ["allow", "deny", "waived", "neutral"]},
+          "evidence_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "format": "uuid"}
+          },
+          "prev_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "entry_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "chain_digest": {
+      "description": "The rolling digest over every entry_digest in seq order; verification recomputes and compares.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": {"type": "string", "minLength": 1, "maxLength": 64},
+        "fields_masked": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "entries": {
+            "type": "array",
+            "minItems": 1
+          }
+        },
+        "required": ["entries"]
+      },
+      "then": {
+        "properties": {
+          "entries": {
+            "items": {
+              "type": "object",
+              "required": ["entry_digest"]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
