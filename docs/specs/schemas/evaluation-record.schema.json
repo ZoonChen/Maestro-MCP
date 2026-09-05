@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/evaluation-record-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro Agent Evaluation Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "layer",
+    "case_id",
+    "run_id",
+    "dataset_digest",
+    "verdict",
+    "score",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "record_id": {"type": "string", "format": "uuid"},
+    "layer": {
+      "enum": ["quality", "trajectory", "security", "capability"]
+    },
+    "case_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "run_id": {"type": "string", "format": "uuid"},
+    "category": {"type": "string", "minLength": 1, "maxLength": 128},
+    "risk": {"enum": ["benign", "low", "elevated", "high"]},
+    "verdict": {"enum": ["pass", "fail", "error", "blocked", "skipped"]},
+    "score": {"type": "number", "minimum": 0, "maximum": 100},
+    "scorer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "version"],
+      "properties": {
+        "kind": {"enum": ["deterministic", "rule_based", "llm_judge", "human"]},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64},
+        "calibration_ref": {"type": "string", "minLength": 1, "maxLength": 255}
+      }
+    },
+    "dataset_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "seed": {"type": "integer", "minimum": 0},
+    "model_config_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "trajectory_constraints": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
+    "forbidden_actions_observed": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
+    "tokens_used": {"type": "integer", "minimum": 0},
+    "latency_ms": {"type": "integer", "minimum": 0},
+    "external_state_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "uuid"}
+    },
+    "notes": {"type": "string", "maxLength": 4000},
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"layer": {"const": "security"}}},
+      "then": {"required": ["risk"]}
+    },
+    {
+      "if": {"properties": {"verdict": {"const": "fail"}}},
+      "then": {"required": ["notes"]}
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.internal/schemas/slo-status-v3.json",
+  "$comment": "Canonical examples are stored under docs/specs/examples and MUST be validated against this schema.",
+  "title": "Maestro SLO Status Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "window",
+    "availability",
+    "objectives",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["rolling_30d", "rolling_7d", "calendar_month"]},
+        "from": {"type": "string", "format": "date-time"},
+        "to": {"type": "string", "format": "date-time"}
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_percent", "measured_percent", "state"],
+      "properties": {
+        "target_percent": {"const": 99.5},
+        "measured_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "state": {"enum": ["healthy", "at_risk", "breached"]},
+        "error_budget_remaining_percent": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "objectives": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "target", "measured", "state"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "api_p95_latency_ms",
+              "webhook_ingest_p95_latency_ms",
+              "inbox_lag_p95_seconds",
+              "gate_eval_p95_latency_ms",
+              "rpo_minutes",
+              "rto_minutes",
+              "backup_success_rate_percent"
+            ]
+          },
+          "target": {"type": "number", "minimum": 0},
+          "measured": {"type": "number", "minimum": 0},
+          "unit": {"type": "string", "minLength": 1, "maxLength": 32},
+          "state": {"enum": ["healthy", "at_risk", "breached", "no_data"]},
+          "alert": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "firing": {"type": "boolean"},
+              "severity": {"enum": ["warning", "critical"]},
+              "runbook_ref": {"type": "string", "minLength": 1, "maxLength": 255},
+              "since": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "active": {"type": "boolean"},
+        "mode": {"enum": [null, "read_only", "webhook_only", "draining"]},
+        "since": {"type": "string", "format": "date-time"}
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"}
+  }
+}
