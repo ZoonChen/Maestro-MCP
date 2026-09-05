@@ -28,7 +28,7 @@ func (s *PostgresStore) AgentRuns() pgAgentStore { return pgAgentStore{db: s.DB(
 // CreateRun opens (or resumes) the run for one defect under one
 // attempt: first creation lands at eligibility_check; replays answer
 // the durable state.
-func (s pgAgentStore) CreateRun(ctx context.Context, run agent.RunContext, attempt int) (state agent.State, created bool, err error) {
+func (s pgAgentStore) CreateRun(ctx context.Context, run agent.RunContext, attempt int, budgetTokens int64) (state agent.State, created bool, err error) {
 	var existing string
 	err = s.db.QueryRowContext(ctx, `
 		SELECT state FROM agent_runs
@@ -39,10 +39,10 @@ func (s pgAgentStore) CreateRun(ctx context.Context, run agent.RunContext, attem
 		return agent.State(existing), false, nil
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err = s.db.ExecContext(ctx, `
-			INSERT INTO agent_runs (id, project_id, defect_id, attempt, state, config_digest)
-			VALUES ($1, $2, $3, $4, 'eligibility_check', $5)
+			INSERT INTO agent_runs (id, project_id, defect_id, attempt, state, config_digest, budget_tokens)
+			VALUES ($1, $2, $3, $4, 'eligibility_check', $5, $6)
 			ON CONFLICT DO NOTHING`,
-			run.RunID, run.ProjectID, run.DefectID, attempt, "orchestrator-v1"); err != nil {
+			run.RunID, run.ProjectID, run.DefectID, attempt, "orchestrator-v1", budgetTokens); err != nil {
 			return "", false, fmt.Errorf("agent runs: create: %w", err)
 		}
 		return agent.StateEligibilityCheck, true, nil

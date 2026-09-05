@@ -43,6 +43,10 @@ func newAgentFixture(t *testing.T) (*PostgresStore, string) {
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `INSERT INTO projects (id, team_id, key, name, status) VALUES ($1, '018f7e00-0000-7000-8000-000000000001', 'agt', 'AGT', 'active')`, m3Project)
 	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO defects (id, project_id, fingerprint_version, fingerprint_hash, state, severity, title)
+		VALUES ($1, $2, 1, $3, 'detected', 'high', 'agent fixture defect')`,
+		"018f7e00-0000-7000-8000-0000000000d1", m3Project, "sha256:"+strings.Repeat("e", 64))
+	require.NoError(t, err)
 	return pg, m3Project
 }
 
@@ -57,7 +61,7 @@ func TestAgentRunPersistence(t *testing.T) {
 	}
 
 	// Create lands at eligibility_check.
-	state, created, err := pg.AgentRuns().CreateRun(ctx, run, 1)
+	state, created, err := pg.AgentRuns().CreateRun(ctx, run, 1, 1000)
 	require.NoError(t, err)
 	require.True(t, created)
 	assert.Equal(t, agent.StateEligibilityCheck, state)
@@ -65,7 +69,7 @@ func TestAgentRunPersistence(t *testing.T) {
 	// A crashed creator's replay resumes the SAME row.
 	replay := agent.RunContext{ProjectID: projectID,
 		DefectID: run.DefectID, RunID: "018f7e00-0000-7000-8000-0000000000e2", Attempt: 1}
-	state, created, err = pg.AgentRuns().CreateRun(ctx, replay, 1)
+	state, created, err = pg.AgentRuns().CreateRun(ctx, replay, 1, 1000)
 	require.NoError(t, err)
 	assert.False(t, created, "one live run per defect+attempt")
 	assert.Equal(t, agent.StateEligibilityCheck, state)
