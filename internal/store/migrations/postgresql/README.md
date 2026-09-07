@@ -48,6 +48,7 @@
 10. `0012` M4 治理三表（telemetry_aggregates 窗口桶唯一 / evaluation_records (run,case,layer) 唯一 + security 层必带 risk 表级不变量 / pilot_flags 每项目每 flag 唯一 + gray-only 百分比）。偏差：evaluation 的 risk 必填由 schema 的条件要求转为表 CHECK；telemetry 只存脱敏聚合（redaction_version 随行）。
 9. `0011` `agent_runs` 增 `(project_id, defect_id, attempt)` 唯一索引：崩溃恢复按持久状态续跑（find-or-resume），副作用调用永不重放（agent-remediation §8）。
 8. `0010` M3 九表（`gitlab_pipeline_id`/`gitlab_job_id` bigint）：冻结 wire 的 pipeline_id/job_id 是整数，0004 建成 uuid 外键。数字列满足 wire 往返；uuid 外键回填仍留给对账期富化。
+11. `0013` M4 备份/WAL 恢复元数据 `backup_runs`（矩阵 M4-REL-001 规划项）：kind full/wal、状态机 running→completed→verified/failed；REL-RULE-004 表级化——verified 强制携带异机 restore 主机、checksum 匹配与业务 smoke 三项证据；`storage_ref` 仅允许 `env:MAESTRO_*` 引用（与 Webhook Secret 同纪律）。偏差：备份是控制面整库对象，不挂 project_id（遥测/审计按项目，备份按平台）；状态机方向由存储层守卫 UPDATE 承载，CHECK 只锁每状态形状。
 
 ## SQLite → PostgreSQL 导入映射表
 
