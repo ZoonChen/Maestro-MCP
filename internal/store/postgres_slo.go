@@ -18,6 +18,7 @@ type MetricWindow struct {
 	WindowKind  string
 	WindowStart time.Time
 	SampleCount int64
+	Sum         float64
 	// P95 is nil when the window carried no percentile — the honest
 	// no_data marker for the evaluator.
 	P95 *float64
@@ -33,7 +34,7 @@ func (s pgObservabilityStore) LatestMetricWindows(ctx context.Context, projectID
 		return nil, ErrTelemetryWindowRejected
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT ON (metric) metric, window_kind, window_start, sample_count, p95_value
+		SELECT DISTINCT ON (metric) metric, window_kind, window_start, sample_count, sum_value, p95_value
 		FROM telemetry_aggregates
 		WHERE project_id = $1 AND metric = ANY($2)
 			AND window_start >= $3 AND window_start < $4
@@ -48,7 +49,7 @@ func (s pgObservabilityStore) LatestMetricWindows(ctx context.Context, projectID
 	for rows.Next() {
 		window := MetricWindow{}
 		var p95 *float64
-		if scanErr := rows.Scan(&window.Metric, &window.WindowKind, &window.WindowStart, &window.SampleCount, &p95); scanErr != nil {
+		if scanErr := rows.Scan(&window.Metric, &window.WindowKind, &window.WindowStart, &window.SampleCount, &window.Sum, &p95); scanErr != nil {
 			return nil, scanErr
 		}
 		window.P95 = p95

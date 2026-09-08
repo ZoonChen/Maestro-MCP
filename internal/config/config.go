@@ -143,6 +143,50 @@ type Config struct {
 	Runner   RunnerConfig   `yaml:"runner"`
 
 	Validation ValidationConfig `yaml:"validation"`
+	Backup     BackupConfig     `yaml:"backup"`
+	// SLO carries the optional snapshot policy; absent keeps the SLO
+	// endpoint unexposed (honest degradation, never invented numbers).
+	SLO *SLOConfig `yaml:"slo,omitempty"`
+}
+
+// BackupConfig mirrors the frozen config.schema.json `backup` section:
+// the SLO objectives rpo_minutes/rto_minutes read their targets from
+// here, and the ledger lifecycle lives in internal/store.
+type BackupConfig struct {
+	FullBackupIntervalHours int  `yaml:"full_backup_interval_hours"`
+	WALArchive              bool `yaml:"wal_archive"`
+	RPOMinutes              int  `yaml:"rpo_minutes"`
+	RTOMinutes              int  `yaml:"rto_minutes"`
+}
+
+// SLOConfig is the explicit snapshot policy: every threshold is
+// caller-supplied, the validator only rejects — no defaults exist to
+// silently fall back to.
+type SLOConfig struct {
+	Window       string                `yaml:"window"`
+	Availability SLOAvailabilityConfig `yaml:"availability"`
+	Objectives   []SLOObjectiveConfig  `yaml:"objectives"`
+}
+
+// SLOAvailabilityConfig names the telemetry metrics that carry the
+// availability SLI counts plus the explicit at-risk error-budget line.
+type SLOAvailabilityConfig struct {
+	SuccessMetric                     string  `yaml:"success_metric"`
+	TotalMetric                       string  `yaml:"total_metric"`
+	AtRiskErrorBudgetRemainingPercent float64 `yaml:"at_risk_error_budget_remaining_percent"`
+}
+
+// SLOObjectiveConfig is one metric-backed objective; the deployment
+// objectives (rpo/rto/backup rate) are computed from the backup
+// ledger, not declared here.
+type SLOObjectiveConfig struct {
+	Kind            string  `yaml:"kind"`
+	Metric          string  `yaml:"metric"`
+	Target          float64 `yaml:"target"`
+	AtRiskThreshold float64 `yaml:"at_risk_threshold"`
+	Unit            string  `yaml:"unit"`
+	LowerIsBetter   bool    `yaml:"lower_is_better"`
+	RunbookRef      string  `yaml:"runbook_ref"`
 }
 
 // DefaultConfig returns the safe M0 development baseline.
@@ -389,6 +433,99 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateRunner(); err != nil {
 		return err
+	}
+	if err := c.validateBackup(); err != nil {
+		return err
+	}
+	if err := c.validateSLO(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateBackup enforces the frozen config.schema.json `backup`
+// bounds whenever the section carries values.
+func (c *Config) validateBackup() error {
+	zero := c.Backup == BackupConfig{}
+	if zero {
+		return nil
+	}
+	if c.Backup.FullBackupIntervalHours < 1 || c.Backup.FullBackupIntervalHours > 24 {
+		return errors.New("backup.full_backup_interval_hours must be between 1 and 24")
+	}
+	if !c.Backup.WALArchive {
+		return errors.New("backup.wal_archive must be true (the frozen contract)")
+	}
+	if c.Backup.RPOMinutes < 1 || c.Backup.RPOMinutes > 15 {
+		return errors.New("backup.rpo_minutes must be between 1 and 15")
+	}
+	if c.Backup.RTOMinutes < 1 || c.Backup.RTOMinutes > 240 {
+		return errors.New("backup.rto_minutes must be between 1 and 240")
+	}
+	return nil
+}
+
+// sloObjectiveKinds is the frozen objective vocabulary
+// (slo-status.schema.json).
+var sloObjectiveKinds = map[string]bool{
+	"api_p95_latency_ms":            true,
+	"webhook_ingest_p95_latency_ms": true,
+	"inbox_lag_p95_seconds":         true,
+	"gate_eval_p95_latency_ms":      true,
+	"rpo_minutes":                   true,
+	"rto_minutes":                   true,
+	"backup_success_rate_percent":   true,
+}
+
+// deploymentSLOKinds are computed from the backup ledger, never from
+// declared telemetry metrics.
+var deploymentSLOKinds = map[string]bool{
+	"rpo_minutes":                 true,
+	"rto_minutes":                 true,
+	"backup_success_rate_percent": true,
+}
+
+func (c *Config) validateSLO() error {
+	if c.SLO == nil {
+		return nil
+	}
+	if !oneOf(c.SLO.Window, "rolling_30d", "rolling_7d", "calendar_month") {
+		return errors.New("slo.window must be rolling_30d, rolling_7d or calendar_month")
+	}
+	if c.SLO.Availability.SuccessMetric == "" || c.SLO.Availability.TotalMetric == "" {
+		return errors.New("slo.availability success_metric and total_metric are required")
+	}
+	if c.SLO.Availability.AtRiskErrorBudgetRemainingPercent < 0 ||
+		c.SLO.Availability.AtRiskErrorBudgetRemainingPercent > 100 {
+		return errors.New("slo.availability.at_risk_error_budget_remaining_percent must be between 0 and 100")
+	}
+	seen := make(map[string]bool, len(c.SLO.Objectives))
+	for index, objective := range c.SLO.Objectives {
+		if !sloObjectiveKinds[objective.Kind] {
+			return fmt.Errorf("slo.objectives[%d]: kind %q not in the frozen set", index, objective.Kind)
+		}
+		if deploymentSLOKinds[objective.Kind] {
+			return fmt.Errorf("slo.objectives[%d]: %s is computed from the backup ledger, not declared", index, objective.Kind)
+		}
+		if seen[objective.Kind] {
+			return fmt.Errorf("slo.objectives[%d]: duplicate kind %s", index, objective.Kind)
+		}
+		seen[objective.Kind] = true
+		if objective.Metric == "" {
+			return fmt.Errorf("slo.objectives[%d]: metric is required", index)
+		}
+		if objective.Target < 0 || objective.AtRiskThreshold < 0 {
+			return fmt.Errorf("slo.objectives[%d]: thresholds must be non-negative", index)
+		}
+		if objective.LowerIsBetter && objective.AtRiskThreshold > objective.Target {
+			return fmt.Errorf("slo.objectives[%d]: at_risk_threshold must be <= target for lower-is-better", index)
+		}
+		if !objective.LowerIsBetter && objective.AtRiskThreshold < objective.Target {
+			return fmt.Errorf("slo.objectives[%d]: at_risk_threshold must be >= target for higher-is-better", index)
+		}
+		if objective.RunbookRef == "" {
+			return fmt.Errorf("slo.objectives[%d]: runbook_ref is required — no alert without a runbook", index)
+		}
 	}
 	return nil
 }

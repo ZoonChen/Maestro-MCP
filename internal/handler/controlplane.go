@@ -43,6 +43,9 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/audit-export/verify": {
 		http.MethodPost: "audit.export",
 	},
+	"/api/v3/projects/:pid/slo-snapshot": {
+		http.MethodGet: "project.read",
+	},
 	"/api/v3/projects/:pid/quality-policy": {
 		http.MethodGet: "quality.read",
 		http.MethodPut: "project_policy.strengthen",
@@ -70,6 +73,7 @@ type ControlPlaneOptions struct {
 	Quality       *QualityHandler
 	GitLab        *GitLabHandler
 	Observability *ObservabilityHandler
+	SLO           *SLOSnapshotHandler
 	Scope         ScopeGuard
 }
 
@@ -114,6 +118,9 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	if options.Observability != nil {
 		group.GET("/projects/:pid/audit-export", options.Observability.ExportAuditChain)
 		group.POST("/projects/:pid/audit-export/verify", options.Observability.VerifyAuditChain)
+	}
+	if options.SLO != nil {
+		group.GET("/projects/:pid/slo-snapshot", options.SLO.GetSLOSnapshot)
 	}
 }
 

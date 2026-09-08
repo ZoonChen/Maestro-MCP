@@ -714,6 +714,32 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /projects/{project_id}/slo-snapshot:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Audit]
+      operationId: getSLOSnapshot
+      summary: Evaluate one project's SLO snapshot
+      description: >
+        Evaluates the frozen slo-status wire at request time: declared
+        objectives from the project's telemetry aggregates, the deployment
+        objectives (RPO, RTO, backup success rate) from the backup ledger,
+        availability from the configured SLI metrics. Missing availability
+        telemetry fails closed with 503 — the snapshot never invents a
+        number. Absent configuration keeps the endpoint unexposed.
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The SLO snapshot (the canonical slo-status schema)
+          content:
+            application/json:
+              schema: {$ref: '../schemas/slo-status.schema.json'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalServerError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /projects/{project_id}/quality-policy:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
