@@ -127,7 +127,7 @@ func TestQualityWebhookGitlabInstanceErrorBranches(t *testing.T) {
 	require.Error(t, err)
 	_, err = pg.Webhooks().ClaimInbox(ctx, "o")
 	require.Error(t, err)
-	_, err = pg.Webhooks().ReplayDeadLetter(ctx, "i")
+	_, err = pg.Webhooks().ReplayDeadLetter(ctx, "i", webhook.ReplayApproval{RequestedBy: "oncall-1", ApprovedBy: "ops-lead-1", Reason: "transient queue outage; approved replay"})
 	require.Error(t, err)
 	_, _, err = pg.WebhookDeliveries().InboxEncryptedBody(ctx, "i", "k")
 	require.Error(t, err)

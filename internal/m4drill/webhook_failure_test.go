@@ -515,7 +515,7 @@ func TestRunbookWebhookDLQReplay(t *testing.T) {
 		inboxID := f.inboxID(t, "evt-replay-1")
 
 		replayStarted := time.Now()
-		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID)
+		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID, drillReplayApproval())
 		require.NoError(t, err)
 		require.True(t, requeued, "the dead-letter row re-queues under its original identity")
 		f.drain(t, f.dispatch)
@@ -539,7 +539,7 @@ func TestRunbookWebhookDLQReplay(t *testing.T) {
 
 	t.Run("re-replay and redelivery stay inert", func(t *testing.T) {
 		inboxID := f.inboxID(t, "evt-replay-1")
-		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID)
+		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID, drillReplayApproval())
 		require.NoError(t, err)
 		assert.False(t, requeued, "only dead-letter rows are replayable")
 
@@ -564,7 +564,7 @@ func TestRunbookWebhookDLQReplay(t *testing.T) {
 		require.Equal(t, "dead_letter", f.oneString(t,
 			`SELECT status FROM webhook_inbox WHERE id = $1::uuid`, inboxID))
 
-		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID)
+		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID, drillReplayApproval())
 		require.NoError(t, err)
 		require.True(t, requeued)
 		f.drain(t, f.dispatch)
@@ -598,7 +598,7 @@ func TestRunbookWebhookDLQReplay(t *testing.T) {
 			INSERT INTO gitlab_project_mappings (gitlab_instance_id, gitlab_project_id, project_id, default_branch)
 			VALUES ($1, $2, $3, 'main')`, whInstance, whUnmappedProject, whSecondProject)
 		require.NoError(t, err)
-		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID)
+		requeued, err := f.pg.Webhooks().ReplayDeadLetter(ctx, inboxID, drillReplayApproval())
 		require.NoError(t, err)
 		require.True(t, requeued)
 		f.drain(t, f.dispatch)
@@ -714,4 +714,12 @@ func TestRunbookWebhookReconcileAndEscalation(t *testing.T) {
 			  AND d.outcome = 'dead_letter' AND d.reject_reason = 'UNMAPPED_PROJECT'`),
 			"the human-queue escalation is audited, never silently dropped")
 	})
+}
+
+func drillReplayApproval() webhook.ReplayApproval {
+	return webhook.ReplayApproval{
+		RequestedBy: "oncall-1",
+		ApprovedBy:  "ops-lead-1",
+		Reason:      "drill: transient fault drained; approved replay",
+	}
 }

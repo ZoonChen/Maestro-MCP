@@ -726,11 +726,22 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 				Syncer:  syncer,
 			})
 		}
+		var sloHandler *handler.SLOSnapshotHandler
+		if cfg.SLO != nil {
+			var sloErr error
+			sloHandler, sloErr = handler.NewSLOSnapshotHandler(cfg.SLO, cfg.Backup,
+				pgStore.Observability(), pgStore.Reliability())
+			if sloErr != nil {
+				return *options, fail(exitUsage, "CONFIG_INVALID", sloErr)
+			}
+		}
 		options.ControlPlane = &handler.ControlPlaneOptions{
-			Identity: identityMiddleware,
-			Quality:  quality,
-			GitLab:   gitlabHandler,
-			Scope:    pgStore.Instances(),
+			Identity:      identityMiddleware,
+			Quality:       quality,
+			GitLab:        gitlabHandler,
+			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
+			SLO:           sloHandler,
+			Scope:         pgStore.Instances(),
 		}
 	}
 
