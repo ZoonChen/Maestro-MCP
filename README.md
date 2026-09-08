@@ -9,17 +9,17 @@
 
 ## 当前状态
 
-仓库已形成 **M0 本地实现候选**，但仍不满足内部试点上线条件：
+M0–M3 已全部通过各自 Exit Gate（`approved + implemented + passed`，`last_verified_commit` 以自引用收口提交绑定目标提交；复盘见 `docs/retrospective/`）。当前处于 **M4（治理控制台、Agent 评测、审计导出、可靠性与试点准入）建设期**：P1 权威文档与 eval/audit/SLO 契约已冻结，治理数据模型（迁移 0012）与 P4 首片（只追加审计哈希链 + 遥测存储）已合入 main。M4 收敛前不得扩大试点范围。
 
-- 已提供真实 `maestro server/runner/migrate/doctor/version` 入口，以及 Web → Go → Docker 构建链。
-- REST、Streamable HTTP MCP、本地 stdio MCP、Web、WebSocket 和后台恢复服务由同一 composition root 装配。
+- 已交付：真实 `maestro server/runner/migrate/doctor/version` 入口与 Web → Go → Docker 构建链（M0）；OIDC 身份与 RBAC 决策点、PostgreSQL 控制面真源 + SQLite 四段式导入、远程 Runner 协议与 rootless OCI 沙箱、MCP 冻结工具目录（M1）；GitLab 实例/项目映射、Webhook Inbox（验签/去重/乱序/DLQ）、exact-SHA git broker、MR/Pipeline 镜像与对账、权威质量门禁与豁免流程（M2）；OpenAPI 契约引擎、跨仓 IntegrationRun、Finding 归一/指纹去重/缺陷下发、预算台账与 Agent 修复编排（M3）。
+- REST、Streamable HTTP MCP、本地 stdio MCP、Web、WebSocket 和后台恢复服务由同一 composition root 装配，共用同一应用授权与审计策略。
 - Task/Session/Worker/Worktree 使用集中状态迁移、逐资源 CAS/历史、Lease epoch、队列版本、幂等键和原子启动恢复；活跃 Worktree 仅允许安全重绑定。
-- SQLite schema catalog 绑定版本、迁移名称和 digest；空库仅由 server 初始化，旧库必须显式迁移，损坏或伪造 manifest 一律拒绝启动。
-- Git、worktree、上下文、diff、coverage、policy 或 Evidence 缺失/异常时验证 fail-closed；领取后的上下文失败会原子补偿，本地 Evidence 仅为 `diagnostic`。
+- 数据库 schema catalog 绑定版本、迁移名称和 digest；空库仅由 server 初始化，旧库必须显式迁移，损坏或伪造 manifest 一律拒绝启动（SQLite 本地基线与 PostgreSQL 真源同一纪律）。
+- Git、worktree、上下文、diff、coverage、policy 或 Evidence 缺失/异常时验证 fail-closed；领取后的上下文失败会原子补偿，本地 Evidence 仅为 `diagnostic`，GitLab CI Evidence 才是合并权威。
 - 非健康端点默认要求认证，远程写和本机命令执行默认关闭；命令只能来自版本化 Command Profile。公开错误、代理头、日志字段和排空阶段均有安全边界。
-- 真实 binary/MCP/Git/并发/Heartbeat/重启恢复测试、竞态检查和核心覆盖率门禁已建立；干净源码快照、Docker/Compose、SBOM、源码与镜像安全扫描已在本地通过。
+- 真实 binary/MCP/Git/并发/Heartbeat/重启恢复测试、竞态检查和核心覆盖率门禁已建立；PG 门控套件、Docker/Compose、SBOM、源码与镜像安全扫描已在本地通过。
 
-M0 仍标记为 `partial/unverified`，因为当前工作树尚未绑定目标提交、远程 CI Evidence 和规定角色审批。OIDC、PostgreSQL、Control Plane/Runner 隔离、rootless OCI Runner、GitLab 与 merge-gate Evidence 属于 M1/M2，完成前不得接入真实团队仓库。改造前的失败证据保留在[当前实现基线](docs/governance/current-state-baseline.md)。
+M4 尚未收敛：控制台登录态与写操作、四层评测 harness 与正式红队集、SLO 告警、备份/恢复演练、Runbook 自动化与试点 rollout 仍属未交付能力。改造前（v2.1/M0 时期）的失败证据保留在[当前实现基线](docs/governance/current-state-baseline.md)，仅作历史对照。
 
 ## v3.0 目标
 

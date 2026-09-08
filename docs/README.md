@@ -77,9 +77,9 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | M0 | 可运行工程基线、可信状态机、fail-closed 验证 | [M0](delivery/m0-foundation.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v0 复盘](retrospective/v0-closure-retrospective.md) |
 | M1 | Control Plane、OIDC、PostgreSQL、本地 Runner | [M1](delivery/m1-control-plane-runner.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v1 复盘](retrospective/v1-retrospective.md) |
-| M2 | GitLab baseline、MR、Pipeline、质量门禁 | [M2](delivery/m2-gitlab-quality-loop.md) | 未实现 |
-| M3 | 前后端联调、缺陷下发、Agent 修复 | [M3](delivery/m3-integration-defect-automation.md) | 未实现 |
-| M4 | 控制台、评测、审计、可靠性和试点 | [M4](delivery/m4-governance-console.md) | 未实现 |
+| M2 | GitLab baseline、MR、Pipeline、质量门禁 | [M2](delivery/m2-gitlab-quality-loop.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v2 复盘](retrospective/v2-retrospective.md) |
+| M3 | 前后端联调、缺陷下发、Agent 修复 | [M3](delivery/m3-integration-defect-automation.md) | implemented + passed：目标提交为自引用收口提交，远程 CI Evidence 与签署见 [v3 复盘](retrospective/v3-retrospective.md) |
+| M4 | 控制台、评测、审计、可靠性和试点 | [M4](delivery/m4-governance-console.md) | 进行中：P1 文档签署、P2 契约冻结、P3 数据模型（迁移 0012）与 P4 首片已合入 main；任务书/矩阵按收敛纪律保持 `not_started/unverified`，待 V4 仪式翻转 |
 
 ### 4.3 领域索引
 
@@ -132,7 +132,7 @@ sequenceDiagram
 - Markdown、链接、Mermaid、OpenAPI、AsyncAPI、JSON Schema、YAML、元数据、唯一 ID 和追踪完整性 MUST 全部通过。
 - 缺失规则、缺失测试、证据不绑定当前提交、引用归档为权威真源或状态虚报时 MUST 阻断。
 - 阶段只有达到 `approved + implemented + passed` 才能标记完成；`missing`、`skipped`、`error`、`stale` 或 `unverified` 均不等于通过。
-- M0 已通过自引用收口提交完成 Exit Gate：`approved + implemented + passed`，`last_verified_commit: HEAD` 绑定目标提交，远程 CI Evidence 与角色签署记录见 [v0 复盘](retrospective/v0-closure-retrospective.md)；M1–M4 未实现。本索引和本地日志均不得替代目标提交上的 CI Evidence 与规定角色审批。
+- M0–M3 已分别通过 V0/V1/V2/V3 收口提交完成各自 Exit Gate：`approved + implemented + passed`，`last_verified_commit: HEAD` 绑定目标提交，远程 CI Evidence 与角色签署记录见 [v0](retrospective/v0-closure-retrospective.md)/[v1](retrospective/v1-retrospective.md)/[v2](retrospective/v2-retrospective.md)/[v3](retrospective/v3-retrospective.md) 复盘；M4 进行中、尚未收敛。本索引和本地日志均不得替代目标提交上的 CI Evidence 与规定角色审批。
 
 ## 11. 指标、SLO、告警和运维动作
 
