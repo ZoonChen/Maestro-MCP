@@ -1,0 +1,23 @@
+{
+  "name": "@maestro/eval-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "M4-EVAL-001 first-generation agent evaluation harness: versioned datasets, deterministic/rule_based scorers, frozen-wire JSONL records and pass^k reports.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "eval": "node --import tsx src/cli.ts",
+    "test": "npm run typecheck && node --import tsx --test test/canonical.test.ts test/dataset.test.ts test/constraints.test.ts test/scorers.test.ts test/record.test.ts test/report.test.ts test/runner.test.ts test/e2e.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv-cli": "5.0.0",
+    "ajv-formats": "3.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
