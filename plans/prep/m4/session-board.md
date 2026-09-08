@@ -3,24 +3,35 @@
 > **定位**：工作层文档（`plans/prep/`），非权威真源；冲突以 `docs/README.md` 权威顺序为准。本文是 M4-P4 收尾阶段的多会话调度入口：任务书分发、分支依赖、工作区约定与协作纪律。执行编排查阅 `plans/PIPELINE.md`。
 > **分发方式**：用户手动开新 ZCode 会话，开场输入对应任务书路径（见第 6 节分发清单）。
 
-## 1. 现状快照（2026-09-08）
+## 1. 现状快照（2026-09-08 第二次更新）
 
 - M0–M3 已收敛（矩阵 25/31 行 `implemented+passed`，V0–V3 仪式与复盘齐备）。
-- M4 主轴：P1✅（五份权威文档 approved，PR #74）P2✅（eval/audit/SLO 契约冻结，PR #75）P3✅（迁移 0012，PR #76）**P4 进行中**（主线已有 OBS 首片 #77；另有下表 5 个本地分支待推送）；P5/P6 未开始。
-- **唯一硬阻塞：GitHub 认证**。推送/PR/远程 CI Evidence 全部被卡，而 V4 出口 Gate 必须有远程 CI Evidence——必须在 P5 前解除（见第 4 节 Phase 0）。
+- **Phase 0 已完成**：GitHub 认证解锁，六分支 PR #78–#83 全部合入（各自远程 CI 全绿）；本地与远端工作分支已清理。
+- **P4 并行进度**：A（S6-eval harness）✅ PR #84 合入；C（S3-runbooks 两锚点）✅ PR #86 合入；D（S4-webhook-drill 锚点）✅ PR #85 合入；**B（S6-console）进行中**；`internal/m4drill` 四锚点齐全，`tests/eval` 已落地。
+- 会话 I 当前使命：契约 PR（OBS/REL 接线）+ 各流交接物裁决（见第 2.5 节缺口登记）。
 
-## 2. 待合入本地分支（依赖与顺序）
+## 2. 已合入 PR 台账（Phase 0 + 第一波并行）
 
-| # | 分支 | 内容 | 依赖 | 冲突提示 |
-|---|---|---|---|---|
-| 1 | `i4/doc-drift-alignment` @ c40cd10 | 文档漂移对齐 6 处 + v2/v3 复盘重建 | 无 | 无 |
-| 2 | `s1/m4-slo-core` @ 1dedf8d | M4-REL-001① SLO 评估核心（internal/slo） | 无 | 无 |
-| 3 | `s1/m4-backup-metadata` @ 9c6a91a | M4-REL-001② backup_runs + 0013 + Reliability 存储 | 无 | 迁移 README 第 11 条（见 #5） |
-| 4 | `s1/m4-drill-restore` @ 00f600a | M4-RBK-001① m4drill 数据库恢复演练锚点 | **#3 先合**（堆叠分支） | 无 |
-| 5 | `s1/m4-eval-store` @ 3798b7c | M4-EVAL-001① internal/eval + 0014 + Evaluation 存储 | 无 | 迁移 README 第 12 条与 #3 的第 11 条同锚点追加，后合者解决一行冲突（两条都保留） |
-| 6 | `i4/m4-session-board` | 本调度板 + 5 份任务书 | 无 | 无 |
+| PR | 分支 | 内容 |
+|---|---|---|
+| #78 | i4/doc-drift-alignment | 文档漂移对齐 + v2/v3 复盘重建 |
+| #79 | s1/m4-slo-core | M4-REL-001① SLO 评估核心（internal/slo） |
+| #80 | s1/m4-backup-metadata | M4-REL-001② backup_runs + 0013 + Reliability 存储 |
+| #81 | s1/m4-drill-restore | M4-RBK-001① 数据库恢复演练锚点 |
+| #82 | s1/m4-eval-store | M4-EVAL-001① internal/eval + 0014 + Evaluation 存储（rebase 解 README 冲突后合入） |
+| #83 | i4/m4-session-board | 本调度板 + 5 份任务书 |
+| #84 | s6/m4-eval-harness | M4-EVAL-001 harness 第一代（tests/eval） |
+| #85 | s4/m4-webhook-drill | M4-RBK-001 webhook 侧锚点（D1–D3 + 实测 Evidence） |
+| #86 | s3/m4-runbooks | M4-RBK-001 runner 侧两类 Runbook + 两锚点 |
 
-建议合并顺序：1 → 2 → 3 → 4 → 5（#5 合并时解决 README 一行冲突）。#1/#2/#6 任意先后。
+## 2.5 契约 PR 待办与缺口登记（会话 I 裁决队列）
+
+| 编号 | 来源 | 内容 | 归属 |
+|---|---|---|---|
+| G1 | D 交接物 | `ReplayDeadLetter` 无审批/审计面：Runbook §8/§9 要求双人重放批准与 attempt 记录，现为静默 requeue——涉及 `internal/webhook/store.go` 契约变更 | 会话 I 契约 PR |
+| G2 | D 交接物 | webhook DLQ 深度无常驻指标/告警面（Runbook §3 一条即 P2、§11 DLQ 告警）——需遥测生产者 + SLO 目标接线 | 会话 I 契约 PR（OBS/REL 接线） |
+| UI-1 | D 交接物 | 控制台需 DLQ 人工清单视图 + 带审批人身份的重放动作 | B 会话（依赖 G1 端点） |
+| EVAL-1 | A 交接物 | JSONL 记录 → `evaluation_records` 入库接线；正式 120 场景数据集；LLM judge 校准 | 会话 I 契约 PR / QA 协作 |
 
 ## 3. 会话-任务书矩阵
 
