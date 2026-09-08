@@ -72,7 +72,8 @@
 3. **m4drill 按锚点文件拆分**：C 占 `runner_offline_test.go`/`emergency_stop_test.go`，D 占 `webhook_failure_test.go`，互不触碰对方文件。
 4. **文件边界互斥**：各任务书第 4 节的可改清单无交集；越界前先登记偏离项。
 5. **分支短生命周期**：合入即弃；长期不合的分支每 2–3 天 rebase 一次 main。
-6. **诚实状态**：`partial/unverified` 是常态；只有 P6 收敛（远程 CI Evidence + 签署 + commit 绑定）才翻转。
+6. **PR 落后会被 strict 保护 BLOCK**：main 前移后先 `gh pr update-branch <PR号>`（把 main 并入 PR 分支、等检查重跑）再合并；属主 UI 直合亦可（enforce_admins=false）。
+7. **诚实状态**：`partial/unverified` 是常态；只有 P6 收敛（远程 CI Evidence + 签署 + commit 绑定）才翻转。
 
 ## 7. 分发清单（复制到新会话的开场输入）
 
