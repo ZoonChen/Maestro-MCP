@@ -8,7 +8,7 @@
 - M0–M3 已收敛（矩阵 25/31 行 `implemented+passed`，V0–V3 仪式与复盘齐备）。
 - **Phase 0 已完成**：GitHub 认证解锁，六分支 PR #78–#83 全部合入（各自远程 CI 全绿）；本地与远端工作分支已清理。
 - **P4 并行进度**：A（S6-eval harness）✅ PR #84 合入；C（S3-runbooks 两锚点）✅ PR #86 合入；D（S4-webhook-drill 锚点）✅ PR #85 合入；**B（S6-console）进行中**；`internal/m4drill` 四锚点齐全，`tests/eval` 已落地。
-- 会话 I 当前使命：契约 PR（OBS/REL 接线）+ 各流交接物裁决（见第 2.5 节缺口登记）。
+- 会话 I 当前使命：契约 PR **已合入（#88）**；剩余裁决项见第 2.5 节（遥测生产者、UI-1 端点、EVAL-1）。
 
 ## 2. 已合入 PR 台账（Phase 0 + 第一波并行）
 
@@ -23,15 +23,17 @@
 | #84 | s6/m4-eval-harness | M4-EVAL-001 harness 第一代（tests/eval） |
 | #85 | s4/m4-webhook-drill | M4-RBK-001 webhook 侧锚点（D1–D3 + 实测 Evidence） |
 | #86 | s3/m4-runbooks | M4-RBK-001 runner 侧两类 Runbook + 两锚点 |
+| #88 | i4/m4-contract-wiring | 契约 PR：审计导出/验证端点、SLO 快照端点、G1 双人审批重放（含两处 CI 修复：幽灵 500 引用、daemon 测试安装竞态） |
 
 ## 2.5 契约 PR 待办与缺口登记（会话 I 裁决队列）
 
 | 编号 | 来源 | 内容 | 归属 |
 |---|---|---|---|
-| G1 | D 交接物 | `ReplayDeadLetter` 无审批/审计面：Runbook §8/§9 要求双人重放批准与 attempt 记录，现为静默 requeue——涉及 `internal/webhook/store.go` 契约变更 | 会话 I 契约 PR |
-| G2 | D 交接物 | webhook DLQ 深度无常驻指标/告警面（Runbook §3 一条即 P2、§11 DLQ 告警）——需遥测生产者 + SLO 目标接线 | 会话 I 契约 PR（OBS/REL 接线） |
-| UI-1 | D 交接物 | 控制台需 DLQ 人工清单视图 + 带审批人身份的重放动作 | B 会话（依赖 G1 端点） |
-| EVAL-1 | A 交接物 | JSONL 记录 → `evaluation_records` 入库接线；正式 120 场景数据集；LLM judge 校准 | 会话 I 契约 PR / QA 协作 |
+| ~~G1~~ | D 交接物 | **已关闭（#88）**：`ReplayDeadLetter` 双人审批 + 原子审计行（`ReplayApproval` 契约） | ✅ |
+| G2 | D 交接物 | webhook DLQ 深度无常驻指标/告警面（Runbook §3/§11）——SLO 快照端点已上线（#88），剩遥测生产者采集 DLQ/inbox 深度 | 遥测生产者切片 |
+| UI-1 | D 交接物 | 控制台 DLQ 人工清单视图 + 带审批人身份的重放动作——存储契约已就绪（G1），**剩 HTTP 端点与冻结权限** | 小切片（含 spec） |
+| EVAL-1 | A 交接物 | JSONL 记录 → `evaluation_records` 入库接线；正式 120 场景数据集；LLM judge 校准 | 会话 I 后续 / QA 协作 |
+| REL-2 | 会话 I | 遥测生产者 worker（请求路径埋点设计）——M4-OBS-001 收尾最后一块；备份调度 worker 已按 Runbook 诚实砍掉（运维工具链职责） | 会话 I 后续 |
 
 ## 3. 会话-任务书矩阵
 
