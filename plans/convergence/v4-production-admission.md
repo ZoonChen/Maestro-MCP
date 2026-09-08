@@ -39,7 +39,7 @@ V0 第 3 节命令集 + 全部 CI 工作流（ci/docs/m0-runtime/m1+/eval）在�
 
 ## 5. Exit Gate 状态翻转
 
-m4 任务书 + 矩阵 M4 六行 + `docs/README.md` 第 4.2 表（模式同 V0）。此后 `docs/README.md` 第 10 章的"M1–M4 未实现"表述整体更新。
+m4 任务书 + 矩阵 M4 六行 + `docs/README.md` 第 4.2 表 M4 行与第 10 章 M4 表述，收口 PR 同一 MR 内完成（模式同 V0）。4.2 表已于 2026-09-07 对齐审计恢复为逐收敛点更新；V2/V3 曾漏更 4.2 表并漏产出复盘文件（已补齐为 `docs/retrospective/v{2,3}-retrospective.md`），收口 PR 必须随翻转一并产出 `docs/retrospective/v4-retrospective.md`，勿再重演。
 
 ## 6. 角色签署
 
