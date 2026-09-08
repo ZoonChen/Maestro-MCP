@@ -12,6 +12,20 @@ import (
 // event identity — the idempotent re-drive outcome, not a failure.
 var ErrEnvelopeDuplicate = errors.New("webhook envelope already emitted")
 
+// ErrReplayApprovalInvalid rejects a replay attempt that does not carry
+// the runbook §9 dual-person control (distinct requester and approver,
+// a substantive reason) — a silent requeue is exactly what it refuses.
+var ErrReplayApprovalInvalid = errors.New("webhook replay approval invalid")
+
+// ReplayApproval carries the runbook §8/§9 replay contract: the
+// original event identity is preserved by the requeue itself, while
+// the approval and the attempt land in one audited transaction.
+type ReplayApproval struct {
+	RequestedBy string
+	ApprovedBy  string
+	Reason      string
+}
+
 // AuditRow appends one entry to the webhook_deliveries audit trail.
 // InboxID is empty for pre-ingest denials (no inbox row exists).
 type AuditRow struct {
@@ -56,7 +70,10 @@ type Store interface {
 	// ReplayDeadLetter re-queues a quarantined row under its ORIGINAL
 	// event identity: no re-verification bypass and no side-effect
 	// duplication (re-emission collapses on the outbox unique key).
-	ReplayDeadLetter(ctx context.Context, inboxID string) (bool, error)
+	// The dual-person approval is mandatory (runbook §9): requester
+	// and approver must be distinct principals, and the approval, the
+	// attempt and the original event identity are recorded atomically.
+	ReplayDeadLetter(ctx context.Context, inboxID string, approval ReplayApproval) (bool, error)
 }
 
 // ApplyUnit settles one claimed inbox row transactionally.

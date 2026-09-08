@@ -301,12 +301,14 @@ func TestWebhookUnmappedProjectDeadLetters(t *testing.T) {
 	// Replay after the operator maps the project: the SAME event identity
 	// applies through the normal path, exactly once.
 	f.seedMapping(t, "")
-	replayed, err := f.pg.Webhooks().ReplayDeadLetter(context.Background(), func() string {
+	inboxID := func() string {
 		var id string
 		require.NoError(t, f.db.QueryRow(`
 			SELECT id FROM webhook_inbox WHERE external_event_id = 'evt-e2e-1'`).Scan(&id))
 		return id
-	}())
+	}()
+	replayed, err := f.pg.Webhooks().ReplayDeadLetter(context.Background(), inboxID,
+		webhook.ReplayApproval{RequestedBy: "oncall-1", ApprovedBy: "ops-lead-1", Reason: "transient queue outage; approved replay"})
 	require.NoError(t, err)
 	require.True(t, replayed)
 
