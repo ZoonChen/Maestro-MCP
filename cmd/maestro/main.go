@@ -727,10 +727,11 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			})
 		}
 		options.ControlPlane = &handler.ControlPlaneOptions{
-			Identity: identityMiddleware,
-			Quality:  quality,
-			GitLab:   gitlabHandler,
-			Scope:    pgStore.Instances(),
+			Identity:      identityMiddleware,
+			Quality:       quality,
+			GitLab:        gitlabHandler,
+			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
+			Scope:         pgStore.Instances(),
 		}
 	}
 

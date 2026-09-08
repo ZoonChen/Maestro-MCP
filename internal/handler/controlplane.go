@@ -37,6 +37,12 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/gitlab/merge-requests/:iid/reconcile": {
 		http.MethodPost: "gitlab.reconcile",
 	},
+	"/api/v3/projects/:pid/audit-export": {
+		http.MethodGet: "audit.export",
+	},
+	"/api/v3/projects/:pid/audit-export/verify": {
+		http.MethodPost: "audit.export",
+	},
 	"/api/v3/projects/:pid/quality-policy": {
 		http.MethodGet: "quality.read",
 		http.MethodPut: "project_policy.strengthen",
@@ -60,10 +66,11 @@ var controlPlaneActions = map[string]map[string]string{
 
 // ControlPlaneOptions wires the human /api/v3 control-plane group.
 type ControlPlaneOptions struct {
-	Identity *OIDCMiddleware
-	Quality  *QualityHandler
-	GitLab   *GitLabHandler
-	Scope    ScopeGuard
+	Identity      *OIDCMiddleware
+	Quality       *QualityHandler
+	GitLab        *GitLabHandler
+	Observability *ObservabilityHandler
+	Scope         ScopeGuard
 }
 
 // ScopeGuard hides unknown project scopes (the v3 replacement for the
@@ -103,6 +110,10 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 		group.PUT("/projects/:pid/gitlab-mapping", options.GitLab.PutMapping)
 		group.GET("/projects/:pid/gitlab/merge-requests/:iid", options.GitLab.GetMergeRequest)
 		group.POST("/projects/:pid/gitlab/merge-requests/:iid/reconcile", options.GitLab.ReconcileMergeRequest)
+	}
+	if options.Observability != nil {
+		group.GET("/projects/:pid/audit-export", options.Observability.ExportAuditChain)
+		group.POST("/projects/:pid/audit-export/verify", options.Observability.VerifyAuditChain)
 	}
 }
 
