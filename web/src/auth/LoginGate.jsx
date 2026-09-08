@@ -15,13 +15,12 @@ function readCallbackError() {
   return consumeReturnState(state) ? error : null;
 }
 
-export function LoginGate({ config, children }) {
-  const { session, retry } = useAuthSession(config);
+// The visual half of the login gate: probing / error / unauthenticated
+// states for one auth session. LoginGate keeps the classic wrap-children
+// behavior; AppWithAuth renders this view directly so it can also hand the
+// authenticated session to the console shell.
+export function AuthGateView({ config, session, retry }) {
   const [callbackError] = useState(readCallbackError);
-
-  if (session.status === 'authenticated' || session.status === 'auth-disabled') {
-    return children;
-  }
 
   if (session.status === 'probing') {
     return (
@@ -51,4 +50,13 @@ export function LoginGate({ config, children }) {
       <button type="button" onClick={startLogin}>使用公司账号登录</button>
     </main>
   );
+}
+
+export function LoginGate({ config, children }) {
+  const { session, retry } = useAuthSession(config);
+
+  if (session.status === 'authenticated' || session.status === 'auth-disabled') {
+    return children;
+  }
+  return <AuthGateView config={config} session={session} retry={retry} />;
 }

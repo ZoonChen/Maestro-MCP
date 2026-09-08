@@ -1,4 +1,25 @@
-export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }) {
+// Workbench navigation plus the governance areas (M4-UI-001). Areas are
+// navigation only — data visibility and every action stay decided by the
+// server (UI-RULE-001); unknown-role sessions see the read-only workbench
+// and the boundary notice rendered by the identity bar.
+export function Sidebar({
+  projects, selectedId, onSelect, theme, onToggleTheme, view, onNavigate, roles = [],
+}) {
+  const navItem = (label, target, active, icon = '◈') => (
+    <button
+      type="button"
+      class={`sidebar-item ${active ? 'active' : ''}`}
+      onClick={() => onNavigate(target)}
+    >
+      <span class="sidebar-icon">{icon}</span>
+      {label}
+    </button>
+  );
+
+  const adminVisible = roles.includes('platform_admin');
+  const operationsVisible = ['platform_admin', 'operations_owner', 'security_owner']
+    .some((role) => roles.includes(role));
+
   return (
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -27,21 +48,15 @@ export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }
           ))}
         </select>
       </div>
-      <nav class="sidebar-nav">
-        <button
-          type="button"
-          class={`sidebar-item ${!selectedId ? 'active' : ''}`}
-          onClick={() => onSelect(null)}
-        >
-          <span class="sidebar-icon">◉</span>
-          Overview
-        </button>
-        <div class="sidebar-section">Projects</div>
+      <nav class="sidebar-nav" aria-label="控制台导航">
+        <div class="sidebar-section">态势</div>
+        {navItem('概览', '#/', view === 'overview', '◉')}
+        <div class="sidebar-section">执行</div>
         {projects.map((p) => (
           <button
             type="button"
             key={p.id}
-            class={`sidebar-item ${selectedId === p.id ? 'active' : ''}`}
+            class={`sidebar-item ${view === 'project' && selectedId === p.id ? 'active' : ''}`}
             onClick={() => onSelect(p.id)}
             title={p.status === 'archived' ? 'Archived' : 'Active'}
           >
@@ -51,6 +66,23 @@ export function Sidebar({ projects, selectedId, onSelect, theme, onToggleTheme }
             {p.name || p.id}
           </button>
         ))}
+        <div class="sidebar-section">治理</div>
+        {navItem('HITL 豁免审批', '#/waivers', view === 'waivers')}
+        {navItem('八场景地图', '#/scenarios', view === 'scenarios')}
+        <div class="sidebar-section">质量</div>
+        {navItem('MR · Pipeline', '#/mrs', view === 'mrs')}
+        {adminVisible ? (
+          <>
+            <div class="sidebar-section">管理</div>
+            {navItem('管理面板', '#/admin', view === 'admin', '⚙')}
+          </>
+        ) : null}
+        {operationsVisible ? (
+          <>
+            <div class="sidebar-section">运维</div>
+            {navItem('运维面板', '#/operations', view === 'operations', '⚑')}
+          </>
+        ) : null}
       </nav>
     </aside>
   );
