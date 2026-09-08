@@ -121,7 +121,7 @@ func (f *fakeDispatchStore) BeginApply(context.Context) (ApplyUnit, error) {
 	return &fakeApplyUnit{store: f}, nil
 }
 
-func (f *fakeDispatchStore) ReplayDeadLetter(_ context.Context, inboxID string) (bool, error) {
+func (f *fakeDispatchStore) ReplayDeadLetter(_ context.Context, inboxID string, _ ReplayApproval) (bool, error) {
 	row, ok := f.rows[inboxID]
 	if !ok || row.status != StatusDeadLetter {
 		return false, nil
@@ -289,13 +289,21 @@ func TestDispatchReplayKeepsIdentity(t *testing.T) {
 			"r1": {row: InboxRow{ID: "r1", RawBodyEncrypted: claimedBody(t, cipher, `{"project_id":42}`)}, status: StatusDeadLetter, reason: ReasonUnmappedProject},
 		},
 	}
-	replayed, err := store.ReplayDeadLetter(t.Context(), "r1")
+	replayed, err := store.ReplayDeadLetter(t.Context(), "r1", validReplayApproval())
 	require.NoError(t, err)
 	assert.True(t, replayed)
 	assert.Equal(t, StatusReceived, store.rows["r1"].status)
 	assert.Equal(t, "r1", store.rows["r1"].row.ID, "replay keeps the original event identity")
 
-	replayed, err = store.ReplayDeadLetter(t.Context(), "r1")
+	replayed, err = store.ReplayDeadLetter(t.Context(), "r1", validReplayApproval())
 	require.NoError(t, err)
 	assert.False(t, replayed, "only dead-letter rows are replayable")
+}
+
+func validReplayApproval() ReplayApproval {
+	return ReplayApproval{
+		RequestedBy: "oncall-1",
+		ApprovedBy:  "ops-lead-1",
+		Reason:      "transient queue outage; approved replay",
+	}
 }

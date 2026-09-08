@@ -221,10 +221,23 @@ func TestWebhookStoreBranches(t *testing.T) {
 	require.NoError(t, unit.MarkDeadLetter(ctx, second.ID, "gap-owner", "GAP"))
 	require.NoError(t, unit.Commit())
 
-	// Replay then re-claim.
-	replayed, err := pg.Webhooks().ReplayDeadLetter(ctx, second.ID)
+	// Replay refuses without the runbook dual-person control, then
+	// re-queues with the approval and the attempt audited atomically.
+	_, err = pg.Webhooks().ReplayDeadLetter(ctx, second.ID, webhook.ReplayApproval{RequestedBy: "oncall-1", ApprovedBy: "oncall-1", Reason: "transient queue outage; approved replay"})
+	require.ErrorIs(t, err, webhook.ErrReplayApprovalInvalid, "self-approval is refused")
+	_, err = pg.Webhooks().ReplayDeadLetter(ctx, second.ID, webhook.ReplayApproval{RequestedBy: "oncall-1", ApprovedBy: "ops-lead-1", Reason: "too short"})
+	require.ErrorIs(t, err, webhook.ErrReplayApprovalInvalid, "a substantive reason is required")
+
+	replayed, err := pg.Webhooks().ReplayDeadLetter(ctx, second.ID, webhook.ReplayApproval{RequestedBy: "oncall-1", ApprovedBy: "ops-lead-1", Reason: "transient queue outage; approved replay"})
 	require.NoError(t, err)
 	require.True(t, replayed)
+	var auditCount int
+	require.NoError(t, pg.DB().QueryRowContext(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE action = 'webhook.dead_letter.replayed' AND resource_id = $1::text
+			AND actor_principal = 'ops-lead-1' AND correlation_id = 'gap-2'`,
+		second.ID).Scan(&auditCount))
+	assert.Equal(t, 1, auditCount, "the approval and attempt landed in the audit chain")
 	claimed, err := pg.Webhooks().ClaimInbox(ctx, "gap-owner")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)

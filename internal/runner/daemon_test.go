@@ -131,9 +131,10 @@ func TestDaemonHappyPathClaimExecuteComplete(t *testing.T) {
 	}}
 	daemon, ctx, cancel := testDaemon(t, cp, executor)
 
-	done := make(chan error, 1)
-	go func() { done <- daemon.Run(ctx) }()
-	// One lease completes, then the next claim gets no-work and we stop.
+	// Install the no-work script BEFORE the daemon starts: the default
+	// scripted handler serves leases unconditionally, so a late install
+	// lets a fast claim loop complete the lease several times before the
+	// guard lands (observed as 4 completions on a slow CI runner).
 	cp.mu.Lock()
 	cp.behavior = func(index int, path string) (int, string) {
 		if path == "/api/v3/runner-leases/claim" && index >= 2 {
@@ -142,6 +143,10 @@ func TestDaemonHappyPathClaimExecuteComplete(t *testing.T) {
 		return 0, ""
 	}
 	cp.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- daemon.Run(ctx) }()
+	// One lease completes, then the next claim gets no-work and we stop.
 
 	// Wait for the completion to be reported.
 	require.Eventually(t, func() bool {

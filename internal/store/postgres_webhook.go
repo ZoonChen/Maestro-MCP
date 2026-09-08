@@ -208,16 +208,53 @@ func (s pgWebhookStore) BeginApply(ctx context.Context) (webhook.ApplyUnit, erro
 	return &pgWebhookApply{tx: tx}, nil
 }
 
-func (s pgWebhookStore) ReplayDeadLetter(ctx context.Context, inboxID string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `
+// ReplayDeadLetter re-queues one quarantined row under its original
+// event identity with the runbook §8/§9 evidence attached: the
+// dual-person approval and the attempt land in the SAME transaction
+// as the requeue (state change, audit and attempt are atomic).
+func (s pgWebhookStore) ReplayDeadLetter(ctx context.Context, inboxID string, approval webhook.ReplayApproval) (bool, error) {
+	if approval.RequestedBy == "" || approval.ApprovedBy == "" || approval.RequestedBy == approval.ApprovedBy {
+		return false, webhook.ErrReplayApprovalInvalid
+	}
+	if len([]rune(approval.Reason)) < 16 {
+		return false, fmt.Errorf("%w: the reason must be substantive (>= 16 characters)", webhook.ErrReplayApprovalInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("webhook store: replay begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Lock the quarantined row and carry its original event identity
+	// into the audit trail.
+	var externalEventID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT external_event_id FROM webhook_inbox
+		WHERE id = $1 AND status = 'dead_letter' FOR UPDATE`, inboxID).Scan(&externalEventID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil // not quarantined: nothing replayed, nothing audited
+		}
+		return false, fmt.Errorf("webhook store: replay lock: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE webhook_inbox
 		SET status = 'received', next_attempt_at = NULL, lease_owner = NULL, claimed_at = NULL
-		WHERE id = $1 AND status = 'dead_letter'`, inboxID)
-	if err != nil {
-		return false, fmt.Errorf("webhook store: replay dead letter: %w", err)
+		WHERE id = $1 AND status = 'dead_letter'`, inboxID); err != nil {
+		return false, fmt.Errorf("webhook store: replay requeue: %w", err)
 	}
-	affected, _ := result.RowsAffected()
-	return affected == 1, nil
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events
+			(actor_principal, project_id, action, resource_type, resource_id, decision, reason, correlation_id)
+		VALUES ($1, NULL, 'webhook.dead_letter.replayed', 'webhook_inbox', $2, 'allow', $3, $4)`,
+		approval.ApprovedBy, inboxID,
+		fmt.Sprintf("requested_by=%s; attempt=1; %s", approval.RequestedBy, approval.Reason),
+		externalEventID); err != nil {
+		return false, fmt.Errorf("webhook store: replay audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("webhook store: replay commit: %w", err)
+	}
+	return true, nil
 }
 
 // pgWebhookApply settles one claimed row transactionally.

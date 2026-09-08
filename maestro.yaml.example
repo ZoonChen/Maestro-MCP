@@ -124,3 +124,39 @@ validation:
 #         pids: 256
 #       output_limit_bytes: 65536
 #       timeout_seconds: 120
+
+# Backup/RPO/RTO contract (frozen config.schema.json `backup` section).
+# The SLO snapshot reads its rpo_minutes/rto_minutes targets from here;
+# the run ledger itself is written by the ops backup tooling and the
+# restore drills (internal/m4drill), never invented by this process.
+backup:
+  full_backup_interval_hours: 24
+  wal_archive: true
+  rpo_minutes: 15
+  rto_minutes: 240
+
+# Optional SLO snapshot policy (absent keeps GET /api/v3/projects/:id/slo-snapshot
+# unexposed). Every threshold is explicit — there are no defaults; the
+# deployment objectives (rpo_minutes/rto_minutes/backup_success_rate_percent)
+# are computed from the backup ledger and MUST NOT be declared here.
+# slo:
+#   window: rolling_30d
+#   availability:
+#     success_metric: http_requests_success
+#     total_metric: http_requests_total
+#     at_risk_error_budget_remaining_percent: 25
+#   objectives:
+#     - kind: api_p95_latency_ms
+#       metric: api_p95_latency_ms
+#       target: 500
+#       at_risk_threshold: 400
+#       unit: ms
+#       lower_is_better: true
+#       runbook_ref: runbooks/webhook-pipeline-failure
+#     - kind: inbox_lag_p95_seconds
+#       metric: inbox_lag_p95_seconds
+#       target: 30
+#       at_risk_threshold: 20
+#       unit: seconds
+#       lower_is_better: true
+#       runbook_ref: runbooks/webhook-pipeline-failure

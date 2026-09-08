@@ -51,7 +51,7 @@ func (f *fakeStore) ClaimInbox(context.Context, string) (*InboxRow, error) {
 func (f *fakeStore) BeginApply(context.Context) (ApplyUnit, error) {
 	return nil, assert.AnError
 }
-func (f *fakeStore) ReplayDeadLetter(context.Context, string) (bool, error) {
+func (f *fakeStore) ReplayDeadLetter(context.Context, string, ReplayApproval) (bool, error) {
 	return false, nil
 }
 

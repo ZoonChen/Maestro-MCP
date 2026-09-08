@@ -641,6 +641,103 @@ paths:
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/Unprocessable'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /projects/{project_id}/audit-export:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Audit]
+      operationId: exportAuditChain
+      summary: Export one project's append-only audit chain slice
+      description: >
+        Walks the immutable audit_events table in seq order and returns the
+        frozen audit-export wire: ordered entries with deterministic uuid event
+        ids, per-entry and rolling chain digests, and the redaction record.
+        Fields outside the redaction allowlist (token hashes, free-text
+        reasons) never appear.
+      x-maestro-permission: audit.export
+      x-maestro-audit-event: audit.exported
+      parameters:
+        - name: from_seq
+          in: query
+          required: true
+          description: First audit sequence number in the slice (inclusive).
+          schema: {type: integer, format: int64, minimum: 1}
+        - name: to_seq
+          in: query
+          required: true
+          description: Last audit sequence number in the slice (inclusive).
+          schema: {type: integer, format: int64, minimum: 1}
+      responses:
+        '200':
+          description: The audit chain export with per-entry digests
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuditChainExport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/audit-export/verify:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      tags: [Audit]
+      operationId: verifyAuditChain
+      summary: Recompute the audit chain and compare claimed digests
+      description: >
+        The auditor's tamper check over an export: recomputes the chain for
+        the range and compares it against the claimed per-entry digests. The
+        If-Match precondition carries the chain digest of the export being
+        verified.
+      x-maestro-permission: audit.export
+      x-maestro-audit-event: audit.exported
+      x-maestro-idempotency: required-header
+      x-maestro-concurrency: if-match-required
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuditVerifyRequest'}
+      responses:
+        '200':
+          description: The claimed digests match the recomputed chain
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuditVerifyResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /projects/{project_id}/slo-snapshot:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Audit]
+      operationId: getSLOSnapshot
+      summary: Evaluate one project's SLO snapshot
+      description: >
+        Evaluates the frozen slo-status wire at request time: declared
+        objectives from the project's telemetry aggregates, the deployment
+        objectives (RPO, RTO, backup success rate) from the backup ledger,
+        availability from the configured SLI metrics. Missing availability
+        telemetry fails closed with 503 — the snapshot never invents a
+        number. Absent configuration keeps the endpoint unexposed.
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The SLO snapshot (the canonical slo-status schema)
+          content:
+            application/json:
+              schema: {$ref: '../schemas/slo-status.schema.json'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /projects/{project_id}/quality-policy:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -1524,6 +1621,76 @@ components:
         check: {type: string, minLength: 1, maxLength: 120}
         expires_at: {$ref: '#/components/schemas/Timestamp'}
         version: {$ref: '#/components/schemas/ResourceVersion'}
+    AuditChainExport:
+      type: object
+      additionalProperties: false
+      required: [schema_version, export_id, project_id, range, entries, chain_digest]
+      properties:
+        schema_version: {type: string, const: "3.0"}
+        export_id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        range:
+          type: object
+          additionalProperties: false
+          required: [from_seq, to_seq]
+          properties:
+            from_seq: {type: integer, format: int64, minimum: 1}
+            to_seq: {type: integer, format: int64, minimum: 1}
+        entries:
+          type: array
+          items: {$ref: '#/components/schemas/AuditExportEntry'}
+        chain_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        redaction:
+          type: object
+          additionalProperties: false
+          properties:
+            policy_version: {type: string, minLength: 1, maxLength: 64}
+            fields_masked:
+              type: array
+              uniqueItems: true
+              items: {type: string, minLength: 1, maxLength: 64}
+    AuditExportEntry:
+      type: object
+      additionalProperties: false
+      required: [seq, event_id, event_type, principal, occurred_at, entry_digest]
+      properties:
+        seq: {type: integer, format: int64, minimum: 1}
+        event_id: {type: string, format: uuid}
+        event_type: {type: string, minLength: 1, maxLength: 128}
+        principal: {type: string, minLength: 1, maxLength: 255}
+        occurred_at: {$ref: '#/components/schemas/Timestamp'}
+        correlation_id: {type: string, minLength: 1, maxLength: 128}
+        resource: {type: string, minLength: 1, maxLength: 255}
+        action: {type: string, minLength: 1, maxLength: 128}
+        decision: {type: string, enum: [allow, deny, waived, neutral]}
+        evidence_refs:
+          type: array
+          uniqueItems: true
+          items: {type: string, format: uuid}
+        prev_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        entry_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    AuditVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [from_seq, to_seq, claimed_digests]
+      properties:
+        from_seq: {type: integer, format: int64, minimum: 1}
+        to_seq: {type: integer, format: int64, minimum: 1}
+        claimed_digests:
+          type: array
+          items: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    AuditVerifyResult:
+      type: object
+      additionalProperties: false
+      required: [verified]
+      properties:
+        verified: {type: boolean}
     WaiverRequest:
       type: object
       additionalProperties: false
