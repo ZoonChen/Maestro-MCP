@@ -18,6 +18,21 @@ var (
 	ErrAuditRangeEmpty         = errors.New("audit export range has no rows")
 )
 
+// PlatformDepths are the webhook backlog gauges of the OBS §11 minimal
+// metric set: inbox backlog (received/processing/retry_wait), DLQ
+// depth (dead_letter) and outbox pending (not yet delivered or parked
+// in DLQ). Lag percentiles are nil when the corresponding backlog is
+// empty — the honest "not measurable" marker.
+type PlatformDepths struct {
+	InboxBacklog         int64
+	InboxLagMeanSeconds  float64
+	InboxLagP95Seconds   *float64
+	DLQDepth             int64
+	OutboxPending        int64
+	OutboxLagMeanSeconds float64
+	OutboxLagP95Seconds  *float64
+}
+
 type pgObservabilityStore struct{ db *sql.DB }
 
 // Observability returns the telemetry/audit store.
@@ -138,4 +153,48 @@ func optFloat(value *float64) any {
 		return nil
 	}
 	return *value
+}
+
+// PlatformDepths samples the webhook inbox, DLQ and outbox backlog in
+// two count queries (G2: the persistent metric face for the Runbook
+// §3/§11 depth checks). Ages are measured from the database clock so a
+// stalled producer cannot silently understate lag.
+func (s pgObservabilityStore) PlatformDepths(ctx context.Context) (PlatformDepths, error) {
+	var depths PlatformDepths
+	var inboxMean, inboxP95, outboxMean, outboxP95 sql.NullFloat64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status IN ('received','processing','retry_wait')),
+			(avg(EXTRACT(EPOCH FROM (now() - received_at)))
+				FILTER (WHERE status IN ('received','processing','retry_wait')))::double precision,
+			(percentile_cont(0.95) WITHIN GROUP (
+				ORDER BY EXTRACT(EPOCH FROM (now() - received_at)))
+				FILTER (WHERE status IN ('received','processing','retry_wait')))::double precision,
+			count(*) FILTER (WHERE status = 'dead_letter')
+		FROM webhook_inbox`,
+	).Scan(&depths.InboxBacklog, &inboxMean, &inboxP95, &depths.DLQDepth); err != nil {
+		return depths, fmt.Errorf("observability: inbox depths: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT
+			count(*),
+			(avg(EXTRACT(EPOCH FROM (now() - created_at))))::double precision,
+			(percentile_cont(0.95) WITHIN GROUP (
+				ORDER BY EXTRACT(EPOCH FROM (now() - created_at))))::double precision
+		FROM outbox_events
+		WHERE status <> 'delivered'`,
+	).Scan(&depths.OutboxPending, &outboxMean, &outboxP95); err != nil {
+		return depths, fmt.Errorf("observability: outbox depths: %w", err)
+	}
+	depths.InboxLagMeanSeconds = inboxMean.Float64
+	depths.OutboxLagMeanSeconds = outboxMean.Float64
+	if inboxP95.Valid {
+		value := inboxP95.Float64
+		depths.InboxLagP95Seconds = &value
+	}
+	if outboxP95.Valid {
+		value := outboxP95.Float64
+		depths.OutboxLagP95Seconds = &value
+	}
+	return depths, nil
 }

@@ -92,6 +92,10 @@ type Options struct {
 	// ControlPlane mounts the frozen control-plane.yaml human tree under
 	// /api/v3 (quality, GitLab registry); nil keeps it unexposed.
 	ControlPlane *handler.ControlPlaneOptions
+	// TelemetryProducer drains the request sampler and the platform
+	// depth gauges into telemetry_aggregates (M4-OBS-001); nil keeps
+	// the producer unstarted and the request path unsampled.
+	TelemetryProducer *TelemetryProducerOptions
 	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
 	// registers none; readiness keeps its local-baseline semantics until a
 	// stream wires PostgreSQL/OIDC/runner-pool probes.
@@ -155,6 +159,12 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		slog.Warn("SECURITY WARNING: validation profiles execute on the host",
 			"security_warning", "HOST_EXECUTION_ENABLED",
 			"required_action", "use only on an isolated loopback development host")
+	}
+	// A partially wired telemetry producer must fail fast: a process
+	// that samples the hot path but never flushes (or flushes without
+	// the redaction identity) is never marked ready.
+	if err := validateTelemetryProducerOptions(opts.TelemetryProducer); err != nil {
+		return nil, err
 	}
 	if opts.DBPath != "" && opts.DBPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(opts.DBPath), 0o700); err != nil {
@@ -267,6 +277,17 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		sessionService,
 	)
 
+	// The telemetry producer is constructed before the router so the
+	// sampler mounts into the middleware chain and the board metrics
+	// endpoint can read the producer's latest depth snapshot.
+	var producer *telemetryProducer
+	var requestSampler *handler.RequestSampler
+	if opts.TelemetryProducer != nil {
+		producer = newTelemetryProducer(*opts.TelemetryProducer)
+		requestSampler = opts.TelemetryProducer.Sampler
+		boardHandler.SetPlatformDepths(producer)
+	}
+
 	mcpServices := &maestrotools.Services{
 		Binding:    opts.MCPBinding,
 		Guard:      opts.MCPGuard,
@@ -294,11 +315,12 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		worktreeService,
 		opts.AuthToken,
 		handler.RouterOptions{
-			AllowedOrigins: append([]string(nil), opts.AllowedOrigins...),
-			RemoteWrite:    opts.RemoteWrite,
-			LogWriter:      opts.HTTPLogWriter,
-			IsDraining:     draining.Load,
-			Identity:       opts.Identity,
+			AllowedOrigins:   append([]string(nil), opts.AllowedOrigins...),
+			RemoteWrite:      opts.RemoteWrite,
+			LogWriter:        opts.HTTPLogWriter,
+			IsDraining:       draining.Load,
+			Identity:         opts.Identity,
+			RequestTelemetry: requestSampler,
 		},
 	)
 	if opts.RunnerV3 != nil {
@@ -368,6 +390,11 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 	if opts.WebhookDispatch != nil {
 		a.startWebhookDispatch(opts.WebhookDispatch)
 	}
+	// Exactly one telemetry producer per process: it owns the sampler
+	// drain cadence, so a second owner would split windows.
+	if producer != nil {
+		a.startTelemetryProducer(producer)
+	}
 	if opts.GitLabSync != nil {
 		interval := opts.GitLabSync.Interval
 		if interval <= 0 {
@@ -433,6 +460,16 @@ func (a *Application) startWebhookDispatch(opts *WebhookDispatchOptions) {
 		opts.Dispatcher.Run(a.backgroundCtx, opts.Owner, interval, func(err error) {
 			slog.Error("webhook inbox dispatch failed", "error", err)
 		})
+	}()
+}
+
+// startTelemetryProducer runs the flush loop under the shared
+// background lifecycle: cancellable on drain, awaited on Close.
+func (a *Application) startTelemetryProducer(producer *telemetryProducer) {
+	a.backgroundWG.Add(1)
+	go func() {
+		defer a.backgroundWG.Done()
+		producer.Run(a.backgroundCtx)
 	}()
 }
 
