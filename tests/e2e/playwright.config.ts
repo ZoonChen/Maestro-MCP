@@ -28,6 +28,13 @@ export default defineConfig({
     },
     screenshot: 'on',
     trace: 'on',
+    // Opt-in browser channel for networks where the Playwright CDN is
+    // unreachable: MAESTRO_E2E_BROWSER_CHANNEL=chrome launches the
+    // locally installed Google Chrome instead of the downloaded
+    // chromium build. Unset (default and CI) keeps the stock browser.
+    ...(process.env.MAESTRO_E2E_BROWSER_CHANNEL
+      ? { channel: process.env.MAESTRO_E2E_BROWSER_CHANNEL }
+      : {}),
   },
   webServer: {
     command: `go run ./cmd/maestro server --db ${path.join(dbDir, 'test.db')} --http 127.0.0.1:19080`,

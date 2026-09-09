@@ -1,20 +1,58 @@
-import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useWebSocket } from './hooks/useWebSocket';
 import { Sidebar } from './components/Sidebar';
 import { Overview } from './components/Overview';
 import { ProjectBoard } from './components/ProjectBoard';
 import { ErrorNotice } from './components/ErrorNotice';
+import { IdentityBar } from './components/IdentityBar';
+import { WaiverConsole } from './components/WaiverConsole';
+import { MergePipelineView } from './components/MergePipelineView';
+import { ScenarioMap } from './components/ScenarioMap';
 import { apiGet, describeAPIError } from './api/client';
+import { projectFromHash, rolesOfAuth, viewFromHash } from './governance';
 
-export function App() {
+// First-generation placeholder for the admin / operations areas: the
+// navigation shape is frozen now, the live panels arrive with their
+// backend surfaces (runner registration codes, policy versions, audit
+// export, runbook drills) — the page says so instead of faking content.
+function AreaPlaceholder({ title, items }) {
+  return (
+    <section class="gov-page" aria-labelledby="area-placeholder-title">
+      <header class="gov-header">
+        <h1 id="area-placeholder-title">{title}</h1>
+        <p class="gov-lead">该区域为第一代骨架：入口已按角色点亮，面板待对应后端能力接入。</p>
+      </header>
+      <ul class="gov-pending-list">
+        {items.map((item) => (
+          <li key={item} class="gov-pending-item">{item}<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function App({ auth }) {
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [wsEvents, setWsEvents] = useState([]);
   const [wsVersion, setWsVersion] = useState(0);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('maestro-theme') || 'dark');
+  const [hash, setHash] = useState(() => window.location.hash || '#/');
   const refreshTimer = useRef(null);
+
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash || '#/');
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  const view = viewFromHash(hash);
+  // Project selection rides the hash (#/project/:id) so governance views
+  // and the workbench share one addressable routing mechanism.
+  const selectedProjectId = projectFromHash(hash);
+
+  const roles = rolesOfAuth(auth);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -76,33 +114,64 @@ export function App() {
     if (wsVersion > 0) fetchProjects();
   }, [wsVersion, fetchProjects]);
 
+  const navigate = useCallback((target) => {
+    window.location.hash = target;
+  }, []);
+  const selectProject = useCallback((id) => {
+    navigate(id ? `#/project/${id}` : '#/');
+  }, [navigate]);
+
   return (
     <div class="app">
       <Sidebar
         projects={projects}
         selectedId={selectedProjectId}
-        onSelect={setSelectedProjectId}
+        onSelect={selectProject}
         theme={theme}
         onToggleTheme={toggleTheme}
+        view={view}
+        onNavigate={navigate}
+        roles={roles}
       />
       <main class="main">
-        <ErrorNotice message={projectsError} onRetry={fetchProjects} />
-        {projectsLoading && projects.length === 0 ? (
-          <div class="loading">Loading projects...</div>
-        ) : selectedProjectId ? (
-          <ProjectBoard
-            key={selectedProjectId}
-            projectId={selectedProjectId}
-            projects={projects}
-            wsEvents={wsEvents}
-            wsVersion={wsVersion}
-            wsStatus={wsStatus}
+        <IdentityBar auth={auth} />
+        {view === 'waivers' ? (
+          <WaiverConsole projects={projects} roles={roles} />
+        ) : view === 'mrs' ? (
+          <MergePipelineView projects={projects} />
+        ) : view === 'scenarios' ? (
+          <ScenarioMap roles={roles} />
+        ) : view === 'admin' ? (
+          <AreaPlaceholder
+            title="管理"
+            items={['项目/成员管理', 'Runner 注册码与批准', '策略版本管理', '审计导出（依赖契约 PR 端点）']}
+          />
+        ) : view === 'operations' ? (
+          <AreaPlaceholder
+            title="运维"
+            items={['Runbook 演练锚点', '紧急停止 / 凭据撤销', 'SLO 快照（依赖契约 PR 端点）', '备份恢复记录']}
           />
         ) : (
-          <Overview
-            projects={projects}
-            onSelect={setSelectedProjectId}
-          />
+          <>
+            <ErrorNotice message={projectsError} onRetry={fetchProjects} />
+            {projectsLoading && projects.length === 0 ? (
+              <div class="loading">Loading projects...</div>
+            ) : selectedProjectId ? (
+              <ProjectBoard
+                key={selectedProjectId}
+                projectId={selectedProjectId}
+                projects={projects}
+                wsEvents={wsEvents}
+                wsVersion={wsVersion}
+                wsStatus={wsStatus}
+              />
+            ) : (
+              <Overview
+                projects={projects}
+                onSelect={selectProject}
+              />
+            )}
+          </>
         )}
       </main>
     </div>
