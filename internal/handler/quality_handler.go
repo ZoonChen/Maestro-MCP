@@ -39,6 +39,7 @@ type QualityStore interface {
 	PutProjectPolicy(ctx context.Context, projectID string, policy *evidence.Policy, expectedRowVersion int64) (int64, error)
 	ListGateSnapshots(ctx context.Context, projectID, workItemID string) ([]evidence.StoredSnapshot, error)
 	ListEvidenceForWorkItem(ctx context.Context, projectID, workItemID string) ([]evidence.Record, error)
+	ListWaiversForWorkItem(ctx context.Context, projectID, workItemID string) ([]evidence.Waiver, error)
 	GateSnapshotByID(ctx context.Context, projectID, gateID string) (*evidence.StoredSnapshot, bool, error)
 	WaiverByID(ctx context.Context, projectID, waiverID string) (*evidence.Waiver, bool, error)
 	WorkItemExists(ctx context.Context, projectID, workItemID string) (bool, error)
@@ -242,6 +243,65 @@ func (h *QualityHandler) ListWorkItemEvidence(c *gin.Context) {
 		records[index].SchemaVersion = "3.0"
 	}
 	c.JSON(http.StatusOK, records)
+}
+
+// ListWorkItemWaivers lists the waiver lifecycle for one work item
+// (listWorkItemWaivers, task brief E / UI-2): every requested, approved
+// or terminal waiver with its remaining validity window. Read-only —
+// the queue's approval transitions stay on the frozen write endpoints.
+func (h *QualityHandler) ListWorkItemWaivers(c *gin.Context) {
+	projectID, workItemID := c.Param("pid"), c.Param("wid")
+	exists, err := h.store.WorkItemExists(c.Request.Context(), projectID, workItemID)
+	if err != nil {
+		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Waivers could not be listed")
+		return
+	}
+	if !exists {
+		staticErrorReply(c, http.StatusNotFound, "WORK_ITEM_NOT_FOUND", "Work item is unknown in this project")
+		return
+	}
+	waivers, err := h.store.ListWaiversForWorkItem(c.Request.Context(), projectID, workItemID)
+	if err != nil {
+		staticErrorReply(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Waivers could not be listed")
+		return
+	}
+	now := time.Now()
+	reply := make([]gin.H, 0, len(waivers))
+	for index := range waivers {
+		waiver := &waivers[index]
+		reply = append(reply, waiverListReply(waiver, now))
+	}
+	c.JSON(http.StatusOK, reply)
+}
+
+// waiverListReply shapes one queue row. remaining_seconds is the live
+// validity window for pending (requested) and effective (approved/
+// active) waivers, and zero for everything terminal or lapsed.
+func waiverListReply(waiver *evidence.Waiver, now time.Time) gin.H {
+	remaining := int64(0)
+	switch waiver.State {
+	case evidence.WaiverRequested, evidence.WaiverApproved, evidence.WaiverActive:
+		if now.Before(waiver.ExpiresAt) {
+			remaining = int64(time.Until(waiver.ExpiresAt).Round(time.Second) / time.Second)
+		}
+	}
+	approver := any(nil)
+	if waiver.Approver != "" {
+		approver = waiver.Approver
+	}
+	return gin.H{
+		"id":                waiver.ID,
+		"gate_id":           waiver.GateID,
+		"check":             waiver.Check,
+		"status":            waiver.State,
+		"requester_id":      waiver.Requester,
+		"approver_id":       approver,
+		"source_sha":        waiver.SourceSHA,
+		"merge_request_iid": waiver.MergeRequestIID,
+		"expires_at":        waiver.ExpiresAt.UTC().Format(time.RFC3339),
+		"remaining_seconds": remaining,
+		"version":           waiver.Version,
+	}
 }
 
 type waiverRequestBody struct {

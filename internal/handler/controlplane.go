@@ -62,6 +62,12 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/work-items/:wid/evidence": {
 		http.MethodGet: "quality.read",
 	},
+	"/api/v3/projects/:pid/work-items/:wid/waivers": {
+		http.MethodGet: "quality.read",
+	},
+	"/api/v3/webhooks/dead-letters/:inbox_id/replay": {
+		http.MethodPost: "gitlab.reconcile",
+	},
 	"/api/v3/projects/:pid/gates/:gid/waivers": {
 		http.MethodPost: "waiver.request",
 	},
@@ -80,6 +86,7 @@ type ControlPlaneOptions struct {
 	GitLab        *GitLabHandler
 	Observability *ObservabilityHandler
 	SLO           *SLOSnapshotHandler
+	DeadLetters   *DeadLetterHandler
 	Pilot         *PilotHandler
 	Scope         ScopeGuard
 }
@@ -110,9 +117,13 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 		group.PUT("/projects/:pid/quality-policy", options.Quality.PutQualityPolicy)
 		group.GET("/projects/:pid/work-items/:wid/gates", options.Quality.ListWorkItemGates)
 		group.GET("/projects/:pid/work-items/:wid/evidence", options.Quality.ListWorkItemEvidence)
+		group.GET("/projects/:pid/work-items/:wid/waivers", options.Quality.ListWorkItemWaivers)
 		group.POST("/projects/:pid/gates/:gid/waivers", options.Quality.RequestGateWaiver)
 		group.POST("/projects/:pid/waivers/:wid/approve", options.Quality.ApproveGateWaiver)
 		group.POST("/projects/:pid/waivers/:wid/revoke", options.Quality.RevokeGateWaiver)
+	}
+	if options.DeadLetters != nil {
+		group.POST("/webhooks/dead-letters/:inbox_id/replay", options.DeadLetters.ReplayDeadLetter)
 	}
 	if options.GitLab != nil {
 		group.GET("/gitlab/instances", options.GitLab.ListInstances)
@@ -135,12 +146,13 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	}
 }
 
-// requireControlPlanePrincipal authenticates the bearer credential the
-// same way the v1 tree does (the engine-wide Authenticate deliberately
-// exempts /api/v3 for the self-gated machine surfaces).
+// requireControlPlanePrincipal authenticates the credential the same
+// way the v1 tree does (the engine-wide Authenticate deliberately
+// exempts /api/v3 for the self-gated machine surfaces): bearer when
+// present, otherwise the BFF session cookie for console browsers.
 func requireControlPlanePrincipal(m *OIDCMiddleware) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !m.authenticateBearer(c) {
+		if !m.authenticateCredential(c) {
 			return
 		}
 		c.Next()

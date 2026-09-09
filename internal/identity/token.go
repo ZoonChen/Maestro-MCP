@@ -136,7 +136,16 @@ func (v *TokenVerifier) Verify(token string, now time.Time) (VerifiedClaims, err
 		if header.Algorithm != "ES256" {
 			return VerifiedClaims{}, fmt.Errorf("identity: key/algorithm mismatch")
 		}
-		if !ecdsa.VerifyASN1(parsed, digest[:], signature) {
+		// RFC 7515 section 3.4 / RFC 7518 section 3.4: the ES256 JWS
+		// signature is the fixed-width raw concatenation R||S (32+32
+		// octets), never ASN.1 DER. Real OIDC providers emit the raw
+		// form; the fixed-length split is the whole interop contract.
+		if len(signature) != 64 {
+			return VerifiedClaims{}, fmt.Errorf("identity: signature verification failed")
+		}
+		r := new(big.Int).SetBytes(signature[:32])
+		s := new(big.Int).SetBytes(signature[32:])
+		if !ecdsa.Verify(parsed, digest[:], r, s) {
 			return VerifiedClaims{}, fmt.Errorf("identity: signature verification failed")
 		}
 	default:
@@ -174,21 +183,39 @@ func (v *TokenVerifier) Verify(token string, now time.Time) (VerifiedClaims, err
 func (v *TokenVerifier) key(kid string, now time.Time) (crypto.PublicKey, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if key, ok := v.keys[kid]; ok && now.Sub(v.fetchedAt) < jwksCacheTTL {
+	if key, ok := v.singleKeyOrByKid(kid); ok && now.Sub(v.fetchedAt) < jwksCacheTTL {
 		return key, nil
 	}
 	// Refresh once (unknown kid or stale cache) before failing.
 	if err := v.refreshKeys(); err != nil {
-		if key, ok := v.keys[kid]; ok {
+		if key, ok := v.singleKeyOrByKid(kid); ok {
 			return key, nil
 		}
 		return nil, fmt.Errorf("identity: jwks: %w", err)
 	}
-	key, ok := v.keys[kid]
+	key, ok := v.singleKeyOrByKid(kid)
 	if !ok {
 		return nil, fmt.Errorf("identity: no jwks key for kid %q", kid)
 	}
 	return key, nil
+}
+
+// singleKeyOrByKid resolves the signing key: by kid when present, or the
+// one and only key when the token header omits kid (kid-less tokens are
+// valid JWS; a single-key issuer is unambiguous, a multi-key document
+// is not — that stays a lookup failure, never a guess).
+func (v *TokenVerifier) singleKeyOrByKid(kid string) (crypto.PublicKey, bool) {
+	if kid != "" {
+		key, ok := v.keys[kid]
+		return key, ok
+	}
+	if len(v.keys) != 1 {
+		return nil, false
+	}
+	for _, key := range v.keys {
+		return key, true
+	}
+	return nil, false
 }
 
 func (v *TokenVerifier) refreshKeys() error {

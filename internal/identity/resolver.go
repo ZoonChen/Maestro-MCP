@@ -14,6 +14,14 @@ type PrincipalResolver interface {
 	Resolve(ctx context.Context, issuer, subject string) (*model.PrincipalContext, error)
 }
 
+// PrincipalByIDResolver maps a server-side user ID (the auth_sessions
+// row's user) back to a FRESH PrincipalContext. Browser sessions
+// re-resolve on every request so membership revocations propagate
+// immediately instead of being frozen into the session row.
+type PrincipalByIDResolver interface {
+	ResolveByID(ctx context.Context, userID string) (*model.PrincipalContext, error)
+}
+
 // StaticResolver serves tests and the local single-tenant baseline: a
 // fixed, server-configured membership map.
 type StaticResolver struct {
