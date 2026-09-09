@@ -107,6 +107,10 @@ const CODE_COPY = {
   POLICY_WEAKENED: '项目策略只能加强、不能削弱公司基线。',
   ROUTE_NOT_FOUND: '该接口在当前部署中未开放（可能未启用 PostgreSQL/OIDC 控制面）。',
   REMOTE_WRITE_DISABLED: '远程写操作被服务端关闭（REMOTE_WRITE=false）。',
+  DEAD_LETTER_NOT_FOUND: '没有处于隔离（dead letter）状态的投递匹配该 ID——可能已被重放或 ID 有误。',
+  REPLAY_APPROVAL_INVALID: '重放审批未通过：原因需为不少于 16 个字符的实质说明。',
+  APPROVER_IDENTITY_MISMATCH: '重放审批人只能是你当前登录的身份（服务端从凭据推导，不接受代填）。',
+  SLO_AVAILABILITY_UNMEASURED: '窗口内没有可用性遥测数据，SLO 快照拒绝编造数字（fail-closed）。',
 };
 
 const STATUS_COPY = {

@@ -71,6 +71,9 @@ const IDS = {
   pipelineJob: 'aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa',
   evidenceMergeGate: 'bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb',
   evidenceDiagnostic: 'cccccccc-cccc-7ccc-8ccc-cccccccccccc',
+  userViewer: 'dddddddd-dddd-7ddd-8ddd-dddddddddddd',
+  pilotFlag: 'eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee',
+  deadLetter: 'ffffffff-ffff-7fff-8fff-ffffffffffff',
 };
 const SHA_A = 'a1'.repeat(20);
 const SHA_B = 'b2'.repeat(20);
@@ -80,10 +83,11 @@ type GovFixture = {
   reason: string;
   devToken: string;
   adminToken: string;
+  viewerToken: string;
   lastWaiverId: string;
 };
 
-const gov: GovFixture = { available: false, reason: 'not initialized', devToken: '', adminToken: '', lastWaiverId: '' };
+const gov: GovFixture = { available: false, reason: 'not initialized', devToken: '', adminToken: '', viewerToken: '', lastWaiverId: '' };
 
 function sh(command: string, options: { cwd?: string; env?: Record<string, string> } = {}) {
   return execSync(command, {
@@ -330,10 +334,12 @@ INSERT INTO projects (id, team_id, key, name, status) VALUES ('${IDS.project}', 
 INSERT INTO work_items (id, project_id, title) VALUES ('${IDS.workItem}', '${IDS.project}', 'console governance work item');
 INSERT INTO users (id, issuer, subject, display_name, status)
   VALUES ('${IDS.userDev}', '${IDP_ISSUER}', 'ui-e2e-dev', 'Dev E2E', 'active'),
-         ('${IDS.userAdmin}', '${IDP_ISSUER}', 'ui-e2e-admin', 'Admin E2E', 'active');
+         ('${IDS.userAdmin}', '${IDP_ISSUER}', 'ui-e2e-admin', 'Admin E2E', 'active'),
+         ('${IDS.userViewer}', '${IDP_ISSUER}', 'ui-e2e-viewer', 'Viewer E2E', 'active');
 INSERT INTO memberships (team_id, user_id, role)
   VALUES ('${IDS.team}', '${IDS.userDev}', 'developer'),
-         ('${IDS.team}', '${IDS.userAdmin}', 'project_admin');
+         ('${IDS.team}', '${IDS.userAdmin}', 'project_admin'),
+         ('${IDS.team}', '${IDS.userViewer}', 'viewer');
 INSERT INTO gitlab_instances (id, base_url, display_name, status, bot_credential_ref, webhook_secret_ref)
   VALUES ('${IDS.instance}', 'https://gitlab.example.com', 'E2E GitLab', 'active', 'ref:bot', 'ref:hook');
 INSERT INTO gitlab_project_mappings (gitlab_instance_id, gitlab_project_id, project_id, default_branch)
@@ -355,6 +361,12 @@ INSERT INTO evidence (id, project_id, work_item_id, authority, producer, evidenc
   ('${IDS.evidenceDiagnostic}', '${IDS.project}', '${IDS.workItem}', 'diagnostic',
     '{"type":"runner_profile","id":"profile-e2e","version":"1"}'::jsonb, 'unit',
     '${SHA_A}', '${SHA_B}', 'sha256:${'e'.repeat(64)}', 'company-baseline', 1, 'passed', 'internal', NULL, NULL);
+INSERT INTO pilot_flags (id, project_id, flag, stage, gray_percent, changed_by, reason)
+  VALUES ('${IDS.pilotFlag}', '${IDS.project}', 'runner-admission', 'gray', 25, '${IDS.userAdmin}',
+    'E2E 种子：影子运行两周无阻断，进入 25% 灰度。');
+INSERT INTO webhook_inbox (id, gitlab_instance_id, external_event_id, event_kind, payload_digest, status, attempts)
+  VALUES ('${IDS.deadLetter}', '${IDS.instance}', 'evt-e2e-dlq-1', 'pipeline',
+    'sha256:${'f'.repeat(64)}', 'dead_letter', 5);
 `;
 
 // The governance binary runs as a Linux container on the e2e network:
@@ -462,6 +474,7 @@ test.beforeAll(async () => {
     const idp = await startIdPContainer();
     gov.devToken = mintToken(idp.key, 'ui-e2e-dev');
     gov.adminToken = mintToken(idp.key, 'ui-e2e-admin');
+    gov.viewerToken = mintToken(idp.key, 'ui-e2e-viewer');
 
     psql(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE);`);
     psql(`CREATE DATABASE ${DB_NAME};`);
@@ -537,7 +550,7 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
     try {
       await page.getByLabel('项目 ID').fill(IDS.project);
       await page.getByLabel('工作项 ID').fill(IDS.workItem);
-      await page.getByRole('button', { name: '查看闸门快照' }).click();
+      await page.getByRole('button', { name: '读取闸门快照与队列' }).click();
       await expect(page.locator(`tr[data-gate-id="${IDS.gateRow}"]`)).toContainText('unit');
       await expect(page.locator(`tr[data-gate-id="${IDS.gateRow}"] .gov-chip-failed`)).toBeVisible();
 
@@ -586,7 +599,7 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
       await page.getByLabel('工作项 ID').fill(IDS.workItem);
       // project_admin holds waiver.request but NOT quality.read: the
       // real gates fetch is denied by the frozen matrix.
-      await page.getByRole('button', { name: '查看闸门快照' }).click();
+      await page.getByRole('button', { name: '读取闸门快照与队列' }).click();
       await expect(page.locator('.gov-error')).toContainText('当前身份没有执行此操作的权限');
 
       await page.locator('details[aria-label="手动绑定闸门"] summary').click();
@@ -717,6 +730,173 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
         return response.status;
       });
       expect(afterLogout).toBe(401);
+    } finally {
+      await context.close();
+    }
+  });
+
+  // --- Second generation (task brief B2): queue, pilot, DLQ, SLO,
+  // audit and the session-revocation degradation, all against the real
+  // frozen endpoints and the real permission matrix. ---
+
+  test('waiver queue lists the real lifecycle rows and binds them into the action form', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // developer holds quality.read: the queue read is a real 200. The
+    // waiver requested in the earlier serial test was revoked in the
+    // following one, so the queue carries that terminal row.
+    const { context, page } = await governancePage(browser, gov.devToken, '#/waivers');
+    try {
+      await expect(page.getByText('审批权当前仅授给职能角色')).toBeVisible();
+      await page.getByLabel('项目 ID').fill(IDS.project);
+      await page.getByLabel('工作项 ID').fill(IDS.workItem);
+      await page.getByRole('button', { name: '读取闸门快照与队列' }).click();
+
+      const row = page.locator(`tr[data-waiver-id="${gov.lastWaiverId}"]`);
+      await expect(row).toContainText('unit');
+      await expect(row).toContainText('已撤销');
+      await expect(row).toContainText(IDS.userAdmin);
+
+      await row.getByRole('button', { name: '带入审批表单' }).click();
+      await expect(page.getByLabel('豁免 ID')).toHaveValue(gov.lastWaiverId);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('pilot flags render the real rollout rows (read surface)', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    const { context, page } = await governancePage(browser, gov.devToken, '#/pilot');
+    try {
+      await page.getByLabel('项目 ID').fill(IDS.project);
+      await page.getByRole('button', { name: '读取旗标' }).click();
+
+      const row = page.locator('tr[data-pilot-flag="runner-admission"]');
+      await expect(row).toContainText('灰度');
+      await expect(row).toContainText('25%');
+      await expect(row).toContainText('影子运行两周无阻断');
+      await expect(row).toContainText(IDS.userAdmin);
+      // Read-mostly boundary stays stated on the page.
+      await expect(page.getByText('本代不进控制台，走 API/MCP')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('DLQ replay walks the dual-person contract through the real endpoint', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // project_admin holds gitlab.reconcile: the replay POST is a real
+    // authorized write. First the separation-of-duties rejection (the
+    // requester equals the authenticated approver), then the real
+    // requeue under the original event identity, then the spent-row 404.
+    const { context, page } = await governancePage(browser, gov.adminToken, '#/operations');
+    try {
+      const inbox = page.getByLabel('Inbox ID（隔离投递，来自运维清单）');
+      const requester = page.getByLabel('请求人（requested_by，诊断并申请重放的负责人）');
+      const reason = page.locator('textarea');
+      const replay = page.getByRole('button', { name: '双人批准并重放' });
+
+      await inbox.fill(IDS.deadLetter);
+      await requester.fill(IDS.userAdmin);
+      await reason.fill('Pipeline 事件处理连续失败进入隔离，缺陷已修复，复核后重放。');
+      await replay.click();
+      await expect(page.locator('[data-replay-result="error"]')).toContainText('审批人必须不同于豁免请求人');
+
+      await requester.fill(IDS.userDev);
+      await replay.click();
+      await expect(page.locator('[data-replay-result="ok"]')).toContainText('重放完成');
+      await expect(page.locator('[data-replay-result="ok"]')).toContainText(IDS.deadLetter);
+
+      // The row left the dead_letter state: a second replay is the real
+      // 404 DEAD_LETTER_NOT_FOUND with the stable console copy.
+      await replay.click();
+      await expect(page.locator('[data-replay-result="error"]')).toContainText('没有处于隔离（dead letter）状态的投递匹配该 ID');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('audit export states the real permission boundary (functional roles unreachable)', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // audit.export is granted to platform_admin and functional owners
+    // (security/qa); the identity layer models neither, so every
+    // reachable membership role gets a real 403 — rendered as the
+    // stable permission copy, the honest boundary of this generation.
+    const { context, page } = await governancePage(browser, gov.devToken, '#/admin');
+    try {
+      await expect(page.getByRole('heading', { name: '审计链导出与验证' })).toBeVisible();
+      await page.getByLabel('项目 ID').fill(IDS.project);
+      await page.getByRole('button', { name: '导出切片' }).click();
+      await expect(page.locator('[aria-label="审计链导出"] .gov-status-error')).toContainText('当前身份没有执行此操作的权限');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('SLO snapshot degrades honestly while the deployment declares no SLO policy', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // No SLO config is mounted for this scratch deployment: the route
+    // stays unexposed and the real answer is the 404 ROUTE_NOT_FOUND —
+    // the view renders the frozen copy instead of a fabricated snapshot.
+    const { context, page } = await governancePage(browser, gov.devToken, '#/operations');
+    try {
+      await page.getByLabel('项目 ID').fill(IDS.project);
+      await page.getByRole('button', { name: '读取快照' }).click();
+      await expect(page.locator('[aria-label="SLO 快照"] .gov-status-error')).toContainText('该接口在当前部署中未开放');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('mid-session revocation degrades the console to the login gate with the expiry notice', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // Real cookie login, then a server-side revocation (the same
+    // terminal state an expiry reaches): the next data call answers
+    // 401, the console re-probes and swaps to the gate WITH the
+    // degradation notice — never a blank or stale page.
+    const context = await browser.newContext({
+      baseURL: GOV_ORIGIN,
+      ignoreHTTPSErrors: true,
+      extraHTTPHeaders: { Authorization: '' },
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto('/dashboard');
+      await page.getByRole('button', { name: '使用公司账号登录' }).click();
+      await expect(page.locator('.app')).toBeVisible();
+
+      // Hash-nav (no reload: the session probe must stay the logged-in
+      // one) to the waiver console, revoke server-side, then trigger a
+      // data call from the page.
+      await page.locator('.sidebar-item', { hasText: 'HITL 豁免审批' }).click();
+      await expect(page.getByRole('heading', { name: 'HITL 豁免审批' })).toBeVisible();
+      psql(`UPDATE auth_sessions SET revoked_at = now() WHERE user_id = '${IDS.userDev}' AND revoked_at IS NULL;`, DB_NAME);
+      await page.getByLabel('项目 ID').fill(IDS.project);
+
+      const gate = page.locator('.auth-gate');
+      await expect(gate).toBeVisible();
+      await expect(gate).toContainText('会话已过期或已被撤销，请重新登录');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('viewer session keeps governance reads but hides the role-gated areas (real bearer probe)', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // /auth/session answers the bearer probe with the real principal:
+    // no stub anywhere. viewer is a membership role: the governance
+    // reads stay, the platform/operations areas stay hidden (IA
+    // visibility; authorization stays server-side).
+    const { context, page } = await governancePage(browser, gov.viewerToken, '#/');
+    try {
+      const identity = page.locator('.identity-bar[data-auth="authenticated"]');
+      await expect(identity).toContainText(IDS.userViewer);
+      await expect(identity).toContainText('viewer');
+      await expect(page.locator('.sidebar-section', { hasText: '管理' })).toHaveCount(0);
+      await expect(page.locator('.sidebar-section', { hasText: '运维' })).toHaveCount(0);
+      await expect(page.locator('.sidebar-item', { hasText: '试点发布' })).toBeVisible();
+
+      await page.locator('.sidebar-item', { hasText: 'HITL 豁免审批' }).click();
+      await expect(page.getByText('当前身份仅供查看（授权以服务端判定为准）')).toBeVisible();
     } finally {
       await context.close();
     }

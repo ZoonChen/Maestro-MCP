@@ -68,6 +68,7 @@ export function Sidebar({
         ))}
         <div class="sidebar-section">治理</div>
         {navItem('HITL 豁免审批', '#/waivers', view === 'waivers')}
+        {navItem('试点发布', '#/pilot', view === 'pilot')}
         {navItem('八场景地图', '#/scenarios', view === 'scenarios')}
         <div class="sidebar-section">质量</div>
         {navItem('MR · Pipeline', '#/mrs', view === 'mrs')}

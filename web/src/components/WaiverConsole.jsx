@@ -8,8 +8,21 @@ import {
   newIdempotencyKey,
 } from '../api/client';
 import { ACTION_PERMISSION_HINTS } from '../governance';
+import { ScopePicker } from './ScopePicker';
 
 const MAX_WAIVER_DAYS = 7;
+
+// Remaining-validity copy for the queue rows: the server reports whole
+// seconds; the console renders a coarse human window (the receipt keeps
+// the exact timestamp).
+function remainingCopy(row) {
+  if (!['requested', 'approved', 'active'].includes(row.status)) return '—';
+  const seconds = Number(row.remaining_seconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '已到期';
+  if (seconds < 3600) return `剩 ${Math.floor(seconds / 60)} 分钟`;
+  if (seconds < 86400) return `剩 ${Math.floor(seconds / 3600)} 小时`;
+  return `剩 ${Math.floor(seconds / 86400)} 天`;
+}
 
 function shortSha(sha) {
   return typeof sha === 'string' && sha.length > 12 ? `${sha.slice(0, 12)}…` : sha || '—';
@@ -46,13 +59,15 @@ const WAIVER_STATE_COPY = {
   revoked: '已撤销',
 };
 
-// HITL waiver console (M4-UI-001 B3). The page walks the frozen waiver
-// contract: work-item gate snapshots -> time-limited waiver request ->
-// independent approval / revocation. The backend currently exposes no
-// "list pending waivers" endpoint, so the queue is anchored on gate
-// snapshots and this session's receipts; the gap is stated on the page
-// instead of being papered over with a fake list.
-export function WaiverConsole({ projects, roles }) {
+// HITL waiver console (M4-UI-001 B3, second generation). The page walks
+// the frozen waiver contract: work-item gate snapshots -> time-limited
+// waiver request -> independent approval / revocation. The queue view
+// consumes the real per-work-item waivers list (task brief E / UI-2)
+// with live remaining-validity windows; listing needs quality.read, so
+// roles without it (project_admin) still bind manually from a
+// colleague's view — the boundary is stated on the page instead of
+// being papered over.
+export function WaiverConsole({ projects, roles, projectScope }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   // M1 interim: the v1 project registry (task substrate) and the /api/v3
   // governance scope live in different stores, so a governance project
@@ -69,6 +84,12 @@ export function WaiverConsole({ projects, roles }) {
   const [gatesStatus, setGatesStatus] = useState('idle'); // idle|loading|ready|error
   const [gatesError, setGatesError] = useState('');
   const [selectedGateId, setSelectedGateId] = useState(null);
+
+  // The real HITL queue (UI-2): every requested/approved/terminal waiver
+  // of the work item with its live remaining-validity window.
+  const [queue, setQueue] = useState([]);
+  const [queueStatus, setQueueStatus] = useState('idle'); // idle|loading|ready|error
+  const [queueError, setQueueError] = useState('');
 
   // Manual gate binding: waiver.request holders without quality.read
   // (project_admin in the frozen matrix) cannot list snapshots, so the
@@ -119,10 +140,16 @@ export function WaiverConsole({ projects, roles }) {
     if (!effectiveProjectId || !effectiveWorkItemId) {
       setGatesStatus('idle');
       setGates([]);
+      setQueueStatus('idle');
+      setQueue([]);
       return;
     }
     setGatesStatus('loading');
     setGatesError('');
+    setQueueStatus('loading');
+    setQueueError('');
+    // Both reads need quality.read; the queue fetch rides the same
+    // trigger so one click refreshes the whole HITL picture.
     try {
       const rows = await apiGet(
         `/api/v3/projects/${effectiveProjectId}/work-items/${encodeURIComponent(effectiveWorkItemId)}/gates`,
@@ -134,7 +161,26 @@ export function WaiverConsole({ projects, roles }) {
       setGatesError(describeAPIError(error));
       setGatesStatus('error');
     }
+    try {
+      const queueRows = await apiGet(
+        `/api/v3/projects/${effectiveProjectId}/work-items/${encodeURIComponent(effectiveWorkItemId)}/waivers`,
+      );
+      setQueue(Array.isArray(queueRows) ? queueRows : []);
+      setQueueStatus('ready');
+    } catch (error) {
+      setQueue([]);
+      setQueueError(describeAPIError(error));
+      setQueueStatus('error');
+    }
   }, [effectiveProjectId, effectiveWorkItemId]);
+
+  // A queue row binds straight into the action form: the row carries the
+  // authoritative id + version, so the operator never retypes them.
+  const bindQueueRow = useCallback((row) => {
+    setActionWaiverId(row.id || '');
+    setActionVersion(String(row.version ?? ''));
+    setActionResult(null);
+  }, []);
 
   const rowSelectedGate = gates.find((gate) => gate.id === selectedGateId) || null;
   const manualGateComplete = ['id', 'version', 'sourceSha', 'check'].every((key) => manualGate[key].trim() !== '');
@@ -185,12 +231,13 @@ export function WaiverConsole({ projects, roles }) {
       setActionVersion(String(created?.version || ''));
       setActionResult(null);
       setRequestNotice(`豁免请求已提交（状态：${WAIVER_STATE_COPY[created?.status] || created?.status || '待审批'}）。`);
+      loadGates();
     } catch (error) {
       setRequestNotice(describeAPIError(error));
     } finally {
       setSubmitting(false);
     }
-  }, [effectiveProjectId, selectedGate, reason, expiresAt, mrIid]);
+  }, [effectiveProjectId, selectedGate, reason, expiresAt, mrIid, loadGates]);
 
   const runWaiverAction = useCallback(async (action) => {
     const trimmedReason = actionReason.trim();
@@ -212,6 +259,9 @@ export function WaiverConsole({ projects, roles }) {
       setReceipt(updated);
       setActionVersion(String(updated?.version || ''));
       setActionResult({ kind: 'ok', text: `操作完成：豁免状态现为「${WAIVER_STATE_COPY[updated?.status] || updated?.status}」。` });
+      // The queue shows live state: refresh it so the row reflects the
+      // transition the server just recorded.
+      loadGates();
     } catch (error) {
       const text = describeAPIError(error);
       if (error instanceof APIError && error.status === 403 && error.code === 'SEPARATION_OF_DUTIES') {
@@ -220,7 +270,7 @@ export function WaiverConsole({ projects, roles }) {
         setActionResult({ kind: 'error', text });
       }
     }
-  }, [effectiveProjectId, actionWaiverId, actionVersion, actionReason]);
+  }, [effectiveProjectId, actionWaiverId, actionVersion, actionReason, loadGates]);
 
   return (
     <section class="gov-page" aria-labelledby="waiver-console-title">
@@ -231,31 +281,27 @@ export function WaiverConsole({ projects, roles }) {
           每一步都要求当前版本（If-Match）与幂等键，冲突将被服务端拒绝。
         </p>
         <p class="gov-note" role="note">
-          待审豁免的跨项目列表端点尚未由后端提供（已登记为集成交接物）；
-          本页以闸门快照与本次会话回执为入口。
+          待审队列按工作项读取真实豁免列表（含剩余有效期）；读取需 quality.read。
+          跨项目聚合队列端点尚未冻结（已登记为集成交接缺口）。
         </p>
         <p class="gov-note" role="note">
           权限提示：申请/撤销需 {ACTION_PERMISSION_HINTS['waiver.request']}；审批需 {ACTION_PERMISSION_HINTS['waiver.approve']}。
+          审批权当前仅授给职能角色（security_owner / qa_owner），而身份层尚未建模职能角色——
+          现阶段所有可登录身份执行审批都会被服务端以 403 拒绝（已登记 UI-4 遗留），
+          队列中的待审项需由拥有职能角色的负责人经 API/MCP 审批。
           {canRequest ? ' 当前身份可申请豁免。' : ' 当前身份仅供查看（授权以服务端判定为准）。'}
         </p>
       </header>
 
       <div class="gov-fieldset">
-        <label class="gov-field">
-          <span>项目</span>
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            {projects.length === 0 ? <option value="">（无可见项目）</option> : null}
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
-          </select>
-        </label>
-        <label class="gov-field">
-          <span>项目 ID（当项目不在上方列表时手动输入）</span>
-          <input
-            value={manualProjectId}
-            onInput={(e) => setManualProjectId(e.target.value)}
-            placeholder="治理范围的项目 UUID"
-          />
-        </label>
+        <ScopePicker
+          projects={projects}
+          projectScope={projectScope}
+          projectId={projectId}
+          onProjectId={setProjectId}
+          manualProjectId={manualProjectId}
+          onManualProjectId={setManualProjectId}
+        />
         <label class="gov-field">
           <span>工作项</span>
           <select value={workItemId} onChange={(e) => { setWorkItemId(e.target.value); setManualWorkItemId(''); }}>
@@ -276,7 +322,7 @@ export function WaiverConsole({ projects, roles }) {
           </label>
         ) : null}
         <button type="button" class="gov-button" onClick={loadGates} disabled={!effectiveProjectId || !effectiveWorkItemId}>
-          查看闸门快照
+          读取闸门快照与队列
         </button>
       </div>
 
@@ -292,6 +338,59 @@ export function WaiverConsole({ projects, roles }) {
       {gatesStatus === 'ready' && gates.length === 0 ? (
         <p class="gov-empty">该工作项暂无闸门快照（可能尚未产生 CI 证据）。</p>
       ) : null}
+
+      <div class="gov-panel" aria-label="豁免待审队列">
+        <h2>豁免队列（按工作项）</h2>
+        {queueStatus === 'loading' ? <p role="status" class="gov-status">正在读取豁免队列…</p> : null}
+        {queueStatus === 'error' ? (
+          <p role="alert" class="gov-status gov-status-error">{queueError}</p>
+        ) : null}
+        {queueStatus === 'ready' && queue.length === 0 ? (
+          <p class="gov-empty">该工作项暂无豁免记录（诚实空态）。</p>
+        ) : null}
+        {queueStatus === 'ready' && queue.length > 0 ? (
+          <div class="gov-table-wrap">
+            <table class="gov-table" aria-label="豁免队列记录">
+              <thead>
+                <tr>
+                  <th scope="col">豁免 ID</th>
+                  <th scope="col">检查项</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">请求人</th>
+                  <th scope="col">审批人</th>
+                  <th scope="col">到期</th>
+                  <th scope="col">剩余有效期</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {queue.map((row) => (
+                  <tr key={row.id} data-waiver-id={row.id}>
+                    <td class="gov-mono" title={row.id}>{shortSha(row.id)}</td>
+                    <td>{row.check || '—'}</td>
+                    <td><span class="gov-chip">{WAIVER_STATE_COPY[row.status] || row.status}</span></td>
+                    <td class="gov-mono">{row.requester_id}</td>
+                    <td class="gov-mono">
+                      {row.approver_id || (row.status === 'requested' ? '（待独立审批）' : '—')}
+                    </td>
+                    <td>{row.expires_at || '—'}</td>
+                    <td>{remainingCopy(row)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        class="gov-button gov-button-small"
+                        onClick={() => bindQueueRow(row)}
+                      >
+                        带入审批表单
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
 
       <details class="gov-panel" aria-label="手动绑定闸门">
         <summary>手动绑定闸门（当无法读取闸门快照时）</summary>

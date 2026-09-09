@@ -8,12 +8,14 @@ export const ROUTES = {
   waivers: '#/waivers',
   mrs: '#/mrs',
   scenarios: '#/scenarios',
+  pilot: '#/pilot',
 };
 
 export function viewFromHash(hash) {
   if (hash === '#/waivers') return 'waivers';
   if (hash === '#/mrs') return 'mrs';
   if (hash === '#/scenarios') return 'scenarios';
+  if (hash === '#/pilot') return 'pilot';
   if (hash === '#/admin') return 'admin';
   if (hash === '#/operations') return 'operations';
   if (hash.startsWith('#/project/')) return 'project';
@@ -121,6 +123,9 @@ export const ACTION_PERMISSION_HINTS = {
   'waiver.approve': 'security_owner / qa_owner（且不得为请求人）',
   'waiver.revoke': 'project_admin / security_owner',
   'gitlab.reconcile': 'project_admin / platform_admin',
+  'audit.export': 'platform_admin / security_owner（职能角色）',
+  'webhook.dead_letter.replay': 'gitlab.reconcile（project_admin / platform_admin），审批人必须不同于请求人',
+  'pilot.write': 'platform_admin（本代控制台只读展示）',
 };
 
 // AppWithAuth flattens the auth session into { status, principal, roles,

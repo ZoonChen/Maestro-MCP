@@ -8,28 +8,12 @@ import { IdentityBar } from './components/IdentityBar';
 import { WaiverConsole } from './components/WaiverConsole';
 import { MergePipelineView } from './components/MergePipelineView';
 import { ScenarioMap } from './components/ScenarioMap';
+import { PilotFlagsView } from './components/PilotFlagsView';
+import { AuditExportView } from './components/AuditExportView';
+import { SLOSnapshotView } from './components/SLOSnapshotView';
+import { DeadLetterView } from './components/DeadLetterView';
 import { apiGet, describeAPIError } from './api/client';
 import { projectFromHash, rolesOfAuth, viewFromHash } from './governance';
-
-// First-generation placeholder for the admin / operations areas: the
-// navigation shape is frozen now, the live panels arrive with their
-// backend surfaces (runner registration codes, policy versions, audit
-// export, runbook drills) — the page says so instead of faking content.
-function AreaPlaceholder({ title, items }) {
-  return (
-    <section class="gov-page" aria-labelledby="area-placeholder-title">
-      <header class="gov-header">
-        <h1 id="area-placeholder-title">{title}</h1>
-        <p class="gov-lead">该区域为第一代骨架：入口已按角色点亮，面板待对应后端能力接入。</p>
-      </header>
-      <ul class="gov-pending-list">
-        {items.map((item) => (
-          <li key={item} class="gov-pending-item">{item}<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
-        ))}
-      </ul>
-    </section>
-  );
-}
 
 export function App({ auth }) {
   const [projects, setProjects] = useState([]);
@@ -53,6 +37,10 @@ export function App({ auth }) {
   const selectedProjectId = projectFromHash(hash);
 
   const roles = rolesOfAuth(auth);
+  // The server-reported governance scope: the union of the v1 workbench
+  // list and this session's memberships drives the governance pickers
+  // (the v1/v3 transition bridge, UI-6).
+  const projectScope = auth?.projectScope || [];
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -136,21 +124,42 @@ export function App({ auth }) {
       <main class="main">
         <IdentityBar auth={auth} />
         {view === 'waivers' ? (
-          <WaiverConsole projects={projects} roles={roles} />
+          <WaiverConsole projects={projects} roles={roles} projectScope={projectScope} />
         ) : view === 'mrs' ? (
           <MergePipelineView projects={projects} />
         ) : view === 'scenarios' ? (
           <ScenarioMap roles={roles} />
+        ) : view === 'pilot' ? (
+          <PilotFlagsView projects={projects} projectScope={projectScope} />
         ) : view === 'admin' ? (
-          <AreaPlaceholder
-            title="管理"
-            items={['项目/成员管理', 'Runner 注册码与批准', '策略版本管理', '审计导出（依赖契约 PR 端点）']}
-          />
+          <section class="gov-page" aria-labelledby="admin-area-title">
+            <header class="gov-header">
+              <h1 id="admin-area-title">管理</h1>
+              <p class="gov-lead">平台管理面。审计链导出已接线真实端点；其余面板待对应后端能力接入。</p>
+            </header>
+            <AuditExportView projects={projects} projectScope={projectScope} />
+            <ul class="gov-pending-list">
+              <li class="gov-pending-item">项目/成员管理<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+              <li class="gov-pending-item">Runner 注册码与批准<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+              <li class="gov-pending-item">策略版本管理<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+            </ul>
+          </section>
         ) : view === 'operations' ? (
-          <AreaPlaceholder
-            title="运维"
-            items={['Runbook 演练锚点', '紧急停止 / 凭据撤销', 'SLO 快照（依赖契约 PR 端点）', '备份恢复记录']}
-          />
+          <section class="gov-page" aria-labelledby="operations-area-title">
+            <header class="gov-header">
+              <h1 id="operations-area-title">运维</h1>
+              <p class="gov-lead">
+                平台运维面。SLO 快照与 Webhook DLQ 重放已接线真实端点；其余面板待对应后端能力接入。
+              </p>
+            </header>
+            <SLOSnapshotView projects={projects} projectScope={projectScope} />
+            <DeadLetterView principal={auth?.principal || ''} />
+            <ul class="gov-pending-list">
+              <li class="gov-pending-item">Runbook 演练锚点<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+              <li class="gov-pending-item">紧急停止 / 凭据撤销<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+              <li class="gov-pending-item">备份恢复记录<span class="gov-chip gov-chip-diagnostic">未接线</span></li>
+            </ul>
+          </section>
         ) : (
           <>
             <ErrorNotice message={projectsError} onRetry={fetchProjects} />
