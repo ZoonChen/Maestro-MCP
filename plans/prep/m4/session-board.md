@@ -25,6 +25,24 @@
 | #86 | s3/m4-runbooks | M4-RBK-001 runner 侧两类 Runbook + 两锚点 |
 | #88 | i4/m4-contract-wiring | 契约 PR：审计导出/验证端点、SLO 快照端点、G1 双人审批重放（含两处 CI 修复：幽灵 500 引用、daemon 测试安装竞态） |
 
+## 2.6 第一波停止位综合检查（2026-09-09，会话 I）
+
+- main 本地全量门禁全绿：全量 Go 套件含 PG（-p 1）、test-hygiene、lint 0、docs 四检、真实二进制 smoke、`make coverage`（四核门槛 PASS，state-machine 100%）、A 的 eval harness 49/49。
+- 观察项：`make coverage` 曾有一次 m2drill 包瞬时失败，两次复现均通过（覆盖率插桩时序 flake，未定位）——复发再追。
+- 缺口修复：m4drill 未计入 store 覆盖率包清单（Makefile 已补）；#90 的 CI 需要真实浏览器二进制（workflow 已修两轮：装包顺序 + lockfile 版本对齐）。
+- worktree 盘点：s3rb/s4wh/s6eval 干净无未提交变更，#90 合并后统一清理；s6ui 待合并。
+
+### B 会话登记（#90，待会话 I 裁决）
+
+| 编号 | 内容 | 影响 |
+|---|---|---|
+| UI-AUTH | `/auth` 协议端点未实装（IdentityMount.RegisterRoutes 恒 nil）：OIDC 授权码流 + HttpOnly cookie 会话 + Authenticate 接受 cookie——浏览器登录态无法真实建立，B 的登录 UI 仅过 stub 测试 | M4-UI-001 "implemented" 的硬前提 |
+| UI-2 | GET waivers 列表端点缺失（store 已有 ListWaiversForWorkItem 未暴露）：HITL 队列无法列待审豁免 | M4-UI-001 队列页的硬前提 |
+| UI-3 | ES256 验签用 DER 编码偏离 RFC 7515（raw R\|\|S）——真实 IdP 互操作会失败 | M1-AUTH 修正项 |
+| UI-4 | waiver.approve 无角色可达（冻结矩阵只授 security_owner/qa_owner，身份层未建模职能角色）——已知的 M2 遗留 | 与 V2 复盘遗留同源 |
+| UI-5 | 审计导出/SLO 快照视图：契约 PR #88 端点已上线，剩前端消费 | 小切片 |
+| UI-6 | v1/v3 双存储过渡桥（overview 读 SQLite、治理在 PG，UI 手输项目 ID） | 工作项切换后移除 |
+
 ## 2.5 契约 PR 待办与缺口登记（会话 I 裁决队列）
 
 | 编号 | 来源 | 内容 | 归属 |
