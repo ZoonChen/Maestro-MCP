@@ -8,6 +8,11 @@ export class APIError extends Error {
   }
 }
 
+// A rejected session surfaces as a window event so the auth shell can
+// re-probe and route back to the login view instead of leaving a stale
+// page. The event carries no credential, only the failure fact.
+export const SESSION_EXPIRED_EVENT = 'maestro:session-expired';
+
 async function responseBody(response) {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) return null;
@@ -18,26 +23,111 @@ async function responseBody(response) {
   }
 }
 
-export async function apiGet(path, options = {}) {
-  const response = await fetch(path, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    signal: options.signal,
-  });
-  const body = await responseBody(response);
-  if (!response.ok) {
-    throw new APIError(body?.error || `Request failed with HTTP ${response.status}`, {
-      status: response.status,
-      code: body?.error_code || 'REQUEST_FAILED',
-      correlationId: body?.correlation_id || '',
-    });
-  }
-  return body?.data ?? null;
+// The v1 tree answers { data } envelopes while the frozen /api/v3 tree
+// returns the bare contract payload; both shapes resolve to one value.
+function payloadOf(body) {
+  if (body && typeof body === 'object' && 'data' in body) return body.data ?? null;
+  return body ?? null;
 }
 
+function errorHeaders(options) {
+  const headers = {};
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
+  if (options.ifMatch) headers['If-Match'] = options.ifMatch;
+  if (options.ifNoneMatch) headers['If-None-Match'] = options.ifNoneMatch;
+  return headers;
+}
+
+export async function apiRequest(path, { method = 'GET', body, signal, ...headers } = {}) {
+  const init = {
+    method,
+    headers: { Accept: 'application/json', ...errorHeaders(headers) },
+    credentials: 'same-origin',
+    signal,
+  };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const response = await fetch(path, init);
+  const parsed = await responseBody(response);
+  if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+    }
+    throw new APIError(
+      parsed?.error || `Request failed with HTTP ${response.status}`,
+      {
+        status: response.status,
+        code: parsed?.error_code || 'REQUEST_FAILED',
+        correlationId: parsed?.correlation_id || '',
+      },
+    );
+  }
+  return payloadOf(parsed);
+}
+
+export async function apiGet(path, options = {}) {
+  return apiRequest(path, { method: 'GET', signal: options.signal });
+}
+
+export async function apiPost(path, body, options = {}) {
+  return apiRequest(path, { method: 'POST', body, ...options });
+}
+
+export async function apiPut(path, body, options = {}) {
+  return apiRequest(path, { method: 'PUT', body, ...options });
+}
+
+// Every write carries a fresh idempotency key; retries within one user
+// intent reuse the same key, so this helper is deliberately called once
+// per confirmed submit, not per fetch attempt.
+export function newIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Stable copy for the known HTTP/status-code families of the frozen
+// contract. Codes that stay English (SEPARATION_OF_DUTIES and friends)
+// are wire identifiers, not user text; the sentence around them is the
+// user-facing explanation.
+const CODE_COPY = {
+  SEPARATION_OF_DUTIES: '审批被拒：审批人必须不同于豁免请求人（职责分离）。',
+  WAIVER_TUPLE_MISMATCH: '豁免必须绑定该闸门当前的精确 SHA 与检查项。',
+  WAIVER_EXISTS: '该闸门与 SHA 已存在豁免，不能重复申请。',
+  WAIVER_STATE_CONFLICT: '豁免状态已被他人变更，请刷新后重试。',
+  WAIVER_NOT_FOUND: '豁免记录不存在或不在当前项目范围内。',
+  GATE_NOT_FOUND: '闸门快照不存在或不在当前项目范围内。',
+  WORK_ITEM_NOT_FOUND: '工作项不存在或不在当前项目范围内。',
+  MERGE_REQUEST_NOT_FOUND: '合并请求不存在或不在当前项目范围内。',
+  POLICY_WEAKENED: '项目策略只能加强、不能削弱公司基线。',
+  ROUTE_NOT_FOUND: '该接口在当前部署中未开放（可能未启用 PostgreSQL/OIDC 控制面）。',
+  REMOTE_WRITE_DISABLED: '远程写操作被服务端关闭（REMOTE_WRITE=false）。',
+};
+
+const STATUS_COPY = {
+  400: '请求参数不符合契约，请检查输入后重试。',
+  401: '登录状态已过期或缺失，请重新登录。',
+  403: '当前身份没有执行此操作的权限。',
+  404: '资源不存在，或不在你的项目可见范围内。',
+  409: '状态冲突：资源已被其他操作修改，请刷新后重试。',
+  412: '版本冲突：服务端已是新版本，请刷新后重试。',
+  422: '语义校验未通过，内容被拒绝且未落库。',
+  428: '缺少必需的前置条件（版本或幂等键），请刷新页面后重试。',
+  503: '依赖暂不可用或系统处于安全降级模式，请稍后重试。',
+};
+
 export function describeAPIError(error) {
-  if (!(error instanceof APIError)) return 'The service could not be reached. Check the backend and retry.';
+  if (!(error instanceof APIError)) {
+    return '无法连接服务，请确认后端运行状态后重试。';
+  }
+  if (CODE_COPY[error.code]) return CODE_COPY[error.code];
+  if (STATUS_COPY[error.status]) return STATUS_COPY[error.status];
   const details = [error.code];
   if (error.correlationId) details.push(`correlation ${error.correlationId}`);
-  return `${error.message} (${details.join(', ')})`;
+  return `${error.message}（${details.join(', ')}）`;
 }

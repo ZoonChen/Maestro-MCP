@@ -42,7 +42,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            tests/e2e/package-lock.json
 
       - name: Pin npm
         run: npm install --global npm@11.19.1
@@ -56,6 +58,11 @@ jobs:
           make test-race
           make vet
           make lint
+
+      - name: Install the Playwright browser for the console DOM specs
+        run: |
+          npm --prefix tests/e2e ci
+          cd tests/e2e && npx playwright install --with-deps chromium
 
       - name: Strict Playwright runtime and MCP smoke
         run: make e2e

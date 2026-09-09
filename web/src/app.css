@@ -416,3 +416,86 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   background: var(--accent); color: var(--bg-primary);
   border: none; border-radius: 4px;
 }
+
+/* ===== Governance console (M4-UI-001) ===== */
+.identity-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 16px; margin-bottom: 8px;
+  background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--text-secondary);
+}
+.identity-principal { font-weight: 600; color: var(--text-primary); }
+.identity-roles { list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; }
+
+.gov-page { padding: 16px 24px 32px; max-width: 1080px; }
+.gov-header { margin-bottom: 16px; }
+.gov-header h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.gov-lead { font-size: 13px; color: var(--text-secondary); max-width: 72ch; }
+.gov-note { font-size: 12px; color: var(--text-tertiary); margin-top: 6px; max-width: 72ch; }
+
+.gov-fieldset { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.gov-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); flex: 1; min-width: 220px; }
+.gov-field input, .gov-field select, .gov-field textarea {
+  font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-primary); color: var(--text-primary);
+}
+
+.gov-button {
+  padding: 6px 14px; font-size: 12px; cursor: pointer;
+  background: var(--bg-tertiary); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.gov-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.gov-button-primary { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+.gov-button-danger { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+.gov-button-small { padding: 2px 10px; }
+
+.gov-panel {
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-secondary); padding: 14px 16px; margin: 14px 0;
+}
+.gov-panel h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.gov-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+.gov-status { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+.gov-status-error { color: var(--red); }
+.gov-error { border: 1px solid var(--red); border-radius: 6px; background: var(--red-bg); padding: 10px 12px; margin: 10px 0; }
+.gov-empty { font-size: 13px; color: var(--text-tertiary); padding: 12px 0; }
+
+.gov-chip {
+  display: inline-block; padding: 1px 8px; font-size: 11px;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-tertiary); color: var(--text-secondary); white-space: nowrap;
+}
+.gov-chip-passed, .gov-chip-authoritative { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+.gov-chip-failed, .gov-chip-error { color: var(--red); border-color: var(--red); background: var(--red-bg); }
+.gov-chip-stale, .gov-chip-diagnostic { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-bg); }
+
+.gov-table-wrap { overflow-x: auto; margin: 12px 0; }
+.gov-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.gov-table th, .gov-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.gov-table th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+.gov-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+
+.gov-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 12px; }
+.gov-kv dt { color: var(--text-secondary); }
+.gov-kv dd { color: var(--text-primary); }
+
+.gov-pending-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.gov-pending-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 10px 14px; font-size: 13px;
+}
+
+.scenario-grid { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.scenario-card {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.scenario-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scenario-card-head h2 { font-size: 13px; font-weight: 600; }
+.scenario-prd { font-size: 11px; color: var(--text-tertiary); }
+.scenario-summary { font-size: 12px; color: var(--text-secondary); }
+.scenario-steps { margin-left: 18px; font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 2px; }
+.scenario-pending { font-size: 11px; color: var(--text-tertiary); }
+.scenario-link { align-self: flex-start; text-decoration: none; display: inline-block; }
