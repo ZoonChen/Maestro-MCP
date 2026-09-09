@@ -337,6 +337,31 @@
           }
         }
       }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producer_interval_seconds",
+        "redaction_version",
+        "platform_project_id"
+      ],
+      "properties": {
+        "producer_interval_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "redaction_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "platform_project_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
     }
   },
   "examples": [
@@ -389,6 +414,11 @@
         "trace_retention_days": 30,
         "audit_retention_days": 365,
         "otlp_endpoint": "https://otel.internal.example.com"
+      },
+      "telemetry": {
+        "producer_interval_seconds": 60,
+        "redaction_version": "telemetry-v3",
+        "platform_project_id": "018f7e00-0000-7000-8000-0000000000f0"
       }
     }
   ]

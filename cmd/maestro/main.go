@@ -748,6 +748,23 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		}
 	}
 
+	// M4-OBS-001 telemetry producer: the sampler mounts into the router
+	// middleware chain and the worker flushes aggregated windows plus the
+	// platform depth gauges (G2) into telemetry_aggregates. Absent
+	// telemetry section keeps both unstarted (honest degradation).
+	if cfg.Telemetry != nil {
+		sampler := handler.NewRequestSampler(handler.DefaultSamplerMaxKeys, handler.DefaultSamplerCapacity)
+		observability := pgStore.Observability()
+		options.TelemetryProducer = &app.TelemetryProducerOptions{
+			Sampler:           sampler,
+			Store:             observability,
+			Depths:            observability,
+			Interval:          time.Duration(cfg.Telemetry.ProducerIntervalSec) * time.Second,
+			RedactionVersion:  cfg.Telemetry.RedactionVersion,
+			PlatformProjectID: cfg.Telemetry.PlatformProjectID,
+		}
+	}
+
 	options.Dependencies = append(options.Dependencies, pgDependency{store: pgStore})
 	// The pool lives for the process lifetime; closing happens on exit.
 	return *options, nil
