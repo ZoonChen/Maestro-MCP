@@ -99,7 +99,7 @@ openapi_paths.each do |path|
   end
 end
 
-errors << "expected 30 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 30
+errors << "expected 31 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 31
 
 # The /auth protocol group (task brief E) is a separate spec: its write
 # surface is exactly one cookie-bound protocol operation (logout), which

@@ -147,6 +147,10 @@ type Config struct {
 	// SLO carries the optional snapshot policy; absent keeps the SLO
 	// endpoint unexposed (honest degradation, never invented numbers).
 	SLO *SLOConfig `yaml:"slo,omitempty"`
+	// Telemetry carries the optional in-process producer policy
+	// (M4-OBS-001); absent keeps the producer unstarted and the
+	// request path unsampled.
+	Telemetry *TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // BackupConfig mirrors the frozen config.schema.json `backup` section:
@@ -187,6 +191,18 @@ type SLOObjectiveConfig struct {
 	Unit            string  `yaml:"unit"`
 	LowerIsBetter   bool    `yaml:"lower_is_better"`
 	RunbookRef      string  `yaml:"runbook_ref"`
+}
+
+// TelemetryConfig mirrors the v3 `telemetry` section: the in-process
+// producer that flushes sampled request latencies and the platform
+// depth gauges into telemetry_aggregates (M4-OBS-001). The platform
+// project is where project-less requests and the platform gauges roll
+// up; it MUST reference an existing projects row (the telemetry
+// foreign key enforces it at flush time).
+type TelemetryConfig struct {
+	ProducerIntervalSec int    `yaml:"producer_interval_seconds"`
+	RedactionVersion    string `yaml:"redaction_version"`
+	PlatformProjectID   string `yaml:"platform_project_id"`
 }
 
 // DefaultConfig returns the safe M0 development baseline.
@@ -440,6 +456,9 @@ func (c *Config) Validate() error {
 	if err := c.validateSLO(); err != nil {
 		return err
 	}
+	if err := c.validateTelemetry(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -536,6 +555,30 @@ func (c *Config) ensureOIDC() *OIDCConfig {
 		c.OIDC = &OIDCConfig{}
 	}
 	return c.OIDC
+}
+
+// validateTelemetry enforces the frozen config.schema.json `telemetry`
+// bounds whenever the section carries values. The producer writes to
+// the PostgreSQL telemetry_aggregates table, so the section requires
+// the postgres driver — on SQLite it fails closed instead of silently
+// dropping every flush.
+func (c *Config) validateTelemetry() error {
+	if c.Telemetry == nil {
+		return nil
+	}
+	if !c.PostgresEnabled() {
+		return errors.New("telemetry requires the postgres driver (telemetry_aggregates is PostgreSQL-only)")
+	}
+	if c.Telemetry.ProducerIntervalSec < 1 || c.Telemetry.ProducerIntervalSec > 3600 {
+		return errors.New("telemetry.producer_interval_seconds must be between 1 and 3600")
+	}
+	if strings.TrimSpace(c.Telemetry.RedactionVersion) == "" {
+		return errors.New("telemetry.redaction_version must not be empty")
+	}
+	if strings.TrimSpace(c.Telemetry.PlatformProjectID) == "" {
+		return errors.New("telemetry.platform_project_id must not be empty")
+	}
+	return nil
 }
 
 // DatabaseDriver resolves the effective driver for composition roots. An

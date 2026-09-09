@@ -140,6 +140,8 @@ func dispatch(ctx context.Context, args []string, ioStreams streams) error {
 		return runMigrate(ctx, args[1:], ioStreams)
 	case "pg-import":
 		return runPGImport(ctx, args[1:], ioStreams)
+	case "eval-import":
+		return runEvalImport(ctx, args[1:], ioStreams)
 	case "doctor":
 		return runDoctor(ctx, args[1:], ioStreams)
 	case "version":
@@ -763,7 +765,25 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
 			SLO:           sloHandler,
 			DeadLetters:   handler.NewDeadLetterHandler(pgStore.Webhooks()),
+			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
 			Scope:         pgStore.Instances(),
+		}
+	}
+
+	// M4-OBS-001 telemetry producer: the sampler mounts into the router
+	// middleware chain and the worker flushes aggregated windows plus the
+	// platform depth gauges (G2) into telemetry_aggregates. Absent
+	// telemetry section keeps both unstarted (honest degradation).
+	if cfg.Telemetry != nil {
+		sampler := handler.NewRequestSampler(handler.DefaultSamplerMaxKeys, handler.DefaultSamplerCapacity)
+		observability := pgStore.Observability()
+		options.TelemetryProducer = &app.TelemetryProducerOptions{
+			Sampler:           sampler,
+			Store:             observability,
+			Depths:            observability,
+			Interval:          time.Duration(cfg.Telemetry.ProducerIntervalSec) * time.Second,
+			RedactionVersion:  cfg.Telemetry.RedactionVersion,
+			PlatformProjectID: cfg.Telemetry.PlatformProjectID,
 		}
 	}
 
@@ -1047,6 +1067,7 @@ Usage:
   maestro migrate up     [--config FILE] [--db PATH]
   maestro migrate revert [--config FILE] [--steps N]   (postgres, pre-cutover drill)
   maestro pg-import --sqlite PATH [--dry-run|--reconcile] [--report FILE] [--config FILE]
+  maestro eval-import --file run.jsonl --project UUID [--json] [--config FILE]   (postgres)
   maestro doctor  [--config FILE] [--db PATH] [--health-url URL] [--json]
   maestro version [--json]`)
 }

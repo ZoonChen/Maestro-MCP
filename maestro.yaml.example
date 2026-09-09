@@ -160,3 +160,26 @@ backup:
 #       unit: seconds
 #       lower_is_better: true
 #       runbook_ref: runbooks/webhook-pipeline-failure
+
+# Optional telemetry producer (absent keeps the producer unstarted and the
+# request path unsampled). The in-process sampler records route template,
+# method, status class and project scope only (the redaction allowlist IS
+# the sampling dimension); the producer flushes aggregated windows into
+# telemetry_aggregates each interval. Metric naming contract (the slo
+# section above references these exact strings):
+#   http_requests_total / http_requests_success  — availability SLI counts
+#     per project; success = status < 500 (5xx is the only failure class —
+#     auth denials and 429s are client-side outcomes, not unavailability)
+#   api_p95_latency_ms          — /api/* and /mcp request latency (ms)
+#   webhook_ingest_p95_latency_ms — the GitLab webhook receiver route (ms)
+#   inbox_lag_p95_seconds / outbox_lag_p95_seconds — backlog age percentiles
+#   webhook_inbox_depth / webhook_dlq_depth / webhook_outbox_pending — gauges
+# Requests without a project scope (and the platform gauges above) roll up
+# into platform_project_id, which MUST reference an existing project row;
+# alerting is frozen by observability-and-audit §11 (DLQ>0 critical,
+# inbox/outbox P95 lag >30s warning, runbook webhook-pipeline-failure).
+# Requires the postgres driver.
+# telemetry:
+#   producer_interval_seconds: 60
+#   redaction_version: "telemetry-v3"
+#   platform_project_id: "018f7e00-0000-7000-8000-0000000000f0"

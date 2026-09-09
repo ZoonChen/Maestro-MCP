@@ -17,6 +17,21 @@ type BoardHandler struct {
 	projectService  *service.ProjectService
 	worktreeService *service.WorktreeService
 	sessionService  *service.SessionService
+	platformDepths  PlatformDepthsProvider
+}
+
+// PlatformDepthsProvider exposes the platform backlog gauges the
+// telemetry producer samples (M4-OBS-001 / G2): webhook inbox
+// backlog, DLQ depth and outbox pending. Wired into
+// GET /api/v1/metrics by the composition root; nil omits the section.
+type PlatformDepthsProvider interface {
+	LatestPlatformDepths() store.PlatformDepths
+}
+
+// SetPlatformDepths mounts the telemetry producer's latest depth
+// snapshot into GET /api/v1/metrics (additive; existing keys intact).
+func (h *BoardHandler) SetPlatformDepths(provider PlatformDepthsProvider) {
+	h.platformDepths = provider
 }
 
 // NewBoardHandler creates a new BoardHandler with the given service dependencies.
@@ -167,15 +182,36 @@ func (h *BoardHandler) GetMetrics(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"total_projects":  len(projects),
-			"total_tasks":     totalTasks,
-			"tasks_by_status": tasksByStatus,
-			"total_sessions":  totalSessions,
-			"active_sessions": activeSessions,
-		},
-	})
+	payload := gin.H{
+		"total_projects":  len(projects),
+		"total_tasks":     totalTasks,
+		"tasks_by_status": tasksByStatus,
+		"total_sessions":  totalSessions,
+		"active_sessions": activeSessions,
+	}
+	if h.platformDepths != nil {
+		payload["platform"] = platformDepthsPayload(h.platformDepths.LatestPlatformDepths())
+	}
+	c.JSON(http.StatusOK, gin.H{"data": payload})
+}
+
+// platformDepthsPayload projects the sampled platform gauges onto the
+// metrics wire. Lag percentiles are null until a non-empty backlog
+// produced one — never a zero that would read as "no lag".
+func platformDepthsPayload(depths store.PlatformDepths) gin.H {
+	lag := func(value *float64) any {
+		if value == nil {
+			return nil
+		}
+		return *value
+	}
+	return gin.H{
+		"webhook_inbox_depth":    depths.InboxBacklog,
+		"webhook_dlq_depth":      depths.DLQDepth,
+		"webhook_outbox_pending": depths.OutboxPending,
+		"inbox_lag_p95_seconds":  lag(depths.InboxLagP95Seconds),
+		"outbox_lag_p95_seconds": lag(depths.OutboxLagP95Seconds),
+	}
 }
 
 // TriggerWorktreeGC handles POST /api/v1/projects/:id/worktrees/gc.

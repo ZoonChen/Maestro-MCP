@@ -43,6 +43,12 @@ type RouterOptions struct {
 	// (M2-QG-001) behind the same authorize decision as every /api/v1
 	// route; nil leaves them unexposed (non-PostgreSQL deployments).
 	Quality *QualityHandler
+
+	// RequestTelemetry is the M4-OBS-001 hot-path sampler; nil keeps
+	// the request path untouched. Mounted after MaxBodySize and CORS so
+	// every downstream outcome (rate limit, authentication, drain,
+	// remote-write, handler) lands in the sampled SLIs.
+	RequestTelemetry *RequestSampler
 }
 
 // IdentityMount is the frozen mounting contract between the router and the
@@ -114,6 +120,13 @@ func SetupRouter(
 
 	// CORS headers for cross-origin API consumers.
 	r.Use(CORS(opts.AllowedOrigins...))
+
+	// Request telemetry sampling (M4-OBS-001): route template, method,
+	// status class and derived project scope only — the redaction
+	// allowlist is the sampling dimension (OBS-RULE-003).
+	if opts.RequestTelemetry != nil {
+		r.Use(RequestTelemetryMiddleware(opts.RequestTelemetry))
+	}
 
 	// Rate limiting: 100 requests per minute per IP.
 	r.Use(RateLimit(100, time.Minute))
