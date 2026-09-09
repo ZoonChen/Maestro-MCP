@@ -60,7 +60,9 @@ jobs:
           make lint
 
       - name: Install the Playwright browser for the console DOM specs
-        run: npm --prefix tests/e2e exec -- playwright install --with-deps chromium
+        run: |
+          npm --prefix tests/e2e ci
+          cd tests/e2e && npx playwright install --with-deps chromium
 
       - name: Strict Playwright runtime and MCP smoke
         run: make e2e
