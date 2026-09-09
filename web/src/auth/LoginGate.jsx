@@ -18,8 +18,10 @@ function readCallbackError() {
 // The visual half of the login gate: probing / error / unauthenticated
 // states for one auth session. LoginGate keeps the classic wrap-children
 // behavior; AppWithAuth renders this view directly so it can also hand the
-// authenticated session to the console shell.
-export function AuthGateView({ config, session, retry }) {
+// authenticated session to the console shell. sessionLost marks the
+// mid-session degradation path (the API layer rejected the credential),
+// shown as a distinct notice instead of a silent swap to the login view.
+export function AuthGateView({ config, session, retry, sessionLost = false }) {
   const [callbackError] = useState(readCallbackError);
 
   if (session.status === 'probing') {
@@ -46,6 +48,9 @@ export function AuthGateView({ config, session, retry }) {
     <main class="auth-gate">
       <h1>Maestro 控制台</h1>
       <p>需要通过公司身份认证后访问治理控制台。</p>
+      {sessionLost ? (
+        <p role="alert">会话已过期或已被撤销，请重新登录；未保存的页面操作不会自动恢复。</p>
+      ) : null}
       {callbackError ? <p role="alert">登录未完成（{callbackError}），请重新登录。</p> : null}
       <button type="button" onClick={startLogin}>使用公司账号登录</button>
     </main>
