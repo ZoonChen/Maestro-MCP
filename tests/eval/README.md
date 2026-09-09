@@ -8,9 +8,11 @@ Agent 四层评测 harness 的 npm/TS 侧第一代：版本化数据集、determ
 
 ```bash
 npm --prefix tests/eval ci
-npm --prefix tests/eval test                       # 类型检查 + 全部单测（含 AJV 校验、digest 稳定性、判分器负测试）
+npm --prefix tests/eval test                       # 类型检查 + 全部单测（含 AJV 校验、digest 稳定性、判分器负测试、分片种子、覆盖校验）
 npm --prefix tests/eval run eval -- --dataset datasets/seed.json [--out <dir>] [--adapter mock]
+npm --prefix tests/eval run dataset-check          # 数据集覆盖校验（40/30/40/10 + 70/30；未达标 exit 1 列缺口）
 ```
+
 
 CLI 退出码 0 表示 harness 完整产出合规记录与报告；verdict 本身是数据，Gate 决策读 `report.json`。产物默认写入 `tests/eval/artifacts/run-<ts>/`（gitignored）：`records.jsonl`（每 trial 一行，冻结 wire）与 `report.json`。
 
@@ -20,6 +22,7 @@ CLI 退出码 0 表示 harness 完整产出合规记录与报告；verdict 本�
 |---|---|
 | `src/canonical.ts` | 规范化 JSON 序列化（键排序、无空白）与 `sha256:` digest |
 | `src/types.ts` | 四层/verdict/risk/scorer 词表、case 与 wire 记录类型、适配器接口 |
+| `src/dataset-coverage.ts` + `src/dataset-check.ts` | 数据集覆盖校验（权威 §4 的 40/30/40/10 与 70/30，缺口显式 FAIL） |
 | `src/dataset.ts` | 数据集加载 + fail-closed 校验（权威必填字段、约束文法闭合）+ digest |
 | `src/constraints.ts` | 轨迹约束文法（见下） |
 | `src/adapters/` | `mock`（脚本化确定性适配器）；`mcp-stdio` 为 M4 后续预留位 |
@@ -29,8 +32,10 @@ CLI 退出码 0 表示 harness 完整产出合规记录与报告；verdict 本�
 | `src/report.ts` | 汇总报告与 pass^k（与 Go `PassPowerK` 同公式） |
 | `src/runner.ts` | 编排：dataset → trials → adapter → guard → scorer → 记录 → 报告 |
 | `src/cli.ts` | CLI 入口 |
-| `datasets/seed.json` | 种子数据集（8 个示范 case 覆盖四层） |
-| `test/` | node:test 单测（digest 稳定性、数据集负测试、判分器、记录 fail-closed、报告手算、runner、e2e+AJV） |
+| `datasets/seed.json` | 种子数据集（8 个示范 case 覆盖四层；harness 冒烟用，不计入分片） |
+| `datasets/regression/`、`datasets/holdout/` | 数据集分片骨架（70/30；每层 ≥3 个示范种子，契约与缺口工单见 `datasets/README.md`） |
+| `scripts/roundtrip.sh` | PG 门控一条龙 Evidence：harness JSONL → `maestro eval-import` → VerdictCounts 读回比对 |
+| `test/` | node:test 单测（digest 稳定性、数据集负测试、判分器、记录 fail-closed、报告手算、runner、e2e+AJV、覆盖校验、分片种子） |
 
 ## 数据集格式
 
@@ -72,10 +77,38 @@ case 权威必填字段（评测权威 §7）+ 本 harness 追加的 `layer`（�
 
 `report.json`：样本数（trial/case 计数）、各层 pass 率、各层与总体 pooled pass^3、逐 case pass^3、verdict 计数、禁用动作观测清单（动作/次数/case）。pass^k = C(passes,k)/C(n,k)（k 次随机抽取全部通过的概率），连乘实现防溢出，与 Go `internal/eval.PassPowerK` 同语义；pass^1 即观察通过率；trial 数 < k 时为 `null`，不编造数值。
 
+## 入库与 round-trip（M4-EVAL-001 接线）
+
+harness 产出的 `records.jsonl` 是 `evaluation_records` 表的入库输入：
+
+```bash
+# 前置：PG 栈（compose 5434）、目标库已 migrate up、--project 指向已存在的 projects 行（表有 FK）
+MAESTRO_DB_DRIVER=postgres MAESTRO_DATABASE_DSN='postgres://…' \
+  maestro eval-import --file artifacts/run-<ts>/records.jsonl --project <uuid> [--json]
+```
+
+- **两阶段 fail-closed**：先整文件逐行解析（`internal/eval.ParseRecord`，镜像 schema 的闭合属性集）+ wire 校验，任何一行非法即整体拒绝（带行号），绝不半量入库。
+- **trial 消歧（入库投影）**：store 的唯一键是 `(run_id, case_id, layer)`，而 harness 对同一 case 的重复 trial 用同一 case_id——同键第 k 次出现存储为 `<case_id>#t<k>`（确定性、重导入幂等，摘要里 `trials_disambiguated` 计数）。消费侧按 `#t` 前缀归组即可还原场景。
+- **重复键聚合**：与库中既有键冲突记 `duplicates_skipped`，跳过不报错（append-only，幂等重放）。
+- **读回证据**：摘要（`--json`）带每个 run 的 `verdict_counts`（store `VerdictCounts` 读回）。
+
+一条龙验证（真实 harness → 入库 → 读回比对本地 report.json）：
+
+```bash
+MAESTRO_TEST_POSTGRES_DSN='postgres://maestro:maestro-local-dev@127.0.0.1:5434/maestro?sslmode=disable' \
+  ./tests/eval/scripts/roundtrip.sh     # ROUND-TRIP PASS / FAIL
+```
+
+Go 侧 PG 门控测试：`TestEvalImport*`（`cmd/maestro`，`MAESTRO_TEST_POSTGRES_DSN` 门控）覆盖合法/非法/重复/消歧四类行为，`TestEvalImportRoundTrip` 用 `cmd/maestro/testdata/eval/records.jsonl`（本 harness 真实产出）闭环同一断言。
+
+## 数据集分片与覆盖校验（H2 骨架）
+
+`datasets/regression/`（70% 固定回归）与 `datasets/holdout/`（30%，仅 QA/Security 可见）是正式 120 场景数据集的落盘骨架：每层 ≥3 个示范种子，层别标记为 case 的 `layer` 字段。`npm --prefix tests/eval run dataset-check` 按权威 §4 断言 40/30/40/10 与全局 70/30——**当前种子态显式 FAIL 并列出每层缺口**（这正是给 QA/Security 的撰写工单，见 `datasets/README.md`），不虚报完成。
+
 ## 边界与登记项（回集成会话）
 
-- 正式 120 场景数据集（40 质量/30 轨迹/40 安全/10 能力，70% 回归+30% holdout）、每关键场景 ≥3 trial 与 pass^3 ≥80% 门 —— 属后续任务。
+- 正式 120 场景数据集（40 质量/30 轨迹/40 安全/10 能力，70% 回归+30% holdout）、每关键场景 ≥3 trial 与 pass^3 ≥80% 门 —— 分片骨架与计数校验已就位（`dataset-check` 显式列缺口），正式内容撰写属 QA/Security 协作项。
 - LLM judge 校准（≥100 双标注样本，Cohen's kappa ≥0.70）——未实现，加载即拒绝。
-- JSONL → `evaluation_records` 入库接线：Go 侧 `internal/eval` + `Evaluation()` 存储已备，本 harness 产出的 JSONL 即入库输入，由集成会话裁决接线。
+- ~~JSONL → `evaluation_records` 入库接线~~ —— 已落地（`maestro eval-import`，见上文章库节；trial 消歧为入库投影，wire 与 store 均未改）。
 - `mcp-stdio` 真实适配器（驱动真实 Maestro MCP stdio 面）——M4 后续。
 - `Makefile` eval target 变更请求：建议 `eval: test-hygiene` + `$(NPM) --prefix tests/eval ci && $(NPM) --prefix tests/eval test`，由集成会话落。
