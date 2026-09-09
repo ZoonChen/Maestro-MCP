@@ -95,15 +95,23 @@
 6. **PR 落后会被 strict 保护 BLOCK**：main 前移后先 `gh pr update-branch <PR号>`（把 main 并入 PR 分支、等检查重跑）再合并；属主 UI 直合亦可（enforce_admins=false）。
 7. **诚实状态**：`partial/unverified` 是常态；只有 P6 收敛（远程 CI Evidence + 签署 + commit 绑定）才翻转。
 
-## 7. 分发清单（复制到新会话的开场输入）
+## 7. 分发清单
 
-| 顺序 | 会话 | 开场输入（粘贴给新会话的第一句） |
-|---|---|---|
-| 随时 | A | 读 `plans/prep/m4/brief-A-s6-eval.md`，从第 0 节 worktree 准备开始，按任务书执行。 |
-| 随时 | B | 读 `plans/prep/m4/brief-B-s6-console.md`，从第 0 节 worktree 准备开始，按任务书执行。 |
-| 认证后 | I | 读 `plans/prep/m4/brief-I-integration.md`，先执行 Phase 0 解锁合入，再做契约 PR。 |
-| #4 合入后 | C | 读 `plans/prep/m4/brief-C-s3-runbooks.md`，从第 0 节 worktree 准备开始，按任务书执行。 |
-| #4 合入后 | D | 读 `plans/prep/m4/brief-D-s4-webhook-drill.md`，从第 0 节 worktree 准备开始，按任务书执行。 |
+### 第一波（已完成，存档）
+
+A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
+
+### 第二波（2026-09-09 下发）
+
+| 顺序 | 会话 | 任务书 | 开场输入（粘贴给新会话的第一句） | 前提 |
+|---|---|---|---|---|
+| 1 | E | [brief-E-auth-backend.md](brief-E-auth-backend.md) | `读 plans/prep/m4/brief-E-auth-backend.md，从第 0 节 worktree 准备开始，按任务书执行。` | 无 |
+| 2 | F | [brief-F-telemetry.md](brief-F-telemetry.md) | `读 plans/prep/m4/brief-F-telemetry.md，从第 0 节 worktree 准备开始，按任务书执行。` | 无 |
+| 3 | G | [brief-G-pilot.md](brief-G-pilot.md) | `读 plans/prep/m4/brief-G-pilot.md，从第 0 节 worktree 准备开始，按任务书执行。` | 无 |
+| 4 | H | [brief-H-eval-ingest.md](brief-H-eval-ingest.md) | `读 plans/prep/m4/brief-H-eval-ingest.md，从第 0 节 worktree 准备开始，按任务书执行。` | 无 |
+| 5 | B2 | [brief-B2-console-gen2.md](brief-B2-console-gen2.md) | `读 plans/prep/m4/brief-B2-console-gen2.md，从第 0 节 worktree 准备开始，按任务书执行。` | **E 与 G 合入后** |
+
+E/F/G/H 无共享可改文件可四会话并行（E 占 handler/identity/store-auth，F 占 app/埋点/config-telemetry，G 占 pilot 存储/权限，H 占 cmd/tests-eval）。唯一触点：`docs/specs/schemas/config.schema.json` 为 E/F/G 共享（各加各段，后合并者解一行冲突，两条都保留）。
 
 ## 8. P4 收齐后的路径（预告，非本板范围）
 
