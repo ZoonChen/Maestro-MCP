@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -218,7 +220,19 @@ type visitorInfo struct {
 
 // RateLimit returns a Gin middleware that limits requests per IP.
 // maxRequests is the number of requests allowed within the window duration.
+//
+// MAESTRO_HTTP_RATE_LIMIT_PER_MINUTE may RAISE (never lower) the frozen
+// default for intensive non-production topologies that legitimately
+// share one client IP — the browser e2e suite drives a whole governance
+// console through 127.0.0.1. The env knob follows the operational
+// secret convention (MAESTRO_RUNNER_TOKEN_SECRET): read at the surface,
+// never in the config file, and the production default stays frozen.
 func RateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
+	if override := os.Getenv("MAESTRO_HTTP_RATE_LIMIT_PER_MINUTE"); override != "" {
+		if parsed, parseErr := strconv.Atoi(override); parseErr == nil && window == time.Minute && parsed > maxRequests {
+			maxRequests = parsed
+		}
+	}
 	tracker := &visitorTracker{
 		visitors:  make(map[string]*visitorInfo),
 		lastSweep: time.Now(),

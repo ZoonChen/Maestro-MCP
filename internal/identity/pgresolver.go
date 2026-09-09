@@ -44,3 +44,29 @@ func (r *StoreResolver) Resolve(ctx context.Context, issuer, subject string) (*m
 		ProjectMemberships: scoped,
 	}, nil
 }
+
+// ResolveByID rebuilds the principal for an established session user.
+// A suspended/removed user or a store failure resolves to an error —
+// never to a stale principal: the cookie path fails closed.
+func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.PrincipalContext, error) {
+	user, err := r.identities.GetUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: resolve session user: %w", err)
+	}
+	if user.Status != "active" {
+		return nil, fmt.Errorf("identity: session user is %q", user.Status)
+	}
+	memberships, err := r.identities.ListProjectMemberships(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: derive memberships: %w", err)
+	}
+	scoped := make(map[string]string, len(memberships))
+	for _, membership := range memberships {
+		scoped[membership.ProjectID] = membership.Role
+	}
+	return &model.PrincipalContext{
+		PrincipalID:        user.ID,
+		Type:               model.PrincipalTypeHuman,
+		ProjectMemberships: scoped,
+	}, nil
+}

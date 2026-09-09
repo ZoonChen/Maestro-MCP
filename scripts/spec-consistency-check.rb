@@ -99,7 +99,34 @@ openapi_paths.each do |path|
   end
 end
 
-errors << "expected 29 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 29
+errors << "expected 30 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 30
+
+# The /auth protocol group (task brief E) is a separate spec: its write
+# surface is exactly one cookie-bound protocol operation (logout), which
+# is deliberately NOT an RBAC permission-mapped business write. The pins
+# below keep that separation structural: one protocol write, session-
+# cookie bound, and no protocol operation may claim an RBAC permission.
+auth_spec_path = File.join(ROOT, "docs/specs/openapi/auth.yaml")
+auth_document = load_yaml(auth_spec_path)
+auth_write_operations = []
+auth_document.fetch("paths", {}).each do |route, path_item|
+  path_item.each do |method, operation|
+    next unless %w[post put patch delete].include?(method)
+    next unless operation.is_a?(Hash)
+    key = "#{File.basename(auth_spec_path)} #{method.upcase} #{route}"
+    auth_write_operations << [key, operation]
+    if operation["x-maestro-permission"]
+      errors << "#{key}: protocol operations must not declare RBAC permissions"
+    end
+  end
+end
+errors << "expected exactly 1 auth protocol write operation, got #{auth_write_operations.length}" unless auth_write_operations.length == 1
+logout_route, logout_operation = auth_write_operations.first || [nil, nil]
+if logout_operation
+  errors << "the protocol write must be POST /logout" unless logout_route.end_with?("POST /logout")
+  errors << "POST /logout must be session-cookie bound" unless logout_operation["x-maestro-protocol"] == "session-cookie"
+  errors << "POST /logout must audit auth.session.revoked" unless logout_operation["x-maestro-audit-event"] == "auth.session.revoked"
+end
 
 control = load_yaml(File.join(ROOT, "docs/specs/openapi/control-plane.yaml"))
 component_schemas = control.dig("components", "schemas") || {}

@@ -39,6 +39,10 @@ type qualityFixture struct {
 	viewerTK string
 	devTK    string
 	platTK   string
+	// adminPID is the admin subject's server-side principal id
+	// (issuer/subject under the static test resolver).
+	adminPID string
+	idpURL   string
 }
 
 func newQualityFixture(t *testing.T) *qualityFixture {
@@ -95,7 +99,9 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 	router.Use(mw.Authenticate)
 	RegisterControlPlane(router, ControlPlaneOptions{
 		Identity: mw, Quality: quality,
-		GitLab: NewGitLabHandler(pg.Instances()), Scope: pg.Instances(),
+		GitLab:      NewGitLabHandler(pg.Instances()),
+		DeadLetters: NewDeadLetterHandler(pg.Webhooks()),
+		Scope:       pg.Instances(),
 	})
 	return &qualityFixture{
 		router: router, db: db, pg: pg, quality: quality,
@@ -103,6 +109,8 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 		viewerTK: idp.signedToken(t, "viewer-1"),
 		devTK:    idp.signedToken(t, "dev-1"),
 		platTK:   idp.signedToken(t, "plat-1"),
+		adminPID: idp.server.URL + "/admin-1",
+		idpURL:   idp.server.URL,
 	}
 }
 

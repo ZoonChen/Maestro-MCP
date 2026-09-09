@@ -641,6 +641,39 @@ paths:
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '422': {$ref: '#/components/responses/Unprocessable'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /webhooks/dead-letters/{inbox_id}/replay:
+    parameters:
+      - {$ref: '#/components/parameters/InboxId'}
+    post:
+      tags: [GitLab]
+      operationId: replayDeadLetter
+      summary: Dual-approved replay of one quarantined webhook delivery
+      description: >-
+        Re-queues a dead-letter Inbox row under its ORIGINAL event identity:
+        no re-verification bypass and no side-effect duplication. The approver
+        identity is the authenticated principal; it must differ from
+        requested_by (runbook section 9 dual-person control). The requeue, the
+        approval and the audit row land in one transaction.
+      x-maestro-permission: gitlab.reconcile
+      x-maestro-audit-event: webhook.dead_letter.replayed
+      x-maestro-idempotency: quarantined-row-state-collapse
+      x-maestro-concurrency: single-row-transactional-guard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeadLetterReplay'}
+      responses:
+        '200':
+          description: Quarantined row re-queued under its original identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeadLetterReplayResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /projects/{project_id}/audit-export:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -831,6 +864,36 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/Evidence'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/work-items/{work_item_id}/waivers:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {$ref: '#/components/parameters/WorkItemId'}
+    get:
+      tags: [Quality]
+      operationId: listWorkItemWaivers
+      summary: List the Waiver lifecycle queue for a WorkItem
+      description: >-
+        Read-only queue view for HITL review: every requested, approved or
+        terminal Waiver with its live remaining validity window. Waiver
+        transitions stay on the frozen write endpoints.
+      responses:
+        '200':
+          description: Waiver queue entries with remaining validity windows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - {$ref: '#/components/schemas/Waiver'}
+                    - type: object
+                      additionalProperties: false
+                      required: [remaining_seconds]
+                      properties:
+                        remaining_seconds: {type: integer, format: int64, minimum: 0}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -1225,6 +1288,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/Identifier'}
+    InboxId:
+      name: inbox_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
     MergeRequestIid:
       name: merge_request_iid
       in: path
@@ -1621,6 +1689,36 @@ components:
         check: {type: string, minLength: 1, maxLength: 120}
         expires_at: {$ref: '#/components/schemas/Timestamp'}
         version: {$ref: '#/components/schemas/ResourceVersion'}
+    DeadLetterReplay:
+      type: object
+      additionalProperties: false
+      required: [requested_by, reason]
+      properties:
+        requested_by:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The principal who diagnosed and requested the replay.
+        approved_by:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >-
+            Optional; when present it must name the authenticated principal —
+            the server always derives the approver from the credential, never
+            the body.
+        reason:
+          type: string
+          minLength: 16
+          maxLength: 2000
+          description: Substantive justification recorded with the audit row.
+    DeadLetterReplayResult:
+      type: object
+      additionalProperties: false
+      required: [inbox_id, replayed]
+      properties:
+        inbox_id: {type: string, format: uuid}
+        replayed: {type: boolean, const: true}
     AuditChainExport:
       type: object
       additionalProperties: false

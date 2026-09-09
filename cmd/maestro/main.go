@@ -593,8 +593,29 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			_ = database.Close()
 			return *options, fail(exitUsage, "CONFIG_INVALID", verifierErr)
 		}
-		identityMiddleware = handler.NewOIDCMiddleware(policy, verifier, identity.NewStoreResolver(pgStore.Identities()))
+		storeResolver := identity.NewStoreResolver(pgStore.Identities())
+		identityMiddleware = handler.NewOIDCMiddleware(policy, verifier, storeResolver)
 		options.Identity = identityMiddleware.IdentityMount()
+
+		// Browser login (task brief E / UI-AUTH): with a resolved client
+		// secret the server can run the authorization-code exchange, so
+		// the /auth protocol endpoints mount and the cookie session
+		// becomes a first-class credential. Without the secret the
+		// deployment stays bearer-only — honest degradation, never a
+		// half-configured login.
+		if cfg.OIDC.ClientSecret != "" {
+			oidcClient, clientErr := identity.NewOIDCClient(cfg.OIDC.Issuer, cfg.OIDC.ClientID, cfg.OIDC.ClientSecret, nil)
+			if clientErr != nil {
+				_ = database.Close()
+				return *options, fail(exitUsage, "CONFIG_INVALID", clientErr)
+			}
+			identityMiddleware.WithBrowserSessions(pgStore.AuthSessions(), storeResolver, cfg.AllowedOrigins)
+			authEndpoints := handler.NewAuthEndpoints(oidcClient, verifier, storeResolver, storeResolver,
+				pgStore.AuthSessions(), cfg.AllowedOrigins).WithBearerProbe(identityMiddleware.BearerProbe())
+			options.Identity.RegisterRoutes = authEndpoints.RegisterRoutes
+		} else {
+			slog.Warn("MAESTRO_OIDC_CLIENT_SECRET not set; the /auth browser login endpoints stay unexposed")
+		}
 	}
 
 	// MCP tool authorization: when the identity layer is mounted, tool
@@ -741,6 +762,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			GitLab:        gitlabHandler,
 			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
 			SLO:           sloHandler,
+			DeadLetters:   handler.NewDeadLetterHandler(pgStore.Webhooks()),
 			Scope:         pgStore.Instances(),
 		}
 	}

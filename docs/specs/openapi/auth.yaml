@@ -1,0 +1,154 @@
+openapi: 3.1.0
+info:
+  title: Maestro Browser Auth Protocol API
+  version: 3.0.0
+  license:
+    name: Internal Proprietary
+    identifier: LicenseRef-Internal-Proprietary
+  description: >-
+    The /auth protocol group: the BFF half of the browser login (task brief E,
+    M4-UI-001 UI-AUTH; authority docs/security/identity-rbac.md section 2/7).
+    The server owns the OIDC Authorization Code + PKCE exchange against the
+    configured IdP; the browser holds no token — only an HttpOnly, Secure,
+    SameSite=Lax session cookie bound to a server-side opaque session. These
+    are PROTOCOL endpoints: they are not permission-mapped RBAC operations
+    (login and callback are anonymous protocol entries; logout is bound to
+    the session cookie), which is why they live in this protocol spec, not
+    control-plane.yaml. Endpoint responses for other callers (bearer REST)
+    are unaffected: a request with an Authorization header never consumes a
+    session cookie.
+servers:
+  - url: /auth
+tags:
+  - name: AuthProtocol
+    description: OIDC authorization-code login, session probe and logout
+paths:
+  /authorize:
+    get:
+      tags: [AuthProtocol]
+      operationId: startBrowserLogin
+      summary: Start the OIDC Authorization Code + PKCE login
+      description: >-
+        Validates the console return target against the exact server Origin
+        allowlist (no prefixes or wildcards), persists a one-shot handshake
+        (state hash + PKCE S256 verifier, 10-minute TTL), and 302s the
+        browser into the IdP authorization endpoint. The IdP round trip and
+        the code exchange are server-to-IdP legs the browser never sees.
+      x-maestro-protocol: anonymous-protocol-entry
+      parameters:
+        - name: redirect_uri
+          in: query
+          required: true
+          schema: {type: string, format: uri}
+          description: Absolute console URL to return to; its origin must match the allowlist exactly.
+        - name: state
+          in: query
+          required: false
+          schema: {type: string, maxLength: 200}
+          description: One-shot client return-state echoed back on failure redirects.
+      responses:
+        '302':
+          description: Redirect into the IdP authorization endpoint
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+              description: The IdP authorization URL with response_type=code, PKCE S256 challenge and server-held state.
+        '400':
+          description: redirect_uri origin is not allowlisted or malformed
+        '503':
+          description: The identity provider could not be reached for discovery
+  /callback:
+    get:
+      tags: [AuthProtocol]
+      operationId: completeBrowserLogin
+      summary: Finish the login and establish the BFF session
+      description: >-
+        Burns the one-shot state (unknown, expired or replayed states bounce
+        same-origin), exchanges the code with the PKCE verifier, verifies the
+        access token through the SAME frozen verifier chain as bearer
+        requests, resolves the server-side principal, and creates the opaque
+        session plus the HttpOnly cookie atomically with its audit row. Every
+        failure bounces back to the console with auth_error plus the client
+        return-state.
+      x-maestro-protocol: anonymous-protocol-entry
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema: {type: string}
+        - name: state
+          in: query
+          required: false
+          schema: {type: string}
+        - name: error
+          in: query
+          required: false
+          schema: {type: string}
+          description: IdP-reported error code, propagated to the console as auth_error.
+      responses:
+        '302':
+          description: Redirect to the allowlisted console URL with the session cookie set
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+            Set-Cookie:
+              schema:
+                type: string
+                description: maestro_session=...; HttpOnly; Secure; SameSite=Lax; Path=/
+  /session:
+    get:
+      tags: [AuthProtocol]
+      operationId: probeBrowserSession
+      summary: Probe the current console session
+      description: >-
+        200 with principal metadata for a valid cookie session (or, as an
+        identity echo only, for a caller presenting a valid bearer token —
+        no session is created or consumed by that path); 401 for no
+        credential, or an unknown, revoked or expired session; 404 when the
+        deployment exposes no /auth group (bearer-only). The session probe
+        is the console's only anonymous data call.
+      x-maestro-protocol: session-cookie
+      responses:
+        '200':
+          description: The authenticated console session
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BrowserSession'}
+        '401':
+          description: No session or the session is unknown, revoked or expired
+  /logout:
+    post:
+      tags: [AuthProtocol]
+      operationId: logoutBrowserSession
+      summary: Revoke the BFF session and clear the cookie
+      description: >-
+        Server-side revocation (terminal, audited atomically with the state
+        change) plus cookie clearing. Idempotent: an absent or unknown
+        cookie still answers 204 so the client can re-probe server truth.
+        Cross-origin calls are refused (CSRF boundary, same allowlist).
+      x-maestro-protocol: session-cookie
+      x-maestro-audit-event: auth.session.revoked
+      responses:
+        '204':
+          description: Session revoked (or none existed) and cookie cleared
+        '403':
+          description: Cross-origin session request refused by the CSRF boundary
+components:
+  schemas:
+    BrowserSession:
+      type: object
+      additionalProperties: false
+      required: [principal, roles, project_scope]
+      properties:
+        principal:
+          type: string
+          minLength: 1
+          description: Server-side principal id of the session user.
+        roles:
+          type: array
+          items: {type: string}
+          description: Distinct project roles currently held (re-resolved per request).
+        project_scope:
+          type: array
+          items: {type: string}
+          description: Project ids the principal currently holds membership in.

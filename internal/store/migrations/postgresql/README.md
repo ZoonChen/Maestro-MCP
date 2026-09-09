@@ -50,6 +50,7 @@
 8. `0010` M3 九表（`gitlab_pipeline_id`/`gitlab_job_id` bigint）：冻结 wire 的 pipeline_id/job_id 是整数，0004 建成 uuid 外键。数字列满足 wire 往返；uuid 外键回填仍留给对账期富化。
 11. `0013` M4 备份/WAL 恢复元数据 `backup_runs`（矩阵 M4-REL-001 规划项）：kind full/wal、状态机 running→completed→verified/failed；REL-RULE-004 表级化——verified 强制携带异机 restore 主机、checksum 匹配与业务 smoke 三项证据；`storage_ref` 仅允许 `env:MAESTRO_*` 引用（与 Webhook Secret 同纪律）。偏差：备份是控制面整库对象，不挂 project_id（遥测/审计按项目，备份按平台）；状态机方向由存储层守卫 UPDATE 承载，CHECK 只锁每状态形状。
 12. `0014` `evaluation_records` 补 `trajectory_constraints` jsonb 列：冻结 evaluation-record.schema.json 的 wire 字段在 0012 投影中缺列，不补则写入会静默丢字段；默认 `[]` 保持既有行兼容（P4 期间发现的投影缺口，随 S1 评测存储切片落地）。
+13. `0015` M4 浏览器 BFF 会话两表（任务书 E / M4-UI-001 UI-AUTH，权威：SEC-IDENTITY-RBAC §2/§7/§9）：`auth_login_requests`（OIDC 授权码握手的服务端 state——state 令牌只存 sha256 哈希、`consumed_at` 单次消费即 CSRF/重放边界、10 分钟过期）与 `auth_sessions`（不透明会话——cookie 令牌只存 sha256 哈希、`revoked_at` 终态撤销、有效期逐请求重查以传播撤销）。偏差：会话/登录请求生命周期未列入任何锚定卡表清单（M4-P4 补切片）；会话创建与撤销各在写事务内同步落 `audit_events`（`auth.session.created`/`auth.session.revoked`），满足"状态变更+审计原子"而非事后补记；绝对有效期 8 小时（安全文档未冻结 BFF 会话时长，登记为任务书 E 交接物决策项）。
 
 ## SQLite → PostgreSQL 导入映射表
 

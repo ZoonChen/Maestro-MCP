@@ -47,6 +47,8 @@ const IDP_IN_NETWORK_PORT = 8443;
 const IDP_ISSUER = `https://${IDP_NAME}:${IDP_IN_NETWORK_PORT}`;
 const PG_ALIAS = 'pg';
 const AUDIENCE = 'maestro-console-e2e';
+const OIDC_CLIENT_ID = 'maestro-console-e2e';
+const OIDC_CLIENT_SECRET = 'e2e-console-secret';
 const PG_PORT = 5434;
 const DB_NAME = 'maestro_ui_e2e';
 const PG_DSN = `postgres://maestro:maestro-local-dev@127.0.0.1:${PG_PORT}/${DB_NAME}?sslmode=disable`;
@@ -138,19 +140,111 @@ function materializeIdPKeys() {
 }
 
 const IDP_SERVER_JS = `#!/usr/bin/env node
+// A minimal but honest OIDC provider: discovery, JWKS, the browser-facing
+// /authorize (auto-consent — the human step), and the server-facing
+// /token endpoint that enforces client Basic auth and PKCE S256 before
+// issuing an ES256 access token in the RFC 7515 raw R||S form (what the
+// frozen verifier accepts since task brief E).
 const https = require('node:https');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const jwks = Buffer.from(process.env.JWKS_B64, 'base64').toString('utf8');
-const discovery = JSON.stringify({ issuer: process.env.ISSUER, jwks_uri: process.env.ISSUER + '/.well-known/jwks.json' });
+const discovery = JSON.stringify({
+  issuer: process.env.ISSUER,
+  jwks_uri: process.env.ISSUER + '/.well-known/jwks.json',
+  // The authorization endpoint is browser-reachable through the published
+  // host port; the token endpoint stays in-network for the maestro server.
+  authorization_endpoint: process.env.AUTHORIZATION_ENDPOINT,
+  token_endpoint: process.env.ISSUER + '/token',
+});
+const key = crypto.createPrivateKey(Buffer.from(process.env.PRIVATE_KEY_PEM_B64, 'base64').toString('utf8'));
+const pending = new Map();
+
+function readInteger(buf, offset) {
+  if (buf[offset] !== 0x02) throw new Error('expected INTEGER tag');
+  const len = buf[offset + 1];
+  let start = offset + 2;
+  const end = start + len;
+  while (buf[start] === 0 && end - start > 1) start++;
+  return { value: buf.subarray(start, end), next: end };
+}
+
+// DER ECDSA-Signature -> JWS fixed-width raw R||S (32+32 octets).
+function derToRaw(der) {
+  if (der[0] !== 0x30) throw new Error('expected SEQUENCE tag');
+  let offset = 2;
+  if (der[1] & 0x80) offset = 2 + (der[1] & 0x7f);
+  const r = readInteger(der, offset);
+  const s = readInteger(der, r.next);
+  const pad = (v) => { const out = Buffer.alloc(32); v.copy(out, 32 - v.length); return out; };
+  return Buffer.concat([pad(r.value), pad(s.value)]);
+}
+
+function mintAccessToken() {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const signingInput = [
+    encode({ alg: 'ES256', typ: 'JWT', kid: 'e2e-1' }),
+    encode({
+      iss: process.env.ISSUER, sub: process.env.LOGIN_SUBJECT,
+      aud: [process.env.AUDIENCE],
+      exp: now + 30 * 60, nbf: now - 5, iat: now, jti: crypto.randomUUID(),
+    }),
+  ].join('.');
+  const raw = derToRaw(crypto.createSign('SHA256').update(signingInput).sign(key));
+  return signingInput + '.' + raw.toString('base64url');
+}
+
 https.createServer(
   { key: fs.readFileSync('/certs/leaf-key.pem'), cert: fs.readFileSync('/certs/leaf.pem') },
   (request, response) => {
-    if (request.url.includes('openid-configuration')) {
+    const url = new URL(request.url, 'https://idp.invalid');
+    if (url.pathname.includes('openid-configuration')) {
       response.writeHead(200, { 'content-type': 'application/json' }).end(discovery);
       return;
     }
-    if (request.url.includes('jwks')) {
+    if (url.pathname.includes('jwks')) {
       response.writeHead(200, { 'content-type': 'application/json' }).end(jwks);
+      return;
+    }
+    if (url.pathname === '/authorize') {
+      const query = url.searchParams;
+      if (query.get('response_type') !== 'code' ||
+          query.get('client_id') !== process.env.CLIENT_ID ||
+          query.get('code_challenge_method') !== 'S256' ||
+          !query.get('code_challenge') || !query.get('state') || !query.get('redirect_uri')) {
+        response.writeHead(400).end('bad authorize request');
+        return;
+      }
+      const code = 'code-' + crypto.randomUUID();
+      pending.set(code, { challenge: query.get('code_challenge'), redirect: query.get('redirect_uri') });
+      const back = new URL(query.get('redirect_uri'));
+      back.searchParams.set('code', code);
+      back.searchParams.set('state', query.get('state'));
+      response.writeHead(302, { location: back.toString() }).end();
+      return;
+    }
+    if (url.pathname === '/token' && request.method === 'POST') {
+      const expected = 'Basic ' + Buffer.from(process.env.CLIENT_ID + ':' + process.env.CLIENT_SECRET).toString('base64');
+      if (request.headers.authorization !== expected) {
+        response.writeHead(401).end('{}');
+        return;
+      }
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        const form = new URLSearchParams(body);
+        const entry = pending.get(form.get('code'));
+        const digest = crypto.createHash('sha256').update(form.get('code_verifier') || '').digest('base64url');
+        if (form.get('grant_type') !== 'authorization_code' || !entry ||
+            form.get('redirect_uri') !== entry.redirect || digest !== entry.challenge) {
+          response.writeHead(400).end('{}');
+          return;
+        }
+        pending.delete(form.get('code'));
+        response.writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ access_token: mintAccessToken(), token_type: 'Bearer', expires_in: 900 }));
+      });
       return;
     }
     response.writeHead(404).end('{}');
@@ -165,6 +259,7 @@ async function startIdPContainer(): Promise<{ key: KeyObject; caCert: string }> 
   const jwks = JSON.stringify({ keys: [{ ...jwk, kid: 'e2e-1', use: 'sig', alg: 'ES256' }] });
   const serverJs = path.join(WORK_DIR, 'idp-server.cjs');
   fs.writeFileSync(serverJs, IDP_SERVER_JS);
+  const privateKeyPEM = privateKey.export({ type: 'sec1', format: 'pem' }).toString();
   execFileSync('docker', [
     'run', '-d', '--name', IDP_CONTAINER,
     '--network', E2E_NETWORK, '--network-alias', IDP_NAME,
@@ -173,6 +268,12 @@ async function startIdPContainer(): Promise<{ key: KeyObject; caCert: string }> 
     '-v', `${serverJs}:/srv/idp.cjs:ro`,
     '-e', `JWKS_B64=${Buffer.from(jwks).toString('base64')}`,
     '-e', `ISSUER=${IDP_ISSUER}`,
+    '-e', `AUTHORIZATION_ENDPOINT=https://localhost:${IDP_PORT}/authorize`,
+    '-e', `CLIENT_ID=${OIDC_CLIENT_ID}`,
+    '-e', `CLIENT_SECRET=${OIDC_CLIENT_SECRET}`,
+    '-e', `AUDIENCE=${AUDIENCE}`,
+    '-e', 'LOGIN_SUBJECT=ui-e2e-dev',
+    '-e', `PRIVATE_KEY_PEM_B64=${Buffer.from(privateKeyPEM).toString('base64')}`,
     'node:22-alpine',
     'node', '/srv/idp.cjs',
   ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
@@ -198,13 +299,27 @@ function mintToken(key: KeyObject, subject: string): string {
   };
   const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const signingInput = `${encode(header)}.${encode(claims)}`;
-  // DER-encoded ECDSA signature: the frozen verifier verifies with
-  // ecdsa.VerifyASN1, NOT the RFC 7515 raw R||S form. Standard OIDC
-  // providers sign ES256 access tokens raw — a real-IdP interop gap
-  // registered in the session handoff; this minter matches the current
-  // implementation so the suite exercises today's truth.
-  const signature = createSign('SHA256').update(signingInput).sign(key);
-  return `${signingInput}.${Buffer.from(signature).toString('base64url')}`;
+  // RFC 7515 raw R||S (fixed-width 32+32): node:crypto signs DER, the
+  // wire form is the stripped, zero-padded integer concatenation.
+  const der = createSign('SHA256').update(signingInput).sign(key);
+  const integers: Buffer[] = [];
+  let offset = der[1] & 0x80 ? 2 + (der[1] & 0x7f) : 2;
+  for (let index = 0; index < 2; index++) {
+    if (der[offset] !== 0x02) throw new Error('DER INTEGER tag expected');
+    const length = der[offset + 1];
+    let start = offset + 2;
+    const end = start + length;
+    while (der[start] === 0 && end - start > 1) start++;
+    integers.push(der.subarray(start, end));
+    offset = end;
+  }
+  const pad = (value: Buffer) => {
+    const out = Buffer.alloc(32);
+    value.copy(out, 32 - value.length);
+    return out;
+  };
+  const raw = Buffer.concat([pad(integers[0]), pad(integers[1])]);
+  return `${signingInput}.${raw.toString('base64url')}`;
 }
 
 // --- Seed data (mirrors the PG-gated Go handler fixtures) ---
@@ -263,6 +378,15 @@ function startGovernanceServer(caCert: string): void {
     '-e', 'MAESTRO_OIDC_CLIENT_ID=maestro-console-e2e',
     '-e', 'MAESTRO_OIDC_CLIENT_SECRET_REF=env:e2e',
     '-e', `MAESTRO_OIDC_AUDIENCE=${AUDIENCE}`,
+    // The resolved secret mounts the /auth browser-login endpoints and
+    // arms the cookie session credential (task brief E).
+    '-e', `MAESTRO_OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}`,
+    // The cookie CSRF boundary: the console origin exactly.
+    '-e', `MAESTRO_ALLOWED_ORIGINS=${GOV_ORIGIN}`,
+    // The whole serial suite shares one client IP (127.0.0.1): raise the
+    // per-IP limiter for this scratch deployment only (the frozen
+    // default stays untouched in production).
+    '-e', 'MAESTRO_HTTP_RATE_LIMIT_PER_MINUTE=10000',
     // The waiver lifecycle is the whole point of this suite: the engine
     // gate for mutating remote requests must be on for this scratch
     // instance (each run gets a fresh database and tokens).
@@ -526,16 +650,75 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
     }
   });
 
-  test('anonymous access is refused at the transport layer on the OIDC deployment', async ({ request }, testInfo) => {
+  test('anonymous shell loads, anonymous data stays 401 (BFF pattern)', async ({ request }, testInfo) => {
     requireGovernance(testInfo);
-    // The frozen /auth protocol routes are not implemented yet, so the
-    // browser session cannot be established anonymously: the dashboard
-    // document itself is protected. Registered as a backend handoff.
-    const anonymous = await request.get(`${GOV_ORIGIN}/dashboard`, {
+    // The console shell is the login page's own host surface: anonymous
+    // by design (task brief E). Every data call still authenticates.
+    // The project fixture injects a bearer header; override it away so
+    // these stay real anonymous requests.
+    const shell = await request.get(`${GOV_ORIGIN}/dashboard`, {
       headers: { Authorization: '' },
     });
-    expect(anonymous.status()).toBe(401);
-    const payload = await anonymous.json();
+    expect(shell.status()).toBe(200);
+    const data = await request.get(`${GOV_ORIGIN}/api/v1/projects`, {
+      headers: { Authorization: '' },
+    });
+    expect(data.status()).toBe(401);
+    const payload = await data.json();
     expect(payload.error_code).toBe('AUTH_REQUIRED');
+  });
+
+  test('real OIDC browser login establishes and revokes the console session', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // No bearer header anywhere: the ONLY credential is the HttpOnly
+    // cookie the /auth flow mints. The IdP serves its authorization
+    // endpoint over a self-signed TLS cert published on localhost, so
+    // this context ignores TLS errors for that origin.
+    const context = await browser.newContext({
+      baseURL: GOV_ORIGIN,
+      ignoreHTTPSErrors: true,
+      // Neutralize the project-level bearer injection: this flow's ONLY
+      // credential is the HttpOnly cookie (a stray Authorization header
+      // would take precedence over it at the middleware and poison the
+      // console's data calls).
+      extraHTTPHeaders: { Authorization: '' },
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto('/dashboard');
+      await expect(page.locator('.auth-gate')).toBeVisible();
+      await page.getByRole('button', { name: '使用公司账号登录' }).click();
+
+      // authorize 302 -> IdP auto-consent 302 -> callback -> console.
+      await expect(page.locator('.app')).toBeVisible();
+      const identity = page.locator('.identity-bar[data-auth="authenticated"]');
+      await expect(identity).toBeVisible();
+      await expect(identity.locator('.identity-principal')).toHaveText(IDS.userDev);
+      await expect(identity.locator('.identity-roles li')).toContainText('developer');
+
+      // The cookie is a first-class credential on the data surfaces.
+      // Probe from INSIDE the page: the Secure cookie travels to the
+      // trustworthy 127.0.0.1 origin in the browser, which the node-side
+      // request context is not.
+      const session = await page.evaluate(async () => {
+        const response = await fetch('/auth/session', { headers: { Accept: 'application/json' } });
+        return { status: response.status, body: response.ok ? await response.json() : null };
+      });
+      expect(session.status).toBe(200);
+      expect(session.body.principal).toBe(IDS.userDev);
+      expect(session.body.roles).toContain('developer');
+      expect(session.body.project_scope).toContain(IDS.project);
+
+      // Logout revokes server-side; the console falls back to the gate.
+      await page.getByRole('button', { name: '退出登录' }).click();
+      await expect(page.locator('.auth-gate')).toBeVisible();
+      const afterLogout = await page.evaluate(async () => {
+        const response = await fetch('/auth/session', { headers: { Accept: 'application/json' } });
+        return response.status;
+      });
+      expect(afterLogout).toBe(401);
+    } finally {
+      await context.close();
+    }
   });
 });
