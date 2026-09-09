@@ -741,6 +741,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			GitLab:        gitlabHandler,
 			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
 			SLO:           sloHandler,
+			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
 			Scope:         pgStore.Instances(),
 		}
 	}
