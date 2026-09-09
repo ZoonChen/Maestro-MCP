@@ -46,6 +46,12 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/slo-snapshot": {
 		http.MethodGet: "project.read",
 	},
+	"/api/v3/projects/:pid/pilot-flags": {
+		http.MethodGet: "pilot.read",
+	},
+	"/api/v3/projects/:pid/pilot-flags/:flag": {
+		http.MethodPut: "pilot.write",
+	},
 	"/api/v3/projects/:pid/quality-policy": {
 		http.MethodGet: "quality.read",
 		http.MethodPut: "project_policy.strengthen",
@@ -74,6 +80,7 @@ type ControlPlaneOptions struct {
 	GitLab        *GitLabHandler
 	Observability *ObservabilityHandler
 	SLO           *SLOSnapshotHandler
+	Pilot         *PilotHandler
 	Scope         ScopeGuard
 }
 
@@ -121,6 +128,10 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	}
 	if options.SLO != nil {
 		group.GET("/projects/:pid/slo-snapshot", options.SLO.GetSLOSnapshot)
+	}
+	if options.Pilot != nil {
+		group.GET("/projects/:pid/pilot-flags", options.Pilot.ListPilotFlags)
+		group.PUT("/projects/:pid/pilot-flags/:flag", options.Pilot.PutPilotFlag)
 	}
 }
 
