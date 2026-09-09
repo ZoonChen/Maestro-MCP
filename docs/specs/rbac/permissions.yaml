@@ -16,6 +16,8 @@ roles:
       - company_policy.manage
       - security.emergency_stop
       - audit.export
+      - pilot.read
+      - pilot.write
     deny:
       - project.code.read_by_role_only
   project_admin:
@@ -32,6 +34,7 @@ roles:
       - waiver.request
       - waiver.revoke
       - gitlab.reconcile
+      - pilot.read
     conditions:
       project.create:
         all:
@@ -58,6 +61,7 @@ roles:
       - remediation_run.stop
       - agent.progress.report
       - gitlab.merge_request.create
+      - pilot.read
     deny:
       - quality_policy.modify
       - protected_branch.merge
@@ -72,6 +76,7 @@ roles:
       - quality.read
       - gitlab.status.read
       - gitlab.merge_request.create
+      - pilot.read
     deny:
       - verification.submit_own
       - waiver.approve
@@ -83,6 +88,7 @@ roles:
       - quality.read
       - verification.claim
       - verification.submit
+      - pilot.read
     conditions:
       verification.submit:
         all:
@@ -96,6 +102,7 @@ roles:
       - work_item.read
       - quality.read
       - gitlab.status.read
+      - pilot.read
     deny:
       - "*.write"
 functional_approvers:

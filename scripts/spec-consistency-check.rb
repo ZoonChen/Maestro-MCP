@@ -99,7 +99,7 @@ openapi_paths.each do |path|
   end
 end
 
-errors << "expected 29 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 29
+errors << "expected 30 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 30
 
 control = load_yaml(File.join(ROOT, "docs/specs/openapi/control-plane.yaml"))
 component_schemas = control.dig("components", "schemas") || {}

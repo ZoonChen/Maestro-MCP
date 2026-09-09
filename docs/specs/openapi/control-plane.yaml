@@ -738,6 +738,76 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /projects/{project_id}/pilot-flags:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Pilot]
+      operationId: listPilotFlags
+      summary: List the project's pilot rollout flags
+      description: >
+        M4-PILOT-001 rollout surface: every flag of the project with its
+        frozen stage (off/shadow/gray/full/rolled_back), the gray
+        percentage (zero outside gray) and the last recorded decision.
+        Project membership roles hold pilot.read; the rollout lifecycle
+        guard lives on the put operation.
+      x-maestro-permission: pilot.read
+      responses:
+        '200':
+          description: The project's rollout flags in flag order
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotFlagList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/pilot-flags/{flag}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - {$ref: '#/components/parameters/PilotFlagName'}
+    put:
+      tags: [Pilot]
+      operationId: putPilotFlag
+      summary: Record one pilot rollout decision
+      description: >
+        Records one rollout decision for the flag. The lifecycle guard
+        is frozen: a new flag registers at off or starts at shadow;
+        shadow → gray (with the percentage) → gray → full; any active
+        stage may move to the terminal rolled_back. Illegal moves are
+        409; invalid fields (reason shorter than 16 characters, a
+        percentage outside gray) are 422; an identical replay is an
+        idempotent no-op that audits nothing. Every recorded transition
+        writes the pilot.decision.recorded audit row in the same
+        transaction; the actor is the server-side principal and never
+        travels in the body.
+      x-maestro-permission: pilot.write
+      x-maestro-audit-event: pilot.decision.recorded
+      x-maestro-idempotency: required-header
+      x-maestro-concurrency: stage-transition-guard
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PilotFlagPut'}
+      responses:
+        '200':
+          description: Decision recorded or identical replay (no-op)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotFlag'}
+        '201':
+          description: Flag registered at its first recorded stage
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotFlag'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /projects/{project_id}/quality-policy:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -1240,6 +1310,12 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/Identifier'}
+    PilotFlagName:
+      name: flag
+      in: path
+      required: true
+      description: The rollout flag's stable name (one per project).
+      schema: {type: string, minLength: 1, maxLength: 128}
     IntegrationRunId:
       name: integration_run_id
       in: path
@@ -1691,6 +1767,51 @@ components:
       required: [verified]
       properties:
         verified: {type: boolean}
+    PilotStage:
+      type: string
+      description: >-
+        The frozen rollout lifecycle: off → shadow → gray → full;
+        rolled_back is the terminal stop and every active stage may move
+        there directly (the kill switch).
+      enum: [off, shadow, gray, full, rolled_back]
+    PilotFlag:
+      type: object
+      additionalProperties: false
+      required: [flag, stage, gray_percent, changed_by, reason, created_at, updated_at]
+      properties:
+        flag: {type: string, minLength: 1, maxLength: 128}
+        stage: {$ref: '#/components/schemas/PilotStage'}
+        gray_percent: {type: integer, minimum: 0, maximum: 100}
+        changed_by: {type: string, minLength: 1, maxLength: 255}
+        reason: {type: string, minLength: 16, maxLength: 2000}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    PilotFlagPut:
+      type: object
+      additionalProperties: false
+      required: [stage, reason]
+      properties:
+        stage: {$ref: '#/components/schemas/PilotStage'}
+        gray_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 0
+          description: Only meaningful with the gray stage; zero elsewhere.
+        reason:
+          type: string
+          minLength: 16
+          maxLength: 2000
+          description: The substantive rollout rationale recorded in the audit trail.
+    PilotFlagList:
+      type: object
+      additionalProperties: false
+      required: [project_id, flags]
+      properties:
+        project_id: {type: string, format: uuid}
+        flags:
+          type: array
+          items: {$ref: '#/components/schemas/PilotFlag'}
     WaiverRequest:
       type: object
       additionalProperties: false
