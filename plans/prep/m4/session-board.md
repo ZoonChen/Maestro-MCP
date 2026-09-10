@@ -121,8 +121,9 @@ owner 三决策（2026-09-09）：Java+Vue 双仓为试点对象（权威 MR 随
 | 3 | J3 | brief-J3-jira-connector.md（锚定/镜像/对账，按蓝图 §1.2） | 无 |
 | 4 | J2b | brief-J2b-workgraph-protocol.md（拆解协议/封板/聚合） | **J2a 合入后** |
 | 5 | J2c | brief-J2c-workgraph-surface.md（MCP 工具 19→24 + 控制台） | **J2a/J2b 合入后** |
-| 6 | P5a | brief-P5a-pilot-prep.md（权威 MR/双仓/Profiles/存量摄取/flags=shadow） | **W4.5 全合入后** |
-| 7 | P5b | brief-P5b-poc-governed.md（PoC 0→1 全链路首演） | **P5a 后** |
+| 6 | J4 | brief-J4-permission-families.md（asset/workgraph 权限族+三职能授权+seal 终态；任务书随 #106 入库） | 与 P5a 并行，**P5b 前必须合入** |
+| 7 | P5a | brief-P5a-pilot-prep.md（权威 MR/双仓/Profiles/存量摄取/flags=shadow） | **W4.5 全合入后**（已满足） |
+| 8 | P5b | brief-P5b-poc-governed.md（PoC 0→1 全链路首演） | **P5a + J4 后** |
 
 试点全程按 `plans/prep/pilot/PLAYBOOK.md` 七阶段执行；设计与中间产物的标准化资产治理见 `ARTIFACT-STANDARDS.md`（J2a 台账语义依据）；十角色工作流见 `ROLE-CATALOG.md`；企业架构四域（SoR/等保/运行/组织）见 `SOLUTION-BLUEPRINT.md`（含 [待评审] 块，评审人已标注）。
 
