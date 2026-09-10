@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # Work Graph 数据模型
 
-> 落地状态（2026-09-10，随 ADR-009 批准与 J2a 切片）：迁移 0017 落地四类关系分表（`work_nodes` 邻接承载 contains、`work_dependencies` 承载 requires、`node_artifact_flows` 承载 consumes/produces、`node_lineage` 承载血缘）、封板不可变（`plan_revisions` 封板后触发器禁改、`work_node_revisions` 仅插入）、图/节点 CAS、资产台账（`assets` + `asset_gate_bindings`）与 `maestro asset-intake` 存量摄取命令。未落地：拆解协议与封板编排、Intent 层表（business_problems / outcome_contracts / capabilities）、ExecutionAttempt/SessionBinding 五元组绑定、聚合纯函数与调度（以上 J2b）；MCP 工具与控制台面（J2c）。既有平面路径并存：Task 的 ParentTaskID 与单值 RelationType 不动，Feature/Task 切换写入是后续契约仪式的独立决策。
+> 落地状态（2026-09-10，随 ADR-009 批准与 J2a/J2b 切片）：迁移 0017 落地四类关系分表（`work_nodes` 邻接承载 contains、`work_dependencies` 承载 requires、`node_artifact_flows` 承载 consumes/produces、`node_lineage` 承载血缘）、封板不可变（`plan_revisions` 封板后触发器禁改、`work_node_revisions` 仅插入）、图/节点 CAS、资产台账（`assets` + `asset_gate_bindings`）与 `maestro asset-intake` 存量摄取命令。迁移 0019（J2b）落地 Intent 层四表（`business_problems`/`outcome_contracts`/`capabilities`+links/`work_plan_intents`）、`work_patterns`（版本化拆解模板）、`decomposition_proposals`（协议台账：稳定错误码 WGP-VS/CY/BU/RS 随拒绝持久化）与 `execution_attempts`（五元组绑定触发器不可变、单活跃 Attempt 部分唯一索引、retry_of 重试血缘、Lease 围栏列）；重规划=新 Revision（spec 变更节点复位、旧 Attempt 钉住旧 NodeRevision+spec_digest）；聚合纯函数与取消投影在 `internal/workgraph`（性质测试锁定幂等重放/顺序无关/证据 fail-closed）。未落地：MCP 工具与控制台面（J2c）、三级并发配额与背压（见 work-graph-scheduler.md 未实现面登记）。既有平面路径并存：Task 的 ParentTaskID 与单值 RelationType 不动，Feature/Task 切换写入是后续契约仪式的独立决策。
 
 ## 1. 目标与非目标
 
@@ -52,7 +52,7 @@ erDiagram
   EVIDENCE }o--o{ EVALUATION_RUN : evaluated_by
 ```
 
-上图为目标全景；0017 落地映射：WORK_PLAN→`work_plans`、PLAN_REVISION→`plan_revisions`、WORK_NODE→`work_nodes`、WORK_NODE_REVISION→`work_node_revisions`、WORK_DEPENDENCY→`work_dependencies`、ARTIFACT/ARTIFACT_CONTRACT 的试点投影→`assets`（台账）与 `node_artifact_flows`（产物流边）、血缘分表→`node_lineage`、平面 WorkItem 的 Gate 消费桥→`asset_gate_bindings`。BUSINESS_PROBLEM/OUTCOME_CONTRACT/CAPABILITY/EXECUTION_ATTEMPT/SESSION_BINDING/EVIDENCE 关联表随 J2b/J2c。
+上图为目标全景；0017/0019 落地映射：WORK_PLAN→`work_plans`、PLAN_REVISION→`plan_revisions`、WORK_NODE→`work_nodes`、WORK_NODE_REVISION→`work_node_revisions`、WORK_DEPENDENCY→`work_dependencies`、ARTIFACT/ARTIFACT_CONTRACT 的试点投影→`assets`（台账）与 `node_artifact_flows`（产物流边）、血缘分表→`node_lineage`、平面 WorkItem 的 Gate 消费桥→`asset_gate_bindings`、BUSINESS_PROBLEM/OUTCOME_CONTRACT/CAPABILITY/PROBLEM_CAPABILITY_LINK→`business_problems`/`outcome_contracts`/`capabilities`/`problem_capability_links`（0019，主绑定 `work_plan_intents` 每 plan 唯一）、EXECUTION_ATTEMPT→`execution_attempts`（0019，五元组+Lease 围栏）。EVIDENCE/EVALUATION_RUN 关联表随 J2c/评测面。
 
 事务写序：校验输入与授权 → 图/节点版本 CAS → 业务行 → AuditEvent → OutboxEvent → commit；外部副作用只能由 commit 后 dispatcher 执行。
 
@@ -80,22 +80,24 @@ erDiagram
 - `WGM-INV-014`：supersede 链单后继——同一 (asset_id, version) 至多被一个后继版本替换。
 - `WGM-INV-015`：locked_gate 消费 fail-closed——制品非 approved、digest 与绑定不一致或绑定已 stale 时 WorkItem 不可领取；制品 supersede 自动使下游绑定 stale。
 
-0017 执行层映射（双层机检：数据库约束/触发器 + 应用守卫）：
+0017/0019 执行层映射（双层机检：数据库约束/触发器 + 应用守卫）：
 
-| 不变量 | 0017 执行层 | 备注 |
+| 不变量 | 执行层 | 备注 |
 | --- | --- | --- |
 | WGM-INV-001 | `UNIQUE NULLS NOT DISTINCT (plan_id, parent_node_id, slot_key)` + 应用守卫 | 根与非根同约束 |
 | WGM-INV-002 | 触发器禁改 `parent_node_id`/`node_type`/`slot_key` | 边同 plan 由外键结构保证 |
-| WGM-INV-003 | 应用层环检测（`ErrCircularDependency`） | PG 约束不可表达 DAG 无环，已知边界 |
-| WGM-INV-004 | 封板校验（应用层） | J2b 拆解协议强化为端口级 |
-| WGM-INV-005 | 既有 `one_active_lease` 部分唯一索引（平面路径） | 图路径 Attempt 随 J2b |
-| WGM-INV-006/010/011 | 未落地 | J2b（Attempt 五元组/聚合纯函数/跨计划快照） |
-| WGM-INV-007 | `node_lineage.kind` CHECK + 应用守卫 | retry_of 随 Attempt 表 J2b |
+| WGM-INV-003 | 应用层环检测（`ErrCircularDependency`，J2b 提案级 DAG 校验 + 边级递归 CTE 复检） | PG 约束不可表达 DAG 无环，已知边界 |
+| WGM-INV-004 | 封板校验（应用层）+ J2b 提案级 required_inputs 端口绑定（WGP-RS-004，仅 consumes 满足） | |
+| WGM-INV-005 | 平面路径 `one_active_lease` 部分唯一索引；图路径 `uniq_execution_attempts_active`（node WHERE running，0019） | |
+| WGM-INV-006 | `execution_attempts` 绑定列触发器不可变（0019）：node_revision/spec_digest/principal/role/session/worker/worktree/context_digest | 恢复只能续接原绑定 |
+| WGM-INV-007 | `node_lineage.kind` CHECK + 应用守卫；Attempt 级 `retry_of_attempt_id`（0019） | 重试=新 Attempt 行 |
 | WGM-INV-008 | 触发器：`plan_revisions` 封板后禁 UPDATE/DELETE；`work_node_revisions` 全程仅插入 | |
-| WGM-INV-009 | 资产 supersede→绑定 stale（同事务）；SHA/policy 漂移走 `gate_snapshots` stale | |
+| WGM-INV-009 | 资产 supersede→绑定 stale（同事务）；SHA/policy 漂移走 `gate_snapshots` stale；重规划 spec 变更→节点复位+下游就绪阻断（J2b） | |
+| WGM-INV-010 | 聚合纯函数 `internal/workgraph.Aggregate`：证据缺位 fail-closed 至 needs_human（性质测试锁定） | Evidence 行级关联随 J2c |
+| WGM-INV-011 | 未落地（跨计划只导入不可变快照的设计约束已由 plan 内复合外键承载：实时跨计划边不可能存在） | 快照导入面后续切片 |
 | WGM-INV-012 | 应用层单事务模式（状态行+审计行+outbox 同 commit） | |
 | WGM-INV-013/014 | 状态 CHECK、内容列不可变触发器、`supersedes_ref` 部分唯一索引 | |
-| WGM-INV-015 | 领取查询 fail-closed + `asset_gate_bindings.status` | |
+| WGM-INV-015 | 领取查询 fail-closed + `asset_gate_bindings.status`（平面）；图路径 consumes 资产非 approved 即跳过（J2b） | |
 
 ## 7. 字段、配置和格式校验
 
@@ -123,11 +125,11 @@ ContextSet 记录文件白名单、token 预算与 digest；ResultCapsule 只含
 - `TC-WGM-002`：sealed Revision 不可变（触发器拒绝 UPDATE/DELETE）；CAS 冲突整体失败 → J2a PG 门控。
 - `TC-WGM-003`：上游制品 supersede 后下游绑定 stale 且领取 fail-closed → J2a PG 门控（`postgres_assets_test.go`）。
 - `TC-WGM-004`：迁移中语义不明的 ParentTaskID 进入 needs_reconcile，不产生猜测边 → contract 切片（后续）。
-- `TC-WGM-005`：Attempt 绑定五元组完整且恢复后不变 → J2b。
+- `TC-WGM-005`：Attempt 绑定五元组完整且恢复后不变 → J2b PG 门控（`postgres_workgraph_protocol_test.go`：绑定列触发器拒绝篡改、重规划后旧 Attempt 钉住原 NodeRevision+spec_digest）。
 - `TC-WGM-006`：台账机检拒绝族（WGM-GATE-003）→ J2a PG 门控。
 
 阶段任务与追踪矩阵行按 W4.5 J 系列任务书登记（J2a：模型与台账存储；J2b：协议与调度；J2c：MCP 面），矩阵行在 V4 收敛仪式统一翻转；翻转前不得作为实现完成或验证通过的依据。本文档批准记录见 ADR-009 评审记录（2026-09-10 四方）。
 
 ## 13. 数据迁移、兼容、发布与回滚
 
-最小语义映射：Feature → WorkPlan（补 synthetic Problem/Outcome，J2b）；Task → WorkItem；Dependencies JSON → WorkDependency；Role → ExecutionRequirement（不是 Capability）；AssignedSessionID/WorkerID → ExecutionAttempt/SessionBinding（J2b）；TaskResult → ResultCapsule/Artifact；ValidationRun → Evidence/EvaluationRun；AgentSession → 运行时连接实体。采用 expand/contract 五步：**新增表（J2a，迁移 0017 纯增量九表）** → 影子构图 → 双读对账 → 切换写入 → 删除旧字段；后四步是后续契约仪式的独立决策，0017 不触碰任何既有表与列。资产台账随 0017 落地（`assets`/`asset_gate_bindings`），存量摄取走 `maestro asset-intake` 三模式（原文注册/digest+摘要/指针）。回滚只能回到上一已批准 v3 提交并同步回滚规范与追踪状态。
+最小语义映射：Feature → WorkPlan（补 synthetic Problem/Outcome：Intent 层表 0019 已落地，主绑定 `work_plan_intents`）；Task → WorkItem；Dependencies JSON → WorkDependency；Role → ExecutionRequirement（不是 Capability）；AssignedSessionID/WorkerID → ExecutionAttempt/SessionBinding（0019 `execution_attempts`）；TaskResult → ResultCapsule/Artifact；ValidationRun → Evidence/EvaluationRun；AgentSession → 运行时连接实体。采用 expand/contract 五步：**新增表（J2a 迁移 0017 纯增量九表；J2b 迁移 0019 纯增量七表 + budget_ledgers.scope_kind 扩 'work_node'）** → 影子构图 → 双读对账 → 切换写入 → 删除旧字段；后四步是后续契约仪式的独立决策，0017 不触碰任何既有表与列，0019 仅扩展预算作用域枚举。资产台账随 0017 落地（`assets`/`asset_gate_bindings`），存量摄取走 `maestro asset-intake` 三模式（原文注册/digest+摘要/指针）。回滚只能回到上一已批准 v3 提交并同步回滚规范与追踪状态。
