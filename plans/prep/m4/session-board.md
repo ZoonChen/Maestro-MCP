@@ -101,6 +101,22 @@
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
 
+### W4.5 能力波次 + P5 试点（2026-09-09 规划，试点方案见 plans/prep/pilot/ 四件）
+
+owner 三决策（2026-09-09）：Java+Vue 双仓为试点对象（权威 MR 随 P5a）；PoC 从 0 纳入治理；沙箱 GitLab（CE 1931）。架构决策：提前激活 ADR-009 Work Graph（里程碑级，原 M1-WGP/WGM/WGS 移交项回收）；过程数据与 Jira 配合（mcp-atlassian 通路，SoR 见 SOLUTION-BLUEPRINT §1）。V4 相应顺延约 3–4 周。
+
+| 顺序 | 会话 | 任务书 | 前提 |
+|---|---|---|---|
+| 1 | J1 | brief-J1-functional-roles.md（职能角色，G-α/UI-4 关闭） | 无 |
+| 2 | J2a | brief-J2a-workgraph-model.md（ADR-009 评审+模型+资产台账，含存量摄取命令） | 无（迁移编号与 J1 协调） |
+| 3 | J3 | brief-J3-jira-connector.md（锚定/镜像/对账，按蓝图 §1.2） | 无 |
+| 4 | J2b | brief-J2b-workgraph-protocol.md（拆解协议/封板/聚合） | **J2a 合入后** |
+| 5 | J2c | brief-J2c-workgraph-surface.md（MCP 工具 19→24 + 控制台） | **J2a/J2b 合入后** |
+| 6 | P5a | brief-P5a-pilot-prep.md（权威 MR/双仓/Profiles/存量摄取/flags=shadow） | **W4.5 全合入后** |
+| 7 | P5b | brief-P5b-poc-governed.md（PoC 0→1 全链路首演） | **P5a 后** |
+
+试点全程按 `plans/prep/pilot/PLAYBOOK.md` 七阶段执行；设计与中间产物的标准化资产治理见 `ARTIFACT-STANDARDS.md`（J2a 台账语义依据）；十角色工作流见 `ROLE-CATALOG.md`；企业架构四域（SoR/等保/运行/组织）见 `SOLUTION-BLUEPRINT.md`（含 [待评审] 块，评审人已标注）。
+
 ### 第二波（2026-09-09 下发，已完成）
 
 #93 G（pilot 后端）、#94 F（遥测生产者，G2/REL-2 关闭）、#95 H（eval 入库+数据集骨架）、#96 E（auth 后端：0015 会话双表/ES256 raw/waivers 列表/DLQ 重放端点，冲突双保留+钉子 31/60）、#97 B2（控制台二代：真登录/HITL 接真/四治理视图/过渡桥决策=保留手输+会话范围注入）。**M4-P4 于 2026-09-09 收口**：六任务全部具备首代实现。
