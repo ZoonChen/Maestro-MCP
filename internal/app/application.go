@@ -20,6 +20,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/health"
+	"github.com/ZoonChen/Maestro-MCP/internal/jira"
 	maestromcp "github.com/ZoonChen/Maestro-MCP/internal/mcp"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/service"
@@ -96,6 +97,10 @@ type Options struct {
 	// depth gauges into telemetry_aggregates (M4-OBS-001); nil keeps
 	// the producer unstarted and the request path unsampled.
 	TelemetryProducer *TelemetryProducerOptions
+	// JiraSync drives the W4.5 J3 mirror+reconcile cycle against the
+	// migration 0018 anchor tables; nil keeps the connector unstarted
+	// (honest degradation — the task flow never depends on Jira).
+	JiraSync *JiraSyncOptions
 	// Dependencies are the M1 dependency-health probes (M1-ARCH-001). M0
 	// registers none; readiness keeps its local-baseline semantics until a
 	// stream wires PostgreSQL/OIDC/runner-pool probes.
@@ -408,6 +413,20 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			consumer.Run(a.backgroundCtx, owner, interval)
 		}()
 	}
+	// Exactly one Jira sync worker per process (task brief J3): the
+	// cycle owns the anchor snapshot cadence and the escalation clock.
+	if opts.JiraSync != nil {
+		interval := opts.JiraSync.Interval
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		worker := opts.JiraSync.Worker
+		a.backgroundWG.Add(1)
+		go func() {
+			defer a.backgroundWG.Done()
+			worker.Run(a.backgroundCtx, interval)
+		}()
+	}
 
 	cleanupOnError = false
 	return a, nil
@@ -446,6 +465,12 @@ type WebhookDispatchOptions struct {
 type GitLabSyncOptions struct {
 	Consumer *gitlab.Consumer
 	Owner    string
+	Interval time.Duration
+}
+
+// JiraSyncOptions wires the Jira connector cycle (task brief J3).
+type JiraSyncOptions struct {
+	Worker   *jira.Worker
 	Interval time.Duration
 }
 

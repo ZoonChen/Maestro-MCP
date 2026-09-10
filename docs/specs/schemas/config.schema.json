@@ -362,6 +362,34 @@
           "format": "uuid"
         }
       }
+    },
+    "jira": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_url",
+        "pat_secret_ref",
+        "sync_interval_seconds"
+      ],
+      "description": "W4.5 J3 Jira connector: one Jira Server/DC instance with a read-scope PAT (env reference only). Absent keeps the mirror and reconcile workers unstarted.",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "pattern": "^https://[a-zA-Z0-9.-]+/?$",
+          "description": "Jira Server/DC base URL; https name only, no userinfo, IP literal or path"
+        },
+        "pat_secret_ref": {
+          "type": "string",
+          "pattern": "^env:MAESTRO_[A-Z0-9_]+$",
+          "description": "Reference to the PAT process secret; the value itself never enters configuration"
+        },
+        "sync_interval_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400,
+          "description": "One mirror+reconcile cycle; the two-cycle escalation line counts these"
+        }
+      }
     }
   },
   "examples": [

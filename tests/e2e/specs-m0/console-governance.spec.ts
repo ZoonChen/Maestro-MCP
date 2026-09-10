@@ -74,6 +74,8 @@ const IDS = {
   userViewer: 'dddddddd-dddd-7ddd-8ddd-dddddddddddd',
   pilotFlag: 'eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee',
   deadLetter: 'ffffffff-ffff-7fff-8fff-ffffffffffff',
+  jiraAnchor: '12121212-1212-7121-8121-121212121212',
+  jiraReconcile: '13131313-1313-7131-8131-131313131313',
 };
 const SHA_A = 'a1'.repeat(20);
 const SHA_B = 'b2'.repeat(20);
@@ -367,6 +369,16 @@ INSERT INTO pilot_flags (id, project_id, flag, stage, gray_percent, changed_by, 
 INSERT INTO webhook_inbox (id, gitlab_instance_id, external_event_id, event_kind, payload_digest, status, attempts)
   VALUES ('${IDS.deadLetter}', '${IDS.instance}', 'evt-e2e-dlq-1', 'pipeline',
     'sha256:${'f'.repeat(64)}', 'dead_letter', 5);
+INSERT INTO jira_anchors (id, project_id, work_item_id, issue_key, jira_project_key, anchor_source,
+    assignee, iteration_label, issue_title, issue_assignee, issue_labels, issue_status, snapshot_at,
+    pushed_title, pushed_assignee, pushed_iteration, pushed_status_label, last_mirror_at, last_mirror_ok)
+  VALUES ('${IDS.jiraAnchor}', '${IDS.project}', '${IDS.workItem}', 'E2EJ-7', 'E2EJ', 'api',
+    'zhang.san', 'Sprint-12', 'console governance work item', 'zhang.san',
+    '["backend","Sprint-12"]'::jsonb, 'In Progress', now(),
+    'console governance work item', 'zhang.san', 'Sprint-12', 'maestro:draft', now(), true);
+INSERT INTO jira_reconcile_items (id, project_id, anchor_id, field, sor_value, mirror_value, state, open_cycles)
+  VALUES ('${IDS.jiraReconcile}', '${IDS.project}', '${IDS.jiraAnchor}', 'status_label',
+    'maestro:draft', 'backend, Sprint-12', 'escalated', 2);
 `;
 
 // The governance binary runs as a Linux container on the e2e network:
@@ -777,6 +789,36 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
       await expect(row).toContainText(IDS.userAdmin);
       // Read-mostly boundary stays stated on the page.
       await expect(page.getByText('本代不进控制台，走 API/MCP')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  // --- W4.5 task brief J3: the Jira connector read surface (anchors
+  // with both sides of the mirror + the reconcile list). ---
+
+  test('jira connector renders anchors and the escalated reconcile row (read-only)', async ({ browser }, testInfo) => {
+    requireGovernance(testInfo);
+    // developer holds project.read: both connector reads are real
+    // 200s against the seeded anchor and the escalated divergence.
+    const { context, page } = await governancePage(browser, gov.devToken, '#/jira');
+    try {
+      await expect(page.getByText('锚点创建与分歧裁决（accept_sor / accept_mirror）本代走服务端接口')).toBeVisible();
+      await page.getByLabel('项目 ID').fill(IDS.project);
+      await page.getByRole('button', { name: '读取锚点与对账清单' }).click();
+
+      const anchorRow = page.locator('tr[data-jira-anchor="E2EJ-7"]');
+      await expect(anchorRow).toContainText('console governance work item');
+      await expect(anchorRow).toContainText('maestro:draft');
+      await expect(anchorRow).toContainText('zhang.san / Sprint-12');
+      await expect(anchorRow).toContainText('In Progress');
+      await expect(anchorRow.getByText('正常')).toBeVisible();
+
+      const reconcileRow = page.locator('tr[data-reconcile-state="escalated"]');
+      await expect(reconcileRow).toContainText('E2EJ-7');
+      await expect(reconcileRow).toContainText('状态标签');
+      await expect(reconcileRow).toContainText('已升级');
+      await expect(reconcileRow).toContainText('2');
     } finally {
       await context.close();
     }

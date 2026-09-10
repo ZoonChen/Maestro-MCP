@@ -27,6 +27,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/gitlab"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
+	"github.com/ZoonChen/Maestro-MCP/internal/jira"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
@@ -768,6 +769,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			SLO:           sloHandler,
 			DeadLetters:   handler.NewDeadLetterHandler(pgStore.Webhooks()),
 			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
+			Jira:          handler.NewJiraHandler(pgStore.Jira()),
 			Scope:         pgStore.Instances(),
 		}
 	}
@@ -786,6 +788,35 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			Interval:          time.Duration(cfg.Telemetry.ProducerIntervalSec) * time.Second,
 			RedactionVersion:  cfg.Telemetry.RedactionVersion,
 			PlatformProjectID: cfg.Telemetry.PlatformProjectID,
+		}
+	}
+
+	// W4.5 J3 Jira connector (SOLUTION-BLUEPRINT section 1): the
+	// section is optional and requires no webhook payload key. The PAT
+	// resolves from its env:MAESTRO_* reference at client construction
+	// — a missing variable degrades every cycle honestly (the task
+	// flow never depends on Jira).
+	if cfg.Jira != nil {
+		baseURL := cfg.Jira.BaseURL
+		patRef := cfg.Jira.PATSecretRef
+		secrets := webhook.EnvSecretResolver{}
+		factory := func() (*jira.Client, error) {
+			token, resolveErr := secrets.Resolve(context.Background(), patRef)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("jira pat %s: %w", patRef, resolveErr)
+			}
+			return jira.NewClient(baseURL, token)
+		}
+		options.JiraSync = &app.JiraSyncOptions{
+			Worker: &jira.Worker{
+				Anchors:   pgStore.Jira(),
+				Reconcile: pgStore.Jira(),
+				NewClient: factory,
+				OnCycleErr: func(err error) {
+					slog.Error("jira sync cycle failed", "error", err)
+				},
+			},
+			Interval: time.Duration(cfg.Jira.SyncIntervalSec) * time.Second,
 		}
 	}
 

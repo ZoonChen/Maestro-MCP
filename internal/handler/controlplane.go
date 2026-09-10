@@ -49,6 +49,12 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/pilot-flags": {
 		http.MethodGet: "pilot.read",
 	},
+	"/api/v3/projects/:pid/jira-anchors": {
+		http.MethodGet: "project.read",
+	},
+	"/api/v3/projects/:pid/jira-reconcile-items": {
+		http.MethodGet: "project.read",
+	},
 	"/api/v3/projects/:pid/pilot-flags/:flag": {
 		http.MethodPut: "pilot.write",
 	},
@@ -88,6 +94,7 @@ type ControlPlaneOptions struct {
 	SLO           *SLOSnapshotHandler
 	DeadLetters   *DeadLetterHandler
 	Pilot         *PilotHandler
+	Jira          *JiraHandler
 	Scope         ScopeGuard
 }
 
@@ -143,6 +150,10 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	if options.Pilot != nil {
 		group.GET("/projects/:pid/pilot-flags", options.Pilot.ListPilotFlags)
 		group.PUT("/projects/:pid/pilot-flags/:flag", options.Pilot.PutPilotFlag)
+	}
+	if options.Jira != nil {
+		group.GET("/projects/:pid/jira-anchors", options.Jira.ListJiraAnchors)
+		group.GET("/projects/:pid/jira-reconcile-items", options.Jira.ListJiraReconcileItems)
 	}
 }
 
