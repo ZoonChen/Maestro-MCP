@@ -56,6 +56,15 @@ func pgOptionalTimePtr(value *string) any {
 	return pgTimeArg(*value)
 }
 
+// pgOptionalText maps an empty string to SQL NULL: an absent value must
+// read as NULL, never as an empty string that could pass for data.
+func pgOptionalText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 // pgOptionalJSON maps absent payload bytes to SQL NULL.
 func pgOptionalJSON(raw []byte) any {
 	if len(raw) == 0 {
