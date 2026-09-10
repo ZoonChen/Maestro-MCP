@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 )
@@ -28,6 +29,19 @@ var delegationDeniedActions = map[string]struct{}{
 // map on the principal, never from the request; a resource outside every
 // membership is denied (the transport maps that to 404, never 403).
 // Caller mistakes degrade to deny decisions: this point never errors open.
+//
+// Two grant classes merge (J1): the project-role grants from the
+// membership map and the frozen functional_approvers grants from the
+// principal's ACTIVE functional roles. Each class is evaluated on its
+// own allow/deny algebra — a functional grant confers ONLY the frozen
+// functional permissions and never stacks project permissions, and a
+// project role's deny set constrains the project path, not the
+// functional authority the organization granted separately (the frozen
+// separation-of-duties conditions — membership presence, approver ≠
+// requester — still gate the waiver actions). Both classes require an
+// active membership in the project scope (the frozen
+// project_membership_required condition); the delegated-principal
+// restriction vetoes both.
 func (p *Policy) Authorize(_ context.Context, principal *model.PrincipalContext, action string, resource model.Resource) model.Decision {
 	if principal == nil {
 		return deny(p, "no principal")
@@ -47,33 +61,59 @@ func (p *Policy) Authorize(_ context.Context, principal *model.PrincipalContext,
 	if !ok {
 		return deny(p, fmt.Sprintf("no membership in project scope %q", resource.ProjectID))
 	}
-	grants, ok := p.Roles[role]
-	if !ok {
-		return deny(p, fmt.Sprintf("unknown role %q", role))
-	}
 
-	if _, denied := grants.Deny[action]; denied {
-		return deny(p, fmt.Sprintf("role %q denies %s", role, action))
-	}
-	if _, allowed := grants.Allow[action]; !allowed {
-		return deny(p, fmt.Sprintf("role %q does not grant %s", role, action))
-	}
-
-	// Delegated principals act at the intersection of human grants and the
-	// frozen agent restrictions.
-	if principal.DelegationID != "" {
-		if !p.Delegation.AgentSelfReviewWaive {
-			if _, denied := delegationDeniedActions[action]; denied {
-				return deny(p, "delegated principals may not self-review, waive or merge")
-			}
+	// Delegated principals act at the intersection of human grants and
+	// the frozen agent restrictions; the veto applies to every grant
+	// class (an agent never self-reviews, waives or merges).
+	if principal.DelegationID != "" && !p.Delegation.AgentSelfReviewWaive {
+		if _, denied := delegationDeniedActions[action]; denied {
+			return deny(p, "delegated principals may not self-review, waive or merge")
 		}
 	}
 
-	return model.Decision{
-		Allow:         true,
-		PolicyVersion: p.Version,
-		Reasons:       []string{fmt.Sprintf("role %q allows %s in project %s", role, action, resource.ProjectID)},
+	reasons := []string{}
+
+	// Project-role grant path.
+	grants, known := p.Roles[role]
+	switch {
+	case !known:
+		reasons = append(reasons, fmt.Sprintf("unknown role %q", role))
+	default:
+		if _, denied := grants.Deny[action]; denied {
+			reasons = append(reasons, fmt.Sprintf("role %q denies %s", role, action))
+		} else if _, allowed := grants.Allow[action]; allowed {
+			return model.Decision{
+				Allow:         true,
+				PolicyVersion: p.Version,
+				Reasons:       []string{fmt.Sprintf("role %q allows %s in project %s", role, action, resource.ProjectID)},
+			}
+		} else {
+			reasons = append(reasons, fmt.Sprintf("role %q does not grant %s", role, action))
+		}
 	}
+
+	// Functional-role grant path: frozen functional permissions only.
+	for _, functional := range principal.FunctionalRoles {
+		grants, known := p.FunctionalRole[functional]
+		if !known {
+			reasons = append(reasons, fmt.Sprintf("unknown functional role %q", functional))
+			continue
+		}
+		if _, denied := grants.Deny[action]; denied {
+			reasons = append(reasons, fmt.Sprintf("functional role %q denies %s", functional, action))
+			continue
+		}
+		if _, allowed := grants.Allow[action]; allowed {
+			return model.Decision{
+				Allow:         true,
+				PolicyVersion: p.Version,
+				Reasons:       []string{fmt.Sprintf("functional role %q allows %s in project %s", functional, action, resource.ProjectID)},
+			}
+		}
+		reasons = append(reasons, fmt.Sprintf("functional role %q does not grant %s", functional, action))
+	}
+
+	return deny(p, strings.Join(reasons, "; "))
 }
 
 // AuthorizeService evaluates a service or bootstrap identity (runner
@@ -126,3 +166,33 @@ func deny(p *Policy, reason string) model.Decision {
 		Reasons:       []string{reason},
 	}
 }
+
+// Authority reports which grant class produced an allow decision, for
+// the audit subject distinction (J1-4): "functional:security_owner" or
+// "project:viewer". It reads the canonical allow reason written by
+// Authorize in this same package; a deny or unrecognized shape reports
+// "" and the caller must not treat it as an authority claim.
+func Authority(decision model.Decision) string {
+	if !decision.Allow || len(decision.Reasons) == 0 {
+		return ""
+	}
+	reason := decision.Reasons[0]
+	switch {
+	case strings.HasPrefix(reason, functionalAllowPrefix):
+		role := strings.TrimPrefix(reason, functionalAllowPrefix)
+		if idx := strings.Index(role, `" allows `); idx >= 0 {
+			return "functional:" + role[:idx]
+		}
+	case strings.HasPrefix(reason, projectAllowPrefix):
+		role := strings.TrimPrefix(reason, projectAllowPrefix)
+		if idx := strings.Index(role, `" allows `); idx >= 0 {
+			return "project:" + role[:idx]
+		}
+	}
+	return ""
+}
+
+const (
+	functionalAllowPrefix = `functional role "`
+	projectAllowPrefix    = `role "`
+)

@@ -24,7 +24,9 @@ func NewStoreResolver(identities store.IdentityStore) *StoreResolver {
 // Resolve maps the verified identity to its principal. Unknown users are
 // lazily registered (first login) — GetOrCreateUser is idempotent per
 // issuer+subject — and a user with no active memberships resolves to an
-// empty principal that authorizes nothing.
+// empty principal that authorizes nothing. Functional roles resolve
+// beside the memberships (J1): only the frozen functional permissions
+// ride them, never project permissions.
 func (r *StoreResolver) Resolve(ctx context.Context, issuer, subject string) (*model.PrincipalContext, error) {
 	user, err := r.identities.GetOrCreateUser(ctx, issuer, subject, "")
 	if err != nil {
@@ -38,16 +40,23 @@ func (r *StoreResolver) Resolve(ctx context.Context, issuer, subject string) (*m
 	for _, membership := range memberships {
 		scoped[membership.ProjectID] = membership.Role
 	}
+	functional, err := r.identities.ActiveFunctionalRoles(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: derive functional roles: %w", err)
+	}
 	return &model.PrincipalContext{
 		PrincipalID:        user.ID,
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: scoped,
+		FunctionalRoles:    functional,
 	}, nil
 }
 
 // ResolveByID rebuilds the principal for an established session user.
 // A suspended/removed user or a store failure resolves to an error —
-// never to a stale principal: the cookie path fails closed.
+// never to a stale principal: the cookie path fails closed. Functional
+// grants re-resolve per request, so expiry and revocation propagate on
+// the next call.
 func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.PrincipalContext, error) {
 	user, err := r.identities.GetUser(ctx, userID)
 	if err != nil {
@@ -56,7 +65,7 @@ func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.
 	if user.Status != "active" {
 		return nil, fmt.Errorf("identity: session user is %q", user.Status)
 	}
-	memberships, err := r.identities.ListProjectMemberships(ctx, user.ID)
+	memberships, err := r.identities.ListProjectMemberships(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("identity: derive memberships: %w", err)
 	}
@@ -64,9 +73,14 @@ func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.
 	for _, membership := range memberships {
 		scoped[membership.ProjectID] = membership.Role
 	}
+	functional, err := r.identities.ActiveFunctionalRoles(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: derive functional roles: %w", err)
+	}
 	return &model.PrincipalContext{
 		PrincipalID:        user.ID,
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: scoped,
+		FunctionalRoles:    functional,
 	}, nil
 }

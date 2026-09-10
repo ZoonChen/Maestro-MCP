@@ -284,41 +284,98 @@ func (s pgQualityStore) CreateWaiver(ctx context.Context, waiver *evidence.Waive
 	return id, nil
 }
 
+// WaiverAudit carries the authorization context of a waiver transition
+// for its atomic audit row (J1-4): the actor, the authority class that
+// allowed the action (identity.Authority, e.g.
+// "functional:security_owner"), the frozen matrix version of that
+// decision and the operator-supplied reason. The state change and the
+// audit row commit together.
+type WaiverAudit struct {
+	Actor         string
+	Authority     string
+	PolicyVersion string
+	CorrelationID string
+	Reason        string
+}
+
 // ApproveWaiver applies the distinct-approver transition under a state
-// guard; the engine-level requester split is re-checked in SQL.
-func (s pgQualityStore) ApproveWaiver(ctx context.Context, waiverID, approverID string) error {
-	result, err := s.db.ExecContext(ctx, `
+// guard; the engine-level requester split is re-checked in SQL. The
+// transition and its audit row (action waiver.approve with the
+// allowing authority and policy version) commit atomically — a state
+// change never lands without its audit event.
+func (s pgQualityStore) ApproveWaiver(ctx context.Context, waiverID, approverID string, audit WaiverAudit) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("waiver: approve begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var projectID string
+	err = tx.QueryRowContext(ctx, `
 		UPDATE waivers SET state = 'approved', approver_principal = $2, approved_at = now(),
 			updated_at = now(), version = version + 1
-		WHERE id = $1 AND state = 'requested' AND requester_principal <> $2`,
-		waiverID, approverID)
-	if err != nil {
-		return fmt.Errorf("waiver: approve: %w", err)
-	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
+		WHERE id = $1 AND state = 'requested' AND requester_principal <> $2
+		RETURNING project_id`,
+		waiverID, approverID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
 		var requester string
-		lookupErr := s.db.QueryRowContext(ctx,
+		lookupErr := tx.QueryRowContext(ctx,
 			`SELECT requester_principal FROM waivers WHERE id = $1`, waiverID).Scan(&requester)
 		if lookupErr == nil && requester == approverID {
 			return ErrWaiverSelfApprove
 		}
 		return s.waiverMismatch(ctx, waiverID)
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("waiver: approve: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events
+			(actor_principal, project_id, action, resource_type, resource_id,
+			 decision, reason, policy_version, correlation_id)
+		VALUES ($1, $2, 'waiver.approve', 'waiver', $3, 'allow', $4, $5, $6)`,
+		approverID, projectID, waiverID,
+		fmt.Sprintf("authority=%s; %s", audit.Authority, audit.Reason),
+		pgOptionalText(audit.PolicyVersion), audit.CorrelationID); err != nil {
+		return fmt.Errorf("waiver: approve audit: %w", err)
+	}
+	return tx.Commit()
 }
 
-// RevokeWaiver cancels a not-yet-terminal waiver.
-func (s pgQualityStore) RevokeWaiver(ctx context.Context, waiverID string) error {
-	result, err := s.db.ExecContext(ctx, `
+// RevokeWaiver cancels a not-yet-terminal waiver, atomically with its
+// audit row.
+func (s pgQualityStore) RevokeWaiver(ctx context.Context, waiverID string, audit WaiverAudit) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("waiver: revoke begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var projectID string
+	err = tx.QueryRowContext(ctx, `
 		UPDATE waivers SET state = 'revoked', revoked_at = now(), updated_at = now(), version = version + 1
-		WHERE id = $1 AND state IN ('requested', 'approved', 'active')`, waiverID)
+		WHERE id = $1 AND state IN ('requested', 'approved', 'active')
+		RETURNING project_id`,
+		waiverID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.waiverMismatch(ctx, waiverID)
+	}
 	if err != nil {
 		return fmt.Errorf("waiver: revoke: %w", err)
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return s.waiverMismatch(ctx, waiverID)
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events
+			(actor_principal, project_id, action, resource_type, resource_id,
+			 decision, reason, policy_version, correlation_id)
+		VALUES ($1, $2, 'waiver.revoke', 'waiver', $3, 'allow', $4, $5, $6)`,
+		audit.Actor, projectID, waiverID,
+		fmt.Sprintf("authority=%s; %s", audit.Authority, audit.Reason),
+		pgOptionalText(audit.PolicyVersion), audit.CorrelationID); err != nil {
+		return fmt.Errorf("waiver: revoke audit: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ListWaiversForWorkItem returns waiver rows with their lifecycle state.

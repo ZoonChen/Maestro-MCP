@@ -243,14 +243,14 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 	assert.ErrorIs(t, err, ErrWaiverConflict)
 
 	// Self-approval is rejected in SQL with its own condition.
-	err = store.ApproveWaiver(ctx, waiverID, "user-requester")
+	err = store.ApproveWaiver(ctx, waiverID, "user-requester", WaiverAudit{CorrelationID: "t"})
 	assert.ErrorIs(t, err, ErrWaiverSelfApprove)
 
 	// A distinct approver succeeds; double approval then conflicts.
-	require.NoError(t, store.ApproveWaiver(ctx, waiverID, "user-approver"))
-	assert.ErrorIs(t, store.ApproveWaiver(ctx, waiverID, "user-approver"), ErrWaiverConflict)
-	require.NoError(t, store.RevokeWaiver(ctx, waiverID))
-	assert.ErrorIs(t, store.RevokeWaiver(ctx, waiverID), ErrWaiverConflict)
+	require.NoError(t, store.ApproveWaiver(ctx, waiverID, "user-approver", WaiverAudit{CorrelationID: "t"}))
+	assert.ErrorIs(t, store.ApproveWaiver(ctx, waiverID, "user-approver", WaiverAudit{CorrelationID: "t"}), ErrWaiverConflict)
+	require.NoError(t, store.RevokeWaiver(ctx, waiverID, WaiverAudit{Actor: "user-approver", CorrelationID: "t"}))
+	assert.ErrorIs(t, store.RevokeWaiver(ctx, waiverID, WaiverAudit{Actor: "user-approver", CorrelationID: "t"}), ErrWaiverConflict)
 
 	waivers, err := store.ListWaiversForWorkItem(ctx, projectID, workItemID)
 	require.NoError(t, err)
@@ -258,5 +258,5 @@ func TestQualityWaiverLifecycle(t *testing.T) {
 	assert.Equal(t, evidence.WaiverRevoked, waivers[0].State)
 	assert.Equal(t, "user-approver", waivers[0].Approver)
 
-	assert.ErrorIs(t, store.ApproveWaiver(ctx, "018f7400-0000-7000-8000-00000000dead", "x"), ErrWaiverAbsent)
+	assert.ErrorIs(t, store.ApproveWaiver(ctx, "018f7400-0000-7000-8000-00000000dead", "x", WaiverAudit{}), ErrWaiverAbsent)
 }

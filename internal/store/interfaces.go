@@ -403,6 +403,26 @@ type IdentityStore interface {
 	// ListProjectMemberships derives the project_id -> role map used to
 	// construct PrincipalContext.ProjectMemberships.
 	ListProjectMemberships(ctx context.Context, userID string) ([]ProjectMembershipView, error)
+
+	// GrantFunctionalRole creates one functional-role binding (J1:
+	// functional_principals). Validation fails closed — unknown
+	// function/user, inverted windows and empty authorization-source
+	// references are rejected; a second active grant of the same
+	// function conflicts.
+	GrantFunctionalRole(ctx context.Context, grant *FunctionalPrincipal) error
+
+	// RevokeFunctionalRole applies the terminal revocation; unknown or
+	// already-revoked grants answer ErrFunctionalGrantNotFound.
+	RevokeFunctionalRole(ctx context.Context, grantID string) error
+
+	// ListFunctionalPrincipals returns the bindings of one function
+	// (all functions when empty), including expired and revoked rows.
+	ListFunctionalPrincipals(ctx context.Context, function string) ([]FunctionalPrincipal, error)
+
+	// ActiveFunctionalRoles returns the functions the user currently
+	// holds (unrevoked, inside the validity window) — the resolver's
+	// authorization view.
+	ActiveFunctionalRoles(ctx context.Context, userID string) ([]string, error)
 }
 
 // RunnerRegistryStore persists the runner device registry, one-time

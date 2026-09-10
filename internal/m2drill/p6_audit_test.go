@@ -108,7 +108,7 @@ func newAuditFixture(t *testing.T) *drillFixture {
 	waivers, err := fixture.pg.Quality().ListWaiversForWorkItem(ctx, auditProject, auditWork)
 	require.NoError(t, err)
 	require.Len(t, waivers, 1)
-	require.NoError(t, fixture.pg.Quality().ApproveWaiver(ctx, waivers[0].ID, "audit-approver"))
+	require.NoError(t, fixture.pg.Quality().ApproveWaiver(ctx, waivers[0].ID, "audit-approver", store.WaiverAudit{CorrelationID: "t"}))
 
 	// Evaluate so gate snapshots exist.
 	_, err = eval.EvaluateWorkItem(ctx, tuple)
@@ -189,7 +189,7 @@ func TestAuditWaiverProcess(t *testing.T) {
 	waivers, err := f.pg.Quality().ListWaiversForWorkItem(ctx, auditProject, auditWork)
 	require.NoError(t, err)
 	require.Len(t, waivers, 1)
-	err = f.pg.Quality().ApproveWaiver(ctx, waivers[0].ID, waivers[0].Requester)
+	err = f.pg.Quality().ApproveWaiver(ctx, waivers[0].ID, waivers[0].Requester, store.WaiverAudit{})
 	assert.ErrorIs(t, err, store.ErrWaiverSelfApprove, "self-approval is structurally refused")
 
 	// Behavioral: the approved waiver actually waives its gate.
