@@ -16,6 +16,8 @@ last_verified_commit: null
 
 # Work Graph 调度器
 
+> **定稿归属：由 J2b 定稿**（brief-J2b-workgraph-protocol：拆解协议/封板/聚合/调度）。J2a（2026-09-10）只落地模型与存储层（迁移 0017），本文保持 draft，不随 J2a 修订语义。
+>
 > 当前实现说明：队列仅按 role、priority、created_at 选取任务；实际 MCP 领取接口缺少幂等键与队列版本，允许调用方自报 project/role/session；领取结果不含精确 worktree 路径、generation 与 base SHA。本文是 M1 目标设计，未实现。
 
 ## 1. 目标与非目标

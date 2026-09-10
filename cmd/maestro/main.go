@@ -142,6 +142,8 @@ func dispatch(ctx context.Context, args []string, ioStreams streams) error {
 		return runPGImport(ctx, args[1:], ioStreams)
 	case "eval-import":
 		return runEvalImport(ctx, args[1:], ioStreams)
+	case "asset-intake":
+		return runAssetIntake(ctx, args[1:], ioStreams)
 	case "doctor":
 		return runDoctor(ctx, args[1:], ioStreams)
 	case "version":
@@ -1068,6 +1070,9 @@ Usage:
   maestro migrate revert [--config FILE] [--steps N]   (postgres, pre-cutover drill)
   maestro pg-import --sqlite PATH [--dry-run|--reconcile] [--report FILE] [--config FILE]
   maestro eval-import --file run.jsonl --project UUID [--json] [--config FILE]   (postgres)
+  maestro asset-intake --project UUID --asset-id ART-<type>-<seq> --type TYPE --title TITLE \
+                       --owner PRINCIPAL --path FILE [--mode file|digest|pointer] [--sensitivity S] \
+                       [--summary-file FILE|--note TEXT] [--supersedes ART-x@N] [--gate GATE] [--json]
   maestro doctor  [--config FILE] [--db PATH] [--health-url URL] [--json]
   maestro version [--json]`)
 }
