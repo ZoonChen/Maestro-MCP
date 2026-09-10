@@ -42,8 +42,9 @@ func TestJiraConnectorEndpoints(t *testing.T) {
 		_, _ = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_jira_handler_test WITH (FORCE)`)
 		_ = admin.Close()
 	})
+	baseDSN := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	db, err := store.OpenPostgres(context.Background(),
-		strings.Replace(os.Getenv("MAESTRO_TEST_POSTGRES_DSN"), "/maestro?", "/maestro_jira_handler_test?", 1))
+		baseDSN[:strings.LastIndex(baseDSN, "/")+1]+"maestro_jira_handler_test")
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	_, err = store.ApplyPostgresMigrations(context.Background(), db)
