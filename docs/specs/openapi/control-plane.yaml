@@ -1965,12 +1965,12 @@ components:
         sor_status_label: {type: string, examples: ['maestro:executing']}
         sor_assignee: {type: string}
         sor_iteration_label: {type: string}
-        issue_title: {type: string, description: Jira-side snapshot, read-only}
+        issue_title: {type: string, description: 'Jira-side snapshot (read-only channel)'}
         issue_assignee: {type: string}
         issue_labels: {type: array, items: {type: string}}
         issue_status: {type: string, description: display-only; never feeds work item state}
-        snapshot_at: {type: string, format: date-time, nullable: true}
-        last_mirror_at: {type: string, format: date-time, nullable: true}
+        snapshot_at: {type: string, format: date-time, description: 'empty before the first snapshot'}
+        last_mirror_at: {type: string, format: date-time, description: 'empty before the first mirror run'}
         last_mirror_ok: {type: boolean}
         last_error: {type: string}
     JiraReconcileItemList:
@@ -1998,7 +1998,7 @@ components:
         detected_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         resolved_by: {type: string}
-        resolved_at: {type: string, format: date-time, nullable: true}
+        resolved_at: {type: string, format: date-time}
         resolution: {type: string, enum: [accept_sor, accept_mirror]}
         resolution_note: {type: string}
     PilotFlagPut:
