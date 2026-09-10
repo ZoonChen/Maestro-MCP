@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 )
@@ -23,9 +24,12 @@ type PrincipalByIDResolver interface {
 }
 
 // StaticResolver serves tests and the local single-tenant baseline: a
-// fixed, server-configured membership map.
+// fixed, server-configured membership map. Functional is the parallel
+// explicit functional-role map (J1): subject -> active functions. An
+// absent entry means no functional authority.
 type StaticResolver struct {
 	Memberships map[string]map[string]string // subject -> project -> role
+	Functional  map[string][]string          // subject -> active functional roles
 }
 
 // Resolve returns the configured principal for a subject, failing closed
@@ -42,5 +46,17 @@ func (s *StaticResolver) Resolve(_ context.Context, issuer, subject string) (*mo
 		PrincipalID:        issuer + "/" + subject,
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: memberships,
+		FunctionalRoles:    sortedCopy(s.Functional[subject]),
 	}, nil
+}
+
+// sortedCopy returns a deterministic copy (empty slice stays nil so the
+// principal JSON stays omitempty).
+func sortedCopy(roles []string) []string {
+	if len(roles) == 0 {
+		return nil
+	}
+	sorted := append([]string(nil), roles...)
+	sort.Strings(sorted)
+	return sorted
 }

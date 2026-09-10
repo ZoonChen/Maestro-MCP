@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/evidence"
+	"github.com/ZoonChen/Maestro-MCP/internal/identity"
+	"github.com/ZoonChen/Maestro-MCP/internal/model"
+	"github.com/ZoonChen/Maestro-MCP/internal/publicerror"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -25,12 +28,14 @@ import (
 //
 // waiver.approve is granted by the frozen matrix only to functional
 // approvers (security_owner / qa_owner with category-matching
-// conditions). The identity layer does not model functional roles yet,
-// so today the middleware denies every human principal on that route —
-// the correct fail-closed decision, not a bug: once functional-role
-// identity lands, the same mapping starts allowing it. The
-// separation-of-duties inside the store (approver ≠ requester in the
-// WHERE clause) is enforced regardless.
+// conditions). Since J1 the identity layer resolves ACTIVE functional
+// grants beside the project memberships, so a principal holding — for
+// example — security_owner over a viewer membership really reaches
+// the route; project roles alone never do. The separation-of-duties
+// inside the store (approver ≠ requester in the WHERE clause) is
+// enforced regardless, and every transition commits its audit row
+// carrying the allowing authority (functional vs project) and the
+// frozen policy version.
 
 // QualityStore is the handler's persistence contract, satisfied by the
 // PostgreSQL quality store.
@@ -44,8 +49,8 @@ type QualityStore interface {
 	WaiverByID(ctx context.Context, projectID, waiverID string) (*evidence.Waiver, bool, error)
 	WorkItemExists(ctx context.Context, projectID, workItemID string) (bool, error)
 	CreateWaiver(ctx context.Context, waiver *evidence.Waiver, projectID, workItemID string) (string, error)
-	ApproveWaiver(ctx context.Context, waiverID, approverID string) error
-	RevokeWaiver(ctx context.Context, waiverID string) error
+	ApproveWaiver(ctx context.Context, waiverID, approverID string, audit store.WaiverAudit) error
+	RevokeWaiver(ctx context.Context, waiverID string, audit store.WaiverAudit) error
 }
 
 // QualityHandler serves the quality endpoints.
@@ -395,21 +400,45 @@ func (h *QualityHandler) RequestGateWaiver(c *gin.Context) {
 
 // ApproveGateWaiver records the independent approval
 // (approveGateWaiver). Permission is waiver.approve — functional
-// approvers only per the frozen matrix.
+// approvers only per the frozen matrix; the audit row distinguishes
+// the functional authority from project roles.
 func (h *QualityHandler) ApproveGateWaiver(c *gin.Context) {
-	h.transitionWaiver(c, func(waiver *evidence.Waiver, principalID, _ string) error {
-		return h.store.ApproveWaiver(c.Request.Context(), waiver.ID, principalID)
+	h.transitionWaiver(c, func(waiver *evidence.Waiver, principalID, _ string, audit store.WaiverAudit) error {
+		return h.store.ApproveWaiver(c.Request.Context(), waiver.ID, principalID, audit)
 	})
 }
 
 // RevokeGateWaiver cancels a not-yet-terminal waiver (revokeGateWaiver).
 func (h *QualityHandler) RevokeGateWaiver(c *gin.Context) {
-	h.transitionWaiver(c, func(_ *evidence.Waiver, _, waiverID string) error {
-		return h.store.RevokeWaiver(c.Request.Context(), waiverID)
+	h.transitionWaiver(c, func(_ *evidence.Waiver, _, waiverID string, audit store.WaiverAudit) error {
+		return h.store.RevokeWaiver(c.Request.Context(), waiverID, audit)
 	})
 }
 
-func (h *QualityHandler) transitionWaiver(c *gin.Context, apply func(*evidence.Waiver, string, string) error) {
+// waiverAudit builds the authorization context of one transition from
+// the decision that admitted the request: the authority class
+// (functional:security_owner vs project:project_admin), the frozen
+// matrix version, and a fresh correlation id. A missing decision (a
+// surface that bypassed the authorize middleware) degrades to an
+// unattributed row — never to an invented authority.
+func waiverAudit(c *gin.Context, principal *model.PrincipalContext, reason string) store.WaiverAudit {
+	audit := store.WaiverAudit{
+		Actor:         principal.PrincipalID,
+		Authority:     "unattributed",
+		CorrelationID: publicerror.NewCorrelationID(),
+		Reason:        reason,
+	}
+	if decision, ok := AuthorizationFromContext(c); ok {
+		audit.Authority = identity.Authority(decision)
+		audit.PolicyVersion = decision.PolicyVersion
+		if audit.Authority == "" {
+			audit.Authority = "unattributed"
+		}
+	}
+	return audit
+}
+
+func (h *QualityHandler) transitionWaiver(c *gin.Context, apply func(*evidence.Waiver, string, string, store.WaiverAudit) error) {
 	projectID, waiverID := c.Param("pid"), c.Param("wid")
 	if c.GetHeader("Idempotency-Key") == "" {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER", "A valid Idempotency-Key is required")
@@ -446,7 +475,7 @@ func (h *QualityHandler) transitionWaiver(c *gin.Context, apply func(*evidence.W
 		return
 	}
 
-	if err := apply(waiver, principal.PrincipalID, waiverID); err != nil {
+	if err := apply(waiver, principal.PrincipalID, waiverID, waiverAudit(c, principal, body.Reason)); err != nil {
 		switch {
 		case errors.Is(err, store.ErrWaiverSelfApprove):
 			staticErrorReply(c, http.StatusForbidden, "SEPARATION_OF_DUTIES", "The approver must differ from the requester")

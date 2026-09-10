@@ -21,6 +21,12 @@ import (
 
 const principalContextKey = "maestro.principal"
 
+// authorizationDecisionKey holds the model.Decision that admitted the
+// request (J1-4): handlers replay its authority class and policy
+// version into audit rows so functional and project subjects stay
+// distinguishable in audit_events.
+const authorizationDecisionKey = "maestro.authorization"
+
 // routeAction maps each /api/v1 route template to its frozen permission.
 // Routes absent from the map have no mapped permission and therefore deny
 // (default deny: an unmapped route is an authorization bug, not a bypass).
@@ -127,6 +133,17 @@ func PrincipalFromContext(c *gin.Context) *model.PrincipalContext {
 	principal, _ := c.Get(principalContextKey)
 	typed, _ := principal.(*model.PrincipalContext)
 	return typed
+}
+
+// AuthorizationFromContext extracts the decision that admitted the
+// request, if the route ran the authorize middleware.
+func AuthorizationFromContext(c *gin.Context) (model.Decision, bool) {
+	if c == nil {
+		return model.Decision{}, false
+	}
+	decision, ok := c.Get(authorizationDecisionKey)
+	typed, valid := decision.(model.Decision)
+	return typed, ok && valid
 }
 
 // isAnonymousShellPath matches the console SPA document and its static
@@ -322,6 +339,7 @@ func (m *OIDCMiddleware) authorizeRoute(c *gin.Context, actions map[string]map[s
 			scoped := resource
 			scoped.ProjectID = scope
 			if decision := m.policy.Authorize(c.Request.Context(), principal, action, scoped); decision.Allow {
+				c.Set(authorizationDecisionKey, decision)
 				c.Next()
 				return
 			}
@@ -333,6 +351,7 @@ func (m *OIDCMiddleware) authorizeRoute(c *gin.Context, actions map[string]map[s
 
 	decision := m.policy.Authorize(c.Request.Context(), principal, action, resource)
 	if decision.Allow {
+		c.Set(authorizationDecisionKey, decision)
 		c.Next()
 		return
 	}

@@ -425,8 +425,15 @@ type PrincipalContext struct {
 	Type               string            `json:"type"`
 	TeamIDs            []string          `json:"team_ids"`
 	ProjectMemberships map[string]string `json:"project_memberships"` // project_id -> role
-	DelegationID       string            `json:"delegation_id,omitempty"`
-	TokenIDHash        string            `json:"token_id_hash,omitempty"`
+	// FunctionalRoles carries the ACTIVE functional grants (J1:
+	// security_owner/qa_owner/… from functional_principals) resolved
+	// server-side beside the project memberships. They grant only the
+	// frozen functional_approvers permissions and never stack project
+	// permissions; the resolver refreshes them per request so
+	// revocation propagates immediately.
+	FunctionalRoles []string `json:"functional_roles,omitempty"`
+	DelegationID    string   `json:"delegation_id,omitempty"`
+	TokenIDHash     string   `json:"token_id_hash,omitempty"`
 }
 
 // Resource identifies the authorization target of an action. ProjectID is

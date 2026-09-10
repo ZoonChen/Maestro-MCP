@@ -39,10 +39,14 @@ type qualityFixture struct {
 	viewerTK string
 	devTK    string
 	platTK   string
+	secTK    string
 	// adminPID is the admin subject's server-side principal id
 	// (issuer/subject under the static test resolver).
 	adminPID string
-	idpURL   string
+	// secPID is the functional approver subject's principal id
+	// (viewer membership + security_owner functional grant).
+	secPID string
+	idpURL string
 }
 
 func newQualityFixture(t *testing.T) *qualityFixture {
@@ -88,6 +92,9 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 		"viewer-1": {qProjectID: "viewer"},
 		"dev-1":    {qProjectID: "developer"},
 		"plat-1":   {qProjectID: "platform_admin"},
+		"sec-1":    {qProjectID: "viewer"},
+	}, Functional: map[string][]string{
+		"sec-1": {"security_owner"},
 	}}
 	verifier, err := identity.NewTokenVerifier(idp.server.URL, "maestro", idp.server.Client())
 	require.NoError(t, err)
@@ -109,7 +116,9 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 		viewerTK: idp.signedToken(t, "viewer-1"),
 		devTK:    idp.signedToken(t, "dev-1"),
 		platTK:   idp.signedToken(t, "plat-1"),
+		secTK:    idp.signedToken(t, "sec-1"),
 		adminPID: idp.server.URL + "/admin-1",
+		secPID:   idp.server.URL + "/sec-1",
 		idpURL:   idp.server.URL,
 	}
 }
