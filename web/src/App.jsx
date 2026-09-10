@@ -9,6 +9,7 @@ import { WaiverConsole } from './components/WaiverConsole';
 import { MergePipelineView } from './components/MergePipelineView';
 import { ScenarioMap } from './components/ScenarioMap';
 import { PilotFlagsView } from './components/PilotFlagsView';
+import { JiraConnectorView } from './components/JiraConnectorView';
 import { AuditExportView } from './components/AuditExportView';
 import { SLOSnapshotView } from './components/SLOSnapshotView';
 import { DeadLetterView } from './components/DeadLetterView';
@@ -131,6 +132,8 @@ export function App({ auth }) {
           <ScenarioMap roles={roles} />
         ) : view === 'pilot' ? (
           <PilotFlagsView projects={projects} projectScope={projectScope} />
+        ) : view === 'jira' ? (
+          <JiraConnectorView projects={projects} projectScope={projectScope} />
         ) : view === 'admin' ? (
           <section class="gov-page" aria-labelledby="admin-area-title">
             <header class="gov-header">

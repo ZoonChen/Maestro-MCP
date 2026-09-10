@@ -9,6 +9,7 @@ export const ROUTES = {
   mrs: '#/mrs',
   scenarios: '#/scenarios',
   pilot: '#/pilot',
+  jira: '#/jira',
 };
 
 export function viewFromHash(hash) {
@@ -16,6 +17,7 @@ export function viewFromHash(hash) {
   if (hash === '#/mrs') return 'mrs';
   if (hash === '#/scenarios') return 'scenarios';
   if (hash === '#/pilot') return 'pilot';
+  if (hash === '#/jira') return 'jira';
   if (hash === '#/admin') return 'admin';
   if (hash === '#/operations') return 'operations';
   if (hash.startsWith('#/project/')) return 'project';

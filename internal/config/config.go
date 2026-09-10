@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -151,6 +152,23 @@ type Config struct {
 	// (M4-OBS-001); absent keeps the producer unstarted and the
 	// request path unsampled.
 	Telemetry *TelemetryConfig `yaml:"telemetry,omitempty"`
+	// Jira carries the optional W4.5 J3 Jira connector policy
+	// (SOLUTION-BLUEPRINT section 1); absent keeps the mirror and
+	// reconcile workers unstarted.
+	Jira *JiraConfig `yaml:"jira,omitempty"`
+}
+
+// JiraConfig mirrors the v3 `jira` section: one Jira Server/DC
+// instance with a read-scope PAT. The PAT value is a process secret —
+// only its env:MAESTRO_* reference is configured, the same discipline
+// as the GitLab bot credential; resolution happens at worker start
+// and a missing variable keeps the connector degraded (never fatal).
+type JiraConfig struct {
+	BaseURL      string `yaml:"base_url"`
+	PATSecretRef string `yaml:"pat_secret_ref"`
+	// SyncIntervalSeconds paces one mirror+reconcile cycle; the
+	// escalation line ("two reconcile cycles") counts these cycles.
+	SyncIntervalSec int `yaml:"sync_interval_seconds"`
 }
 
 // BackupConfig mirrors the frozen config.schema.json `backup` section:
@@ -345,6 +363,24 @@ func ApplyEnvOverrides(cfg *Config) error {
 		next.ensureOIDC().ClientSecret = value
 	}
 
+	// v3 jira section. The PAT value never enters configuration —
+	// only its env:MAESTRO_* reference does (the resolver reads the
+	// variable at worker start). Any jira variable materializes the
+	// section so partial overrides fail closed in Validate.
+	if value, ok := os.LookupEnv("MAESTRO_JIRA_BASE_URL"); ok && value != "" {
+		next.ensureJira().BaseURL = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_JIRA_PAT_SECRET_REF"); ok && value != "" {
+		next.ensureJira().PATSecretRef = value
+	}
+	if value, ok := os.LookupEnv("MAESTRO_JIRA_SYNC_INTERVAL_SECONDS"); ok && value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("MAESTRO_JIRA_SYNC_INTERVAL_SECONDS must be an integer")
+		}
+		next.ensureJira().SyncIntervalSec = parsed
+	}
+
 	for _, item := range []struct {
 		name        string
 		destination *int
@@ -459,8 +495,40 @@ func (c *Config) Validate() error {
 	if err := c.validateTelemetry(); err != nil {
 		return err
 	}
+	if err := c.validateJira(); err != nil {
+		return err
+	}
 	return nil
 }
+
+// validateJira enforces the v3 `jira` section bounds whenever the
+// section carries values. The connector persists to PostgreSQL
+// (migration 0018), so the section requires the postgres driver.
+func (c *Config) validateJira() error {
+	if c.Jira == nil {
+		return nil
+	}
+	if !c.PostgresEnabled() {
+		return errors.New("jira requires the postgres driver (jira_anchors is PostgreSQL-only)")
+	}
+	parsed, err := url.Parse(c.Jira.BaseURL)
+	if err != nil {
+		return errors.New("jira.base_url is unparseable")
+	}
+	if parsed.Scheme != "https" || parsed.Hostname() == "" || net.ParseIP(parsed.Hostname()) != nil ||
+		parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("jira.base_url must be an https name without userinfo, IP literal or path")
+	}
+	if !jiraSecretRefPattern.MatchString(c.Jira.PATSecretRef) {
+		return errors.New("jira.pat_secret_ref must be an env:MAESTRO_* reference")
+	}
+	if c.Jira.SyncIntervalSec < 30 || c.Jira.SyncIntervalSec > 86400 {
+		return errors.New("jira.sync_interval_seconds must be between 30 and 86400")
+	}
+	return nil
+}
+
+var jiraSecretRefPattern = regexp.MustCompile(`^env:MAESTRO_[A-Z0-9_]+$`)
 
 // validateBackup enforces the frozen config.schema.json `backup`
 // bounds whenever the section carries values.
@@ -547,6 +615,14 @@ func (c *Config) validateSLO() error {
 		}
 	}
 	return nil
+}
+
+// ensureJira lazily materializes the optional jira section.
+func (c *Config) ensureJira() *JiraConfig {
+	if c.Jira == nil {
+		c.Jira = &JiraConfig{}
+	}
+	return c.Jira
 }
 
 // ensureOIDC lazily materializes the optional oidc section.

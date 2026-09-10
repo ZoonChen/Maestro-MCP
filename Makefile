@@ -75,7 +75,7 @@ coverage:
 	# registry and inbox stores end to end — without them the profile is
 	# blind to exactly the code it is meant to measure.
 	$(GO) test -p 1 -count=1 -covermode=atomic -coverpkg=./internal/store -coverprofile=$(COVERAGE_DIR)/store.out \
-		./internal/store ./internal/handler ./internal/identity ./internal/gitlab ./internal/m2drill ./internal/m4drill ./internal/webhook
+		./internal/store ./internal/handler ./internal/identity ./internal/gitlab ./internal/jira ./internal/m2drill ./internal/m4drill ./internal/webhook
 	ruby scripts/core-coverage-check.rb \
 		$(COVERAGE_DIR)/state.out $(COVERAGE_DIR)/validation.out \
 		$(COVERAGE_DIR)/identity.out $(COVERAGE_DIR)/store.out

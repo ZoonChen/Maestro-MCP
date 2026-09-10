@@ -25,6 +25,8 @@ tags:
   - {name: Integration, description: Cross-repository IntegrationRuns}
   - {name: Defects, description: Defect triage and Agent remediation}
   - {name: Audit, description: Authorized audit export operations}
+  - {name: Pilot, description: Pilot rollout flag governance}
+  - {name: Jira, description: Jira anchors and the reconcile divergence list}
 paths:
   /livez:
     get:
@@ -791,6 +793,62 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/PilotFlagList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/jira-anchors:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Jira]
+      operationId: listJiraAnchors
+      summary: List the project's WorkItem-to-issue anchors
+      description: >
+        W4.5 J3 read surface (SOLUTION-BLUEPRINT section 1): every
+        anchor with both sides of the mirror — the SoR values (work
+        item title/status live, assignee/iteration on the anchor) and
+        the Jira-side read-only snapshot (title/assignee/labels/status,
+        display-only) plus the mirror bookkeeping. The Jira snapshot
+        never feeds work item state; Jira status cannot flow back.
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The project's anchors in issue-key order
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JiraAnchorList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/jira-reconcile-items:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Jira]
+      operationId: listJiraReconcileItems
+      summary: List the project's Jira mirror divergence items
+      description: >
+        The reconcile list (blueprint section 1.2 rule 2): one item per
+        diverged mirror field, live (open, then escalated after two
+        reconcile cycles without adjudication) by default; the
+        resolved history with state=resolved. A live item freezes its
+        field's mirror push until a human adjudicates (accept_sor
+        re-arms the push; accept_mirror rewrites the SoR-side value
+        for title/assignee). Adjudication stays on the server-side
+        surface this generation.
+      x-maestro-permission: project.read
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: {type: string, enum: [live, resolved], default: live}
+          description: live answers open+escalated; resolved answers history
+      responses:
+        '200':
+          description: The divergence items, newest detection first
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JiraReconcileItemList'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -1884,6 +1942,65 @@ components:
         reason: {type: string, minLength: 16, maxLength: 2000}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
+    JiraAnchorList:
+      type: object
+      additionalProperties: false
+      required: [project_id, anchors]
+      properties:
+        project_id: {type: string, format: uuid}
+        anchors:
+          type: array
+          items: {$ref: '#/components/schemas/JiraAnchor'}
+    JiraAnchor:
+      type: object
+      additionalProperties: false
+      required: [work_item_id, issue_key, jira_project_key, anchor_source, sor_title, sor_status, sor_status_label, sor_assignee, sor_iteration_label, issue_title, issue_assignee, issue_labels, issue_status, last_mirror_ok]
+      properties:
+        work_item_id: {type: string, format: uuid}
+        issue_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*-[0-9]+$', examples: [PEIX-101]}
+        jira_project_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$', examples: [PEIX]}
+        anchor_source: {type: string, enum: [manual, api]}
+        sor_title: {type: string}
+        sor_status: {type: string}
+        sor_status_label: {type: string, examples: ['maestro:executing']}
+        sor_assignee: {type: string}
+        sor_iteration_label: {type: string}
+        issue_title: {type: string, description: 'Jira-side snapshot (read-only channel)'}
+        issue_assignee: {type: string}
+        issue_labels: {type: array, items: {type: string}}
+        issue_status: {type: string, description: display-only; never feeds work item state}
+        snapshot_at: {type: string, format: date-time, description: 'empty before the first snapshot'}
+        last_mirror_at: {type: string, format: date-time, description: 'empty before the first mirror run'}
+        last_mirror_ok: {type: boolean}
+        last_error: {type: string}
+    JiraReconcileItemList:
+      type: object
+      additionalProperties: false
+      required: [project_id, items]
+      properties:
+        project_id: {type: string, format: uuid}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/JiraReconcileItem'}
+    JiraReconcileItem:
+      type: object
+      additionalProperties: false
+      required: [id, issue_key, work_item_id, field, sor_value, mirror_value, state, open_cycles, detected_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        issue_key: {type: string}
+        work_item_id: {type: string, format: uuid}
+        field: {type: string, enum: [title, assignee, iteration_label, status_label]}
+        sor_value: {type: string}
+        mirror_value: {type: string}
+        state: {type: string, enum: [open, escalated, resolved]}
+        open_cycles: {type: integer, minimum: 1}
+        detected_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        resolved_by: {type: string}
+        resolved_at: {type: string, format: date-time}
+        resolution: {type: string, enum: [accept_sor, accept_mirror]}
+        resolution_note: {type: string}
     PilotFlagPut:
       type: object
       additionalProperties: false
