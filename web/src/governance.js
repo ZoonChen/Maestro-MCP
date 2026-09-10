@@ -10,6 +10,9 @@ export const ROUTES = {
   scenarios: '#/scenarios',
   pilot: '#/pilot',
   jira: '#/jira',
+  workgraph: '#/workgraph',
+  assets: '#/assets',
+  proposals: '#/proposals',
 };
 
 export function viewFromHash(hash) {
@@ -18,6 +21,9 @@ export function viewFromHash(hash) {
   if (hash === '#/scenarios') return 'scenarios';
   if (hash === '#/pilot') return 'pilot';
   if (hash === '#/jira') return 'jira';
+  if (hash === '#/workgraph') return 'workgraph';
+  if (hash === '#/assets') return 'assets';
+  if (hash === '#/proposals') return 'proposals';
   if (hash === '#/admin') return 'admin';
   if (hash === '#/operations') return 'operations';
   if (hash.startsWith('#/project/')) return 'project';
@@ -128,6 +134,7 @@ export const ACTION_PERMISSION_HINTS = {
   'audit.export': 'platform_admin / security_owner（职能角色）',
   'webhook.dead_letter.replay': 'gitlab.reconcile（project_admin / platform_admin），审批人必须不同于请求人',
   'pilot.write': 'platform_admin（本代控制台只读展示）',
+  'project_policy.strengthen': 'project_admin（J2c 过渡映射：ADR-009 §2 计划语义审批；product_owner 授权待契约请求）',
 };
 
 // AppWithAuth flattens the auth session into { status, principal, roles,

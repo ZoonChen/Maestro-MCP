@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
   "title": "Maestro MCP v3 Tool Catalog",
-  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.1 extends the frozen 3.0 catalog with the M3 read surfaces (defect, integration run, agent run) and the single structured Agent progress write (no free-text commands); changes require a contract change request through the integration session.",
+  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.2 extends the frozen 3.1 catalog with the W4.5 work-graph and asset-ledger surfaces (worktree_graph_query, decomposition_propose, asset_register, asset_review, asset_approve, asset_query); changes require a contract change request through the integration session.",
   "type": "object",
   "required": [
     "version",
@@ -12,15 +12,15 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "const": "3.1"
+      "const": "3.2"
     },
     "work_item_states": {
       "$ref": "#/$defs/workItemStates"
     },
     "tools": {
       "type": "array",
-      "minItems": 19,
-      "maxItems": 19,
+      "minItems": 25,
+      "maxItems": 25,
       "items": {
         "$ref": "#/$defs/tool"
       },
@@ -299,6 +299,96 @@
               }
             }
           }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "worktree_graph_query"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "decomposition_propose"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "asset_register"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "asset_review"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "asset_approve"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "const": "asset_query"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
         }
       ]
     }
@@ -340,7 +430,13 @@
         "get_defect",
         "get_integration_run",
         "get_agent_run",
-        "report_agent_progress"
+        "report_agent_progress",
+        "worktree_graph_query",
+        "decomposition_propose",
+        "asset_register",
+        "asset_review",
+        "asset_approve",
+        "asset_query"
       ]
     },
     "idempotency": {
@@ -1632,6 +1728,24 @@
         },
         {
           "$ref": "#/$defs/ReportAgentProgress"
+        },
+        {
+          "$ref": "#/$defs/worktreeGraphQuery"
+        },
+        {
+          "$ref": "#/$defs/decompositionPropose"
+        },
+        {
+          "$ref": "#/$defs/assetRegister"
+        },
+        {
+          "$ref": "#/$defs/assetReview"
+        },
+        {
+          "$ref": "#/$defs/assetApprove"
+        },
+        {
+          "$ref": "#/$defs/assetQuery"
         }
       ]
     },
@@ -1938,11 +2052,646 @@
           }
         }
       ]
+    },
+    "worktreeGraphQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "worktree_graph_query"
+            },
+            "required_permission": {
+              "const": "project.read"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "plan_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "plan_id"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "decompositionPropose": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "decomposition_propose"
+            },
+            "required_permission": {
+              "const": "work_item.create"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "plan_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "work_pattern": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "pattern_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "pattern_id",
+                      "version"
+                    ]
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_id": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                        },
+                        "parent": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "node_type": {
+                          "enum": [
+                            "work_package",
+                            "work_item",
+                            "gate"
+                          ]
+                        },
+                        "slot_key": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                        },
+                        "human_code": {
+                          "type": "string",
+                          "pattern": "^MST-(WP|WI)-[0-9]{5}$"
+                        },
+                        "spec": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "acceptance_criteria": {
+                              "type": "array",
+                              "maxItems": 50,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              }
+                            },
+                            "repo": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "baseline_sha": {
+                              "type": "string",
+                              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                            },
+                            "workspace_paths": {
+                              "type": "array",
+                              "maxItems": 50,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              }
+                            },
+                            "owning_capability": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+                            },
+                            "budget_units": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "deadline": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "priority": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9
+                            },
+                            "required_inputs": {
+                              "type": "array",
+                              "maxItems": 50,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                              }
+                            },
+                            "success_threshold": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "all",
+                                    "any",
+                                    "quorum"
+                                  ]
+                                },
+                                "k": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ]
+                            },
+                            "failure_policy": {
+                              "enum": [
+                                "fail_fast",
+                                "collect_all",
+                                "needs_human"
+                              ]
+                            },
+                            "cancel_policy": {
+                              "enum": [
+                                "cascade_required",
+                                "detach_optional",
+                                "none"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "title"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "local_id",
+                        "parent",
+                        "node_type",
+                        "slot_key",
+                        "human_code",
+                        "spec"
+                      ]
+                    }
+                  },
+                  "dependencies": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "to": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "requirement": {
+                          "enum": [
+                            "required",
+                            "optional"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ]
+                    }
+                  },
+                  "flows": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "node": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "direction": {
+                          "enum": [
+                            "consumes",
+                            "produces"
+                          ]
+                        },
+                        "asset_ref": {
+                          "type": "string",
+                          "pattern": "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+                        },
+                        "port_key": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "node",
+                        "direction",
+                        "asset_ref",
+                        "port_key"
+                      ]
+                    }
+                  },
+                  "expected_graph_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "plan_id",
+                  "work_pattern",
+                  "nodes",
+                  "expected_graph_version",
+                  "idempotency_key"
+                ]
+              }
+            },
+            "audit_event": {
+              "const": "mcp.decomposition_propose.requested"
+            },
+            "idempotency": {
+              "const": {
+                "required": true,
+                "key_field": "idempotency_key",
+                "scope": "principal_project_tool",
+                "ttl_seconds": 86400,
+                "replay_semantics": "return_original_result",
+                "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+              }
+            },
+            "concurrency": {
+              "const": {
+                "strategy": "expected_version",
+                "token_field": "expected_version",
+                "conflict_error": "CONCURRENCY_CONFLICT"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assetRegister": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "asset_register"
+            },
+            "required_permission": {
+              "const": "work_item.create"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+                  },
+                  "asset_type": {
+                    "enum": [
+                      "blueprint",
+                      "prd",
+                      "research",
+                      "bom",
+                      "hld",
+                      "detailed-design",
+                      "test-plan",
+                      "test-report",
+                      "sec-review",
+                      "ops-runbook",
+                      "deploy-plan",
+                      "release-note",
+                      "incident",
+                      "retrospective",
+                      "legacy-intake"
+                    ]
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "sensitivity": {
+                    "enum": [
+                      "public",
+                      "internal",
+                      "confidential"
+                    ]
+                  },
+                  "source_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "content_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048
+                  },
+                  "supersedes_ref": {
+                    "type": "string",
+                    "pattern": "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+                  },
+                  "reviewers": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  },
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "asset_id",
+                  "asset_type",
+                  "title",
+                  "sensitivity",
+                  "source_digest",
+                  "idempotency_key"
+                ]
+              }
+            },
+            "audit_event": {
+              "const": "mcp.asset_register.requested"
+            },
+            "idempotency": {
+              "const": {
+                "required": true,
+                "key_field": "idempotency_key",
+                "scope": "principal_project_tool",
+                "ttl_seconds": 86400,
+                "replay_semantics": "return_original_result",
+                "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+              }
+            },
+            "concurrency": {
+              "const": {
+                "strategy": "expected_absent",
+                "token_field": "expected_absent",
+                "conflict_error": "CONCURRENCY_CONFLICT"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assetReview": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "asset_review"
+            },
+            "required_permission": {
+              "const": "quality_policy.review"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "asset_id",
+                  "version",
+                  "idempotency_key"
+                ]
+              }
+            },
+            "audit_event": {
+              "const": "mcp.asset_review.recorded"
+            },
+            "idempotency": {
+              "const": {
+                "required": true,
+                "key_field": "idempotency_key",
+                "scope": "principal_project_tool",
+                "ttl_seconds": 86400,
+                "replay_semantics": "return_original_result",
+                "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+              }
+            },
+            "concurrency": {
+              "const": {
+                "strategy": "expected_version",
+                "token_field": "expected_version",
+                "conflict_error": "CONCURRENCY_CONFLICT"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assetApprove": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/mutatingTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "asset_approve"
+            },
+            "required_permission": {
+              "const": "waiver.approve"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  }
+                },
+                "required": [
+                  "asset_id",
+                  "version",
+                  "idempotency_key"
+                ]
+              }
+            },
+            "audit_event": {
+              "const": "mcp.asset_approve.recorded"
+            },
+            "idempotency": {
+              "const": {
+                "required": true,
+                "key_field": "idempotency_key",
+                "scope": "principal_project_tool",
+                "ttl_seconds": 86400,
+                "replay_semantics": "return_original_result",
+                "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+              }
+            },
+            "concurrency": {
+              "const": {
+                "strategy": "expected_version",
+                "token_field": "expected_version",
+                "conflict_error": "CONCURRENCY_CONFLICT"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assetQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/readOnlyTool"
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "asset_query"
+            },
+            "required_permission": {
+              "const": "project.read"
+            },
+            "input_schema": {
+              "const": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+                  },
+                  "asset_type": {
+                    "enum": [
+                      "blueprint",
+                      "prd",
+                      "research",
+                      "bom",
+                      "hld",
+                      "detailed-design",
+                      "test-plan",
+                      "test-report",
+                      "sec-review",
+                      "ops-runbook",
+                      "deploy-plan",
+                      "release-note",
+                      "incident",
+                      "retrospective",
+                      "legacy-intake"
+                    ]
+                  },
+                  "sensitivity": {
+                    "enum": [
+                      "public",
+                      "internal",
+                      "confidential"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "draft",
+                      "reviewed",
+                      "approved",
+                      "superseded"
+                    ]
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "examples": [
     {
-      "version": "3.1",
+      "version": "3.2",
       "work_item_states": [
         "draft",
         "queued",
@@ -2933,6 +3682,539 @@
             "strategy": "expected_version",
             "token_field": "expected_version",
             "conflict_error": "CONCURRENCY_CONFLICT"
+          }
+        },
+        {
+          "name": "worktree_graph_query",
+          "description": "Read one work plan's graph: containment tree, node statuses, the current plan revision and per-node JoinPolicy (success_threshold) evidence view.",
+          "mutating": false,
+          "required_permission": "project.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "plan_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "plan_id"
+            ]
+          }
+        },
+        {
+          "name": "decomposition_propose",
+          "description": "Submit one DecompositionProposal batch to the plan's draft revision behind the graph CAS. Coordinator-only; the server validates scope/cycle/budget/resource and decides applied/rejected with stable violation codes.",
+          "mutating": true,
+          "required_permission": "work_item.create",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "plan_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "work_pattern": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "pattern_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "pattern_id",
+                  "version"
+                ]
+              },
+              "nodes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "local_id": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+                    },
+                    "parent": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "node_type": {
+                      "enum": [
+                        "work_package",
+                        "work_item",
+                        "gate"
+                      ]
+                    },
+                    "slot_key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                    },
+                    "human_code": {
+                      "type": "string",
+                      "pattern": "^MST-(WP|WI)-[0-9]{5}$"
+                    },
+                    "spec": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "acceptance_criteria": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          }
+                        },
+                        "repo": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "baseline_sha": {
+                          "type": "string",
+                          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                        },
+                        "workspace_paths": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512
+                          }
+                        },
+                        "owning_capability": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+                        },
+                        "budget_units": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "deadline": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "priority": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9
+                        },
+                        "required_inputs": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                          }
+                        },
+                        "success_threshold": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "all",
+                                "any",
+                                "quorum"
+                              ]
+                            },
+                            "k": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "failure_policy": {
+                          "enum": [
+                            "fail_fast",
+                            "collect_all",
+                            "needs_human"
+                          ]
+                        },
+                        "cancel_policy": {
+                          "enum": [
+                            "cascade_required",
+                            "detach_optional",
+                            "none"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "local_id",
+                    "parent",
+                    "node_type",
+                    "slot_key",
+                    "human_code",
+                    "spec"
+                  ]
+                }
+              },
+              "dependencies": {
+                "type": "array",
+                "maxItems": 500,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "to": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "requirement": {
+                      "enum": [
+                        "required",
+                        "optional"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to"
+                  ]
+                }
+              },
+              "flows": {
+                "type": "array",
+                "maxItems": 500,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "node": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "direction": {
+                      "enum": [
+                        "consumes",
+                        "produces"
+                      ]
+                    },
+                    "asset_ref": {
+                      "type": "string",
+                      "pattern": "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+                    },
+                    "port_key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9.]{0,63}$"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "direction",
+                    "asset_ref",
+                    "port_key"
+                  ]
+                }
+              },
+              "expected_graph_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "plan_id",
+              "work_pattern",
+              "nodes",
+              "expected_graph_version",
+              "idempotency_key"
+            ]
+          },
+          "audit_event": "mcp.decomposition_propose.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          }
+        },
+        {
+          "name": "asset_register",
+          "description": "Register one asset version into the ledger (digest+pointer mode). Machine checks: frozen type catalog, digest format, sensitivity rules, supersedes chain, confidential pointer-only; the server derives the version and owner.",
+          "mutating": true,
+          "required_permission": "work_item.create",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+              },
+              "asset_type": {
+                "enum": [
+                  "blueprint",
+                  "prd",
+                  "research",
+                  "bom",
+                  "hld",
+                  "detailed-design",
+                  "test-plan",
+                  "test-report",
+                  "sec-review",
+                  "ops-runbook",
+                  "deploy-plan",
+                  "release-note",
+                  "incident",
+                  "retrospective",
+                  "legacy-intake"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "sensitivity": {
+                "enum": [
+                  "public",
+                  "internal",
+                  "confidential"
+                ]
+              },
+              "source_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "content_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "supersedes_ref": {
+                "type": "string",
+                "pattern": "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+              },
+              "reviewers": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "summary": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "asset_id",
+              "asset_type",
+              "title",
+              "sensitivity",
+              "source_digest",
+              "idempotency_key"
+            ]
+          },
+          "audit_event": "mcp.asset_register.requested",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_absent",
+            "token_field": "expected_absent",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          }
+        },
+        {
+          "name": "asset_review",
+          "description": "Record the review pass of one asset version (draft to reviewed). Functional review plane; the reviewer may not be the registering owner.",
+          "mutating": true,
+          "required_permission": "quality_policy.review",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "asset_id",
+              "version",
+              "idempotency_key"
+            ]
+          },
+          "audit_event": "mcp.asset_review.recorded",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          }
+        },
+        {
+          "name": "asset_approve",
+          "description": "Approve one reviewed asset version (reviewed to approved; the superseded predecessor and stale gate bindings flip in the same transaction). Functional release plane; delegated principals are vetoed.",
+          "mutating": true,
+          "required_permission": "waiver.approve",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "idempotency_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              }
+            },
+            "required": [
+              "asset_id",
+              "version",
+              "idempotency_key"
+            ]
+          },
+          "audit_event": "mcp.asset_approve.recorded",
+          "idempotency": {
+            "required": true,
+            "key_field": "idempotency_key",
+            "scope": "principal_project_tool",
+            "ttl_seconds": 86400,
+            "replay_semantics": "return_original_result",
+            "payload_mismatch_error": "IDEMPOTENCY_KEY_REUSED"
+          },
+          "concurrency": {
+            "strategy": "expected_version",
+            "token_field": "expected_version",
+            "conflict_error": "CONCURRENCY_CONFLICT"
+          }
+        },
+        {
+          "name": "asset_query",
+          "description": "Query the asset ledger: filter by asset identity (full version chain), type, sensitivity or lifecycle status.",
+          "mutating": false,
+          "required_permission": "project.read",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^ART-[a-z-]+-[0-9]{3,}$"
+              },
+              "asset_type": {
+                "enum": [
+                  "blueprint",
+                  "prd",
+                  "research",
+                  "bom",
+                  "hld",
+                  "detailed-design",
+                  "test-plan",
+                  "test-report",
+                  "sec-review",
+                  "ops-runbook",
+                  "deploy-plan",
+                  "release-note",
+                  "incident",
+                  "retrospective",
+                  "legacy-intake"
+                ]
+              },
+              "sensitivity": {
+                "enum": [
+                  "public",
+                  "internal",
+                  "confidential"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "reviewed",
+                  "approved",
+                  "superseded"
+                ]
+              }
+            },
+            "required": []
           }
         }
       ]

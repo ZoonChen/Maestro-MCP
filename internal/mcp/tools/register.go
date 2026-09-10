@@ -31,6 +31,11 @@ type Services struct {
 	Validation *service.ValidationService
 	Contract   *service.ContractService
 	Context    *service.ContextService
+	// WorkGraph and Assets carry the J2a/J2b PostgreSQL surfaces
+	// (ADR-009). They stay nil on SQLite deployments: the J2c tools then
+	// answer with explicit boundary states instead of fabricated data.
+	WorkGraph WorkGraphStore
+	Assets    AssetStore
 }
 
 // guardTool wraps one tool handler with the unified policy decision

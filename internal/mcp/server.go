@@ -19,11 +19,12 @@ func NewMaestroMCPServer(svc *tools.Services) *mcpserver.MCPServer {
 	)
 
 	// Register tools: the frozen v3 catalog (docs/specs/mcp/tools.schema.json)
-	// is the exact public surface — fourteen tools, nothing legacy.
+	// is the exact public surface — twenty tools, nothing legacy.
 	tools.RegisterReadTools(s, svc)
 	tools.RegisterManagementTools(s, svc)
 	tools.RegisterWorkerTools(s, svc)
 	tools.RegisterVerifierTools(s, svc)
+	tools.RegisterWorkGraphTools(s, svc)
 
 	// Register resources
 	RegisterResources(s, svc)

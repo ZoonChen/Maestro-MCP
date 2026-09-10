@@ -111,6 +111,15 @@ const CODE_COPY = {
   REPLAY_APPROVAL_INVALID: '重放审批未通过：原因需为不少于 16 个字符的实质说明。',
   APPROVER_IDENTITY_MISMATCH: '重放审批人只能是你当前登录的身份（服务端从凭据推导，不接受代填）。',
   SLO_AVAILABILITY_UNMEASURED: '窗口内没有可用性遥测数据，SLO 快照拒绝编造数字（fail-closed）。',
+  GRAPH_VERSION_MISMATCH: '工作图版本不匹配：图已被其他操作修改，请读取最新图后重试（CAS）。',
+  NODE_VERSION_MISMATCH: '节点版本不匹配：节点已被其他操作修改，请读取最新状态后重试（CAS）。',
+  REVISION_SEALED: '该计划修订已封板（不可变）；结构变更需要新修订（重规划）。',
+  SEAL_REJECTED: '封板被拒绝：请检查必填输入端口绑定与图版本后重试。',
+  WORK_PLAN_NOT_FOUND: '工作计划不存在或不在当前项目范围内。',
+  ASSET_NOT_FOUND: '资产版本不存在或不在当前项目范围内。',
+  ASSET_ALREADY_REGISTERED: '该资产版本已登记（幂等冲突）。',
+  ASSET_TRANSITION_INVALID: '资产生命周期状态不允许该流转（draft→reviewed→approved）。',
+  OPERATION_DISABLED: '该操作在当前部署未启用（需要 PostgreSQL 控制面）。',
 };
 
 const STATUS_COPY = {

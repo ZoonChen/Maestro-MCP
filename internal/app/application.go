@@ -90,6 +90,11 @@ type Options struct {
 	// (M1-MCP-001): project, session and worker identity are assigned here,
 	// never accepted from tool arguments. Nil leaves claim tools fail-closed.
 	MCPBinding *maestrotools.TransportBinding
+	// MCPWorkGraph and MCPAssets back the J2c work-graph/asset-ledger MCP
+	// tools (ADR-009). They stay nil on SQLite deployments: the tools then
+	// answer with explicit boundary states, never fabricated data.
+	MCPWorkGraph maestrotools.WorkGraphStore
+	MCPAssets    maestrotools.AssetStore
 	// ControlPlane mounts the frozen control-plane.yaml human tree under
 	// /api/v3 (quality, GitLab registry); nil keeps it unexposed.
 	ControlPlane *handler.ControlPlaneOptions
@@ -304,6 +309,8 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 		Validation: validationService,
 		Contract:   contractService,
 		Context:    contextService,
+		WorkGraph:  opts.MCPWorkGraph,
+		Assets:     opts.MCPAssets,
 	}
 	mcpServer := maestromcp.NewMaestroMCPServer(mcpServices)
 

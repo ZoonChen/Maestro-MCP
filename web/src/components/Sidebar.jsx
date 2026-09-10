@@ -70,6 +70,9 @@ export function Sidebar({
         {navItem('HITL 豁免审批', '#/waivers', view === 'waivers')}
         {navItem('试点发布', '#/pilot', view === 'pilot')}
         {navItem('Jira 连接器', '#/jira', view === 'jira')}
+        {navItem('Work Graph', '#/workgraph', view === 'workgraph')}
+        {navItem('资产台账', '#/assets', view === 'assets')}
+        {navItem('拆解提案审批', '#/proposals', view === 'proposals')}
         {navItem('八场景地图', '#/scenarios', view === 'scenarios')}
         <div class="sidebar-section">质量</div>
         {navItem('MR · Pipeline', '#/mrs', view === 'mrs')}

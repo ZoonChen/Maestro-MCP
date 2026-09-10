@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ZoonChen/Maestro-MCP/internal/budget"
 	"github.com/ZoonChen/Maestro-MCP/internal/workgraph"
+	"github.com/google/uuid"
 )
 
 // Graph-path execution (J2b-2/J2b-3): replan, claim with the
@@ -35,8 +35,8 @@ type ReplanPlanRevisionInput struct {
 	// have their outcome invalidated (status reset) in the new
 	// revision — the stale propagation of a re-plan.
 	SpecOverrides map[string][]byte
-	Actor                 string
-	CorrelationID         string
+	Actor         string
+	CorrelationID string
 }
 
 // ReplanPlanRevision creates the next draft revision: every node's
@@ -287,8 +287,8 @@ func (s pgWorkGraphStore) ClaimNextWorkNode(ctx context.Context, in ClaimWorkNod
 
 	type candidate struct {
 		nodeID, humanCode, nodeRevisionID, specDigest string
-		nodeVersion                                    int64
-		spec                                           workgraph.NodeSpec
+		nodeVersion                                   int64
+		spec                                          workgraph.NodeSpec
 	}
 	candidates := []candidate{}
 	rows, err := tx.QueryContext(ctx, `
@@ -700,13 +700,13 @@ func (s pgWorkGraphStore) WorkNodeAttemptHeartbeat(ctx context.Context, attemptI
 
 // CompleteWorkNodeAttemptInput records one terminal outcome.
 type CompleteWorkNodeAttemptInput struct {
-	AttemptID             string
-	WorkerID              string
-	ConnectionGeneration  string
-	Outcome               string // succeeded | failed | cancelled | blocked
-	Summary               string
-	UsageUnits            int64
-	Actor                 string
+	AttemptID            string
+	WorkerID             string
+	ConnectionGeneration string
+	Outcome              string // succeeded | failed | cancelled | blocked
+	Summary              string
+	UsageUnits           int64
+	Actor                string
 }
 
 // CompleteWorkNodeAttempt fences on (worker, generation, running),
