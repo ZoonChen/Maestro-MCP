@@ -1,6 +1,8 @@
 # Frozen at version 3.0 by the M1 I1 contract-freeze sprint; extended
-# (agent.progress.report) by the M3 I3 contract-freeze sprint. Permission
-# changes require a contract change request through the integration session.
+# (agent.progress.report) by the M3 I3 contract-freeze sprint; extended
+# (asset.*/workgraph.* families + product/technical/operations functional
+# grants) by the M4 J4 slice closing CR-1/DEC-2. Permission changes
+# require a contract change request through the integration session.
 version: "3.0"
 default_effect: deny
 resource_hiding:
@@ -35,6 +37,8 @@ roles:
       - waiver.revoke
       - gitlab.reconcile
       - pilot.read
+      - asset.read
+      - workgraph.read
     conditions:
       project.create:
         all:
@@ -62,6 +66,10 @@ roles:
       - agent.progress.report
       - gitlab.merge_request.create
       - pilot.read
+      - asset.read
+      - asset.register
+      - workgraph.read
+      - workgraph.propose
     deny:
       - quality_policy.modify
       - protected_branch.merge
@@ -77,6 +85,10 @@ roles:
       - gitlab.status.read
       - gitlab.merge_request.create
       - pilot.read
+      - asset.read
+      - asset.register
+      - workgraph.read
+      - workgraph.propose
     deny:
       - verification.submit_own
       - waiver.approve
@@ -89,6 +101,8 @@ roles:
       - verification.claim
       - verification.submit
       - pilot.read
+      - asset.read
+      - workgraph.read
     conditions:
       verification.submit:
         all:
@@ -103,6 +117,8 @@ roles:
       - quality.read
       - gitlab.status.read
       - pilot.read
+      - asset.read
+      - workgraph.read
     deny:
       - "*.write"
 functional_approvers:
@@ -138,6 +154,10 @@ functional_approvers:
       - remediation_run.create
       - remediation_run.stop
       - agent.progress.report
+      - asset.read
+      - asset.review
+      - asset.approve
+      - workgraph.read
     conditions:
       waiver.approve:
         all:
@@ -152,6 +172,23 @@ functional_approvers:
           - subject_id_not_equal: waiver_requester_id
           - subject_id_not_equal: change_author_id
           - delegation_owner_not_equal: waiver_requester_id
+  technical_lead:
+    allow:
+      - asset.read
+      - asset.review
+      - asset.approve
+      - workgraph.read
+      - workgraph.seal
+  product_owner:
+    allow:
+      - asset.read
+      - asset.approve
+      - workgraph.read
+  operations_owner:
+    allow:
+      - asset.read
+      - asset.approve
+      - workgraph.read
 service_identities:
   runner_device:
     allow:

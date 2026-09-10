@@ -15,11 +15,14 @@ import (
 
 // delegationDeniedActions are refused for delegated (agent) principals per
 // the frozen delegation flags: an agent never self-reviews, waives or
-// merges, and service accounts never inherit human roles.
+// merges, and service accounts never inherit human roles. asset.approve
+// rides the same veto (J4): the asset release is a human functional-owner
+// action; agents may still register and review assets.
 var delegationDeniedActions = map[string]struct{}{
 	"waiver.approve":          {},
 	"waiver.approve.security": {},
 	"waiver.approve.quality":  {},
+	"asset.approve":           {},
 	"verification.submit":     {},
 	"protected_branch.merge":  {},
 }
@@ -144,7 +147,8 @@ func (p *Policy) AuthorizeService(_ context.Context, identityName, action string
 }
 
 // AllowFunctionalRole evaluates functional approver authorities
-// (security_owner, qa_owner). Static grant check only: the frozen
+// (security_owner, qa_owner and the J4 product_owner, technical_lead,
+// operations_owner planes). Static grant check only: the frozen
 // conditions (approver-not-author, membership, category match) are
 // enforced by the calling surface with request context.
 func (p *Policy) AllowFunctionalRole(_ context.Context, approverRole, action string) bool {

@@ -79,8 +79,9 @@ func TestAuthorizeFunctionalRoles(t *testing.T) {
 	})
 
 	t.Run("bindable functions without frozen grants authorize nothing", func(t *testing.T) {
-		// All five functions are bindable (migration 0016 enum); only
-		// security_owner and qa_owner carry frozen grants today.
+		// All five functions are bindable (migration 0016 enum); for the
+		// waiver actions only security_owner and qa_owner carry frozen
+		// grants — the J4 asset/workgraph planes do not widen waivers.
 		for _, function := range []string{"operations_owner", "product_owner", "technical_lead"} {
 			decision := p.Authorize(ctx, functionalPrincipal(project, "viewer", function),
 				"waiver.approve", model.Resource{Type: "waiver", ProjectID: project})
