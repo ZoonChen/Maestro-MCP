@@ -852,6 +852,121 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/work-graph:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [WorkGraph]
+      operationId: listWorkPlans
+      summary: List the project's work plans
+      description: >
+        W4.5 J2c console surface (ADR-009): every plan with its human
+        code, lifecycle status and graph CAS version in human-code
+        order. Read-only like the graph itself; agents query the same
+        facts through the MCP worktree_graph_query tool.
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The project's work plans
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkPlanList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/work-graph/plans/{plan_id}:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: plan_id
+        in: path
+        required: true
+        description: Work plan identifier
+        schema: {type: string, format: uuid}
+    get:
+      tags: [WorkGraph]
+      operationId: getWorkGraphPlan
+      summary: Read one work plan's full graph view
+      description: >
+        The graph detail view: containment tree with node statuses, the
+        current plan revision (sealed evidence digest + node manifest)
+        and the typed node specs carrying the JoinPolicy
+        (success_threshold). The decided decomposition proposals list
+        rides along for the HITL review. Scope hides plans outside the
+        project as absence.
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The plan's graph, revision and proposal views
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkGraphPlanView'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/work-graph/plans/{plan_id}/seal:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: plan_id
+        in: path
+        required: true
+        description: Work plan identifier
+        schema: {type: string, format: uuid}
+    post:
+      tags: [WorkGraph]
+      operationId: sealWorkGraphPlan
+      summary: Approve and freeze the plan's draft revision (HITL)
+      description: >
+        The human checkpoint of ADR-009 section 2/4: a human approves
+        the plan semantics and the server seals the draft revision
+        behind the graph CAS (the 0017 triggers then reject any further
+        structural mutation; claimable work requires a sealed
+        revision). This operation is deliberately console-only — the
+        MCP catalog never exposes it and delegated principals have no
+        path to it.
+      x-maestro-permission: project_policy.strengthen
+      x-maestro-audit-event: workgraph.plan.sealed
+      x-maestro-idempotency: sealed-revision-collapse
+      x-maestro-concurrency: graph-version-cas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkGraphSealRequest'}
+      responses:
+        '200':
+          description: The sealed revision (replay answers the stored one)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkGraphSealResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /projects/{project_id}/assets:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [WorkGraph]
+      operationId: listAssets
+      summary: List the project's asset ledger rows
+      description: >
+        The ledger view (J2a migration 0017): every asset version with
+        its lifecycle status, sensitivity, supersedes chain reference
+        and content pointer. Lifecycle/version-chain/sensitivity
+        filtering happens client-side; confidential content itself
+        never lives in the control plane (pointer-only by design).
+      x-maestro-permission: project.read
+      responses:
+        '200':
+          description: The project's asset rows (all versions)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssetList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/pilot-flags/{flag}:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -1951,6 +2066,158 @@ components:
         anchors:
           type: array
           items: {$ref: '#/components/schemas/JiraAnchor'}
+    WorkPlanList:
+      type: object
+      additionalProperties: false
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: {$ref: '#/components/schemas/WorkPlanRow'}
+    WorkPlanRow:
+      type: object
+      additionalProperties: false
+      required: [id, title, human_code, root_node_id, graph_version, status]
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string}
+        human_code: {type: string, pattern: '^MST-WP-[0-9]{5}$'}
+        root_node_id: {type: string, format: uuid}
+        graph_version: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [draft, proposed, sealed, executing, aggregating, satisfied, failed, needs_human, replanned, cancelled]}
+    WorkGraphPlanView:
+      type: object
+      additionalProperties: false
+      required: [plan, nodes, current_revision, node_specs, proposals]
+      properties:
+        plan: {$ref: '#/components/schemas/WorkPlanRow'}
+        nodes:
+          type: array
+          items: {$ref: '#/components/schemas/WorkNodeRow'}
+        current_revision: {$ref: '#/components/schemas/WorkPlanRevisionView'}
+        node_specs:
+          type: array
+          items: {$ref: '#/components/schemas/WorkNodeSpecView'}
+        proposals:
+          type: array
+          items: {$ref: '#/components/schemas/DecompositionProposalRow'}
+    WorkNodeRow:
+      type: object
+      additionalProperties: false
+      required: [id, parent_node_id, node_type, slot_key, human_code, status, node_version, depth]
+      properties:
+        id: {type: string, format: uuid}
+        parent_node_id: {type: string, format: uuid, description: 'empty for the root package'}
+        node_type: {type: string, enum: [work_package, work_item, gate]}
+        slot_key: {type: string}
+        human_code: {type: string, pattern: '^MST-(WP|WI)-[0-9]{5}$'}
+        status: {type: string}
+        node_version: {type: integer, format: int64, minimum: 1}
+        depth: {type: integer, minimum: 0}
+    WorkPlanRevisionView:
+      type: object
+      additionalProperties: false
+      required: [available]
+      properties:
+        available: {type: boolean}
+        id: {type: string, format: uuid}
+        revision_no: {type: integer, minimum: 1}
+        status: {type: string, enum: [draft, sealed]}
+        spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        sealed_at: {type: string, description: 'RFC3339, empty while draft'}
+        node_manifest: {type: object}
+    WorkNodeSpecView:
+      type: object
+      additionalProperties: false
+      required: [node_id]
+      properties:
+        node_id: {type: string, format: uuid}
+        title: {type: string}
+        success_threshold:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: {type: string, enum: [all, any, quorum], description: 'The JoinPolicy'}
+            k: {type: integer, minimum: 1}
+        budget_units: {type: integer, format: int64}
+        deadline: {type: string}
+        failure_policy: {type: string, enum: [fail_fast, collect_all, needs_human]}
+        cancel_policy: {type: string, enum: [cascade_required, detach_optional, none]}
+    DecompositionProposalRow:
+      type: object
+      additionalProperties: false
+      required: [id, status, expected_graph_version, violations, applied_node_ids, submitted_by, decided_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [submitted, applied, rejected]}
+        expected_graph_version: {type: integer, format: int64, minimum: 1}
+        violations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, class, message]
+            properties:
+              code: {type: string, examples: [WGP-RS-009]}
+              class: {type: string, enum: [scope, cycle, budget, resource]}
+              node: {type: string}
+              field: {type: string}
+              message: {type: string}
+        applied_node_ids: {type: array, items: {type: string, format: uuid}}
+        submitted_by: {type: string}
+        decided_at: {type: string}
+        created_at: {type: string}
+    WorkGraphSealRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_graph_version]
+      properties:
+        expected_graph_version: {type: integer, format: int64, minimum: 1, description: 'Graph CAS token the approval was read against'}
+    WorkGraphSealResult:
+      type: object
+      additionalProperties: false
+      required: [revision, replay]
+      properties:
+        revision:
+          type: object
+          additionalProperties: false
+          required: [id, revision_no, status, spec_digest, sealed_at]
+          properties:
+            id: {type: string, format: uuid}
+            revision_no: {type: integer, minimum: 1}
+            status: {type: string, enum: [sealed]}
+            spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+            sealed_at: {type: string}
+        replay: {type: boolean, description: 'true when the revision was already sealed (idempotent collapse)'}
+    AssetList:
+      type: object
+      additionalProperties: false
+      required: [assets]
+      properties:
+        assets:
+          type: array
+          items: {$ref: '#/components/schemas/AssetRow'}
+    AssetRow:
+      type: object
+      additionalProperties: false
+      required: [asset_id, version, asset_type, title, status, owner_principal, sensitivity, supersedes_ref, source_digest, content_ref, reviewers, created_at]
+      properties:
+        asset_id: {type: string, pattern: '^ART-[a-z-]+-[0-9]{3,}$'}
+        version: {type: integer, minimum: 1}
+        asset_type: {type: string, examples: [blueprint]}
+        title: {type: string}
+        status: {type: string, enum: [draft, reviewed, approved, superseded]}
+        owner_principal: {type: string}
+        sensitivity: {type: string, enum: [public, internal, confidential]}
+        supersedes_ref: {type: string, pattern: '^ART-[a-z-]+-[0-9]{3,}@[0-9]+$', description: 'empty for version 1'}
+        source_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        content_ref: {type: string}
+        reviewers: {type: array, items: {type: string}}
+        created_at: {type: string}
+        reviewed_at: {type: string}
+        approved_at: {type: string}
+        superseded_at: {type: string}
     JiraAnchor:
       type: object
       additionalProperties: false

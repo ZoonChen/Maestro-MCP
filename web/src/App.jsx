@@ -10,6 +10,9 @@ import { MergePipelineView } from './components/MergePipelineView';
 import { ScenarioMap } from './components/ScenarioMap';
 import { PilotFlagsView } from './components/PilotFlagsView';
 import { JiraConnectorView } from './components/JiraConnectorView';
+import { WorkGraphView } from './components/WorkGraphView';
+import { AssetLedgerView } from './components/AssetLedgerView';
+import { ProposalReviewView } from './components/ProposalReviewView';
 import { AuditExportView } from './components/AuditExportView';
 import { SLOSnapshotView } from './components/SLOSnapshotView';
 import { DeadLetterView } from './components/DeadLetterView';
@@ -134,6 +137,12 @@ export function App({ auth }) {
           <PilotFlagsView projects={projects} projectScope={projectScope} />
         ) : view === 'jira' ? (
           <JiraConnectorView projects={projects} projectScope={projectScope} />
+        ) : view === 'workgraph' ? (
+          <WorkGraphView projects={projects} projectScope={projectScope} />
+        ) : view === 'assets' ? (
+          <AssetLedgerView projects={projects} projectScope={projectScope} />
+        ) : view === 'proposals' ? (
+          <ProposalReviewView projects={projects} projectScope={projectScope} />
         ) : view === 'admin' ? (
           <section class="gov-page" aria-labelledby="admin-area-title">
             <header class="gov-header">

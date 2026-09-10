@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/ZoonChen/Maestro-MCP/internal/workgraph"
+	"github.com/google/uuid"
 )
 
 // PostgreSQL implementation of the J2b decomposition protocol and
@@ -203,12 +203,12 @@ func (s pgWorkGraphStore) GetWorkPattern(ctx context.Context, patternID string) 
 
 // SubmitDecompositionProposalInput carries one Coordinator proposal.
 type SubmitDecompositionProposalInput struct {
-	Proposal  workgraph.DecompositionProposal
-	Payload   []byte // the wire document as received (audited verbatim)
+	Proposal       workgraph.DecompositionProposal
+	Payload        []byte // the wire document as received (audited verbatim)
 	IdempotencyKey string
 	SubmittedBy    string
 	CorrelationID  string
-	Limits    workgraph.ProposalLimits
+	Limits         workgraph.ProposalLimits
 }
 
 // SubmitDecompositionProposal validates and decides one proposal:
@@ -357,6 +357,31 @@ func (s pgWorkGraphStore) GetDecompositionProposal(ctx context.Context, id strin
 	return scanDecompositionProposal(row.Scan)
 }
 
+// ListDecompositionProposals returns every decided proposal of one plan,
+// newest first (J2c read surface for the HITL review view).
+func (s pgWorkGraphStore) ListDecompositionProposals(ctx context.Context, planID string) ([]*DecompositionProposalRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, project_id::text, plan_id::text, work_pattern_id::text,
+		       expected_graph_version, payload, idempotency_key, status,
+		       COALESCE(violations, 'null'), COALESCE(applied_node_ids, 'null'),
+		       submitted_by, COALESCE(decided_at::text, ''), created_at::text
+		FROM decomposition_proposals WHERE plan_id = $1::uuid
+		ORDER BY created_at DESC`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("workgraph: list proposals: %w", err)
+	}
+	defer rows.Close()
+	records := []*DecompositionProposalRecord{}
+	for rows.Next() {
+		record, scanErr := scanDecompositionProposal(rows.Scan)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 func scanDecompositionProposal(scan func(dest ...any) error) (*DecompositionProposalRecord, error) {
 	var record DecompositionProposalRecord
 	var violations, appliedIDs []byte
@@ -378,12 +403,12 @@ func scanDecompositionProposal(scan func(dest ...any) error) (*DecompositionProp
 // needs about the plan the proposal targets.
 func loadProposalContext(ctx context.Context, tx *sql.Tx, p workgraph.DecompositionProposal) (*workgraph.ProposalContext, error) {
 	out := &workgraph.ProposalContext{
-		Nodes:       map[string]workgraph.NodeFact{},
-		ChildCount:  map[string]int{},
-		SlotsUnder:  map[string]map[string]bool{},
-		HumanCodes:  map[string]bool{},
-		Consumes:    map[string]map[string]bool{},
-		Assets:      map[string]workgraph.AssetFact{},
+		Nodes:         map[string]workgraph.NodeFact{},
+		ChildCount:    map[string]int{},
+		SlotsUnder:    map[string]map[string]bool{},
+		HumanCodes:    map[string]bool{},
+		Consumes:      map[string]map[string]bool{},
+		Assets:        map[string]workgraph.AssetFact{},
 		PatternActive: false,
 	}
 

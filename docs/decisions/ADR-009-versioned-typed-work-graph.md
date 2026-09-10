@@ -16,7 +16,7 @@ last_verified_commit: null
 
 # ADR-009：采用分层类型化 Work Graph 与版本化 WorkPattern
 
-> 决策状态：approved（2026-09-10 四方批准，记录见文末"评审记录"；J2a 切片随本 MR 落地模型与存储层，拆解协议/调度/接口仍未实现）。当前代码中 Task 的 ParentTaskID 与 RelationType 仍是既有路径上的任务关系，Work Graph 新表自迁移 0017 起并存。
+> 决策状态：approved（2026-09-10 四方批准，记录见文末"评审记录"）。切片回收进度：J2a 已落模型与存储层（迁移 0017）；J2b 已落拆解协议与调度（迁移 0019 + internal/workgraph 纯协议包）；J2c（本 MR）落 MCP 工具面与控制台视图（工具目录 3.2：六件 J2c 工具 + /api/v3 work-graph/资产台账/seal HITL 面）。追踪矩阵行按 §12 在 V4 收敛仪式统一翻转，翻转前不作为实现完成或验证通过的依据。当前代码中 Task 的 ParentTaskID 与 RelationType 仍是既有路径上的任务关系，Work Graph 新表自迁移 0017 起并存。
 >
 > 实现处置（2026-08-31，owner 决策）：M1-WGP/WGM/WGS 三任务整体移交 V2；V1 以单层任务闭环形态收敛（认证/Runner/领取/执行/验证/部署/备份已实测）。M0.5 阻断清单 #2（ZCode Adapter）/#6（会话-任务绑定）/#7（父子聚合）随本决策在 V2 销号，登记于 V1 复盘。
 >

@@ -70,6 +70,26 @@ var mappings = []mapping{ //nolint:gochecknoglobals // immutable classification 
 	{store.ErrDependencyNotReady, "DEPENDENCY_NOT_READY", "Dependency is not ready", http.StatusBadRequest},
 	{store.ErrFeatureStatusInvalid, "FEATURE_STATUS_INVALID", "Feature status is invalid for this operation", http.StatusBadRequest},
 	{store.ErrContractNotFound, "CONTRACT_NOT_FOUND", "Contract not found", http.StatusNotFound},
+	// Work Graph and asset-ledger sentinels (J2a/J2b stores, surfaced by
+	// the J2c MCP tools and console): CAS conflicts stay conflicts,
+	// lifecycle rejections stay preconditions — never INTERNAL_ERROR.
+	{store.ErrWorkPlanNotFound, "WORK_PLAN_NOT_FOUND", "Work plan not found", http.StatusNotFound},
+	{store.ErrWorkNodeNotFound, "WORK_NODE_NOT_FOUND", "Work node not found", http.StatusNotFound},
+	{store.ErrGraphVersionMismatch, "GRAPH_VERSION_MISMATCH", "Work graph version mismatch, replay on the latest graph", http.StatusConflict},
+	{store.ErrNodeVersionMismatch, "NODE_VERSION_MISMATCH", "Work node version mismatch, replay on the latest node", http.StatusConflict},
+	{store.ErrRevisionSealed, "REVISION_SEALED", "Plan revision is sealed; structural changes need a new revision", http.StatusConflict},
+	{store.ErrSealRejected, "SEAL_REJECTED", "Plan revision cannot be sealed", http.StatusUnprocessableEntity},
+	{store.ErrProposalRejected, "PROPOSAL_REJECTED", "Decomposition proposal rejected", http.StatusUnprocessableEntity},
+	{store.ErrReplanRejected, "REPLAN_REJECTED", "Replan requires the current revision to be sealed", http.StatusConflict},
+	{store.ErrAssetNotFound, "ASSET_NOT_FOUND", "Asset version not found", http.StatusNotFound},
+	{store.ErrAssetTypeInvalid, "ASSET_TYPE_INVALID", "Asset type outside the catalog", http.StatusBadRequest},
+	{store.ErrAssetDigestInvalid, "ASSET_DIGEST_INVALID", "Asset source digest must be sha256:<64hex>", http.StatusBadRequest},
+	{store.ErrAssetSupersedesInvalid, "ASSET_SUPERSEDES_INVALID", "Supersedes reference invalid", http.StatusBadRequest},
+	{store.ErrAssetAlreadyRegistered, "ASSET_ALREADY_REGISTERED", "Asset version already registered", http.StatusConflict},
+	{store.ErrAssetTransitionInvalid, "ASSET_TRANSITION_INVALID", "Asset status transition invalid", http.StatusConflict},
+	{store.ErrAssetGateNotSatisfied, "ASSET_GATE_NOT_SATISFIED", "Locked gate asset not consumable", http.StatusPreconditionFailed},
+	{store.ErrAssetBindingNotFound, "ASSET_BINDING_NOT_FOUND", "Asset gate binding not found", http.StatusNotFound},
+	{store.ErrAssetContentForbidden, "ASSET_CONTENT_FORBIDDEN", "Confidential assets are pointer-only", http.StatusBadRequest},
 	{store.ErrRecoveryIntegrity, "INTERNAL_ERROR", "An unexpected error occurred", http.StatusInternalServerError},
 }
 

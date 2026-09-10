@@ -52,10 +52,10 @@ type Capability struct {
 
 // WorkPlanIntent is the primary problem binding of one plan.
 type WorkPlanIntent struct {
-	PlanID             string
-	ProblemID          string
-	OutcomeContractID  string
-	AttachedBy         string
+	PlanID            string
+	ProblemID         string
+	OutcomeContractID string
+	AttachedBy        string
 }
 
 // WorkPattern is one versioned decomposition template row.
@@ -90,33 +90,33 @@ type DecompositionProposalRecord struct {
 // ExecutionAttempt is one execution_attempts row: the immutable
 // five-way binding plus lease fencing bookkeeping.
 type ExecutionAttempt struct {
-	ID                  string
-	ProjectID           string
-	PlanID              string
-	NodeID              string
-	NodeRevisionID      string
-	SpecDigest          string
-	AttemptNo           int
-	RetryOfAttemptID    string
-	Principal           string
-	Role                string
-	SessionID           string
-	WorkerID            string
-	WorktreePath        string
-	ContextDigest       string
-	ContextSet          []byte
-	BudgetLedgerID      string
-	BudgetUnits         int64
-	LeaseToken          string
-	LeaseEpoch          int64
-	LeaseVersion        int64
+	ID                   string
+	ProjectID            string
+	PlanID               string
+	NodeID               string
+	NodeRevisionID       string
+	SpecDigest           string
+	AttemptNo            int
+	RetryOfAttemptID     string
+	Principal            string
+	Role                 string
+	SessionID            string
+	WorkerID             string
+	WorktreePath         string
+	ContextDigest        string
+	ContextSet           []byte
+	BudgetLedgerID       string
+	BudgetUnits          int64
+	LeaseToken           string
+	LeaseEpoch           int64
+	LeaseVersion         int64
 	ConnectionGeneration string
-	LeaseExpiresAt      string
-	IdempotencyKey      string
-	Status              string
-	Outcome             []byte
-	EndedAt             string
-	CreatedAt           string
+	LeaseExpiresAt       string
+	IdempotencyKey       string
+	Status               string
+	Outcome              []byte
+	EndedAt              string
+	CreatedAt            string
 }
 
 // WorkNodeClaim is the graph-path dispatch outcome (the envelope plus

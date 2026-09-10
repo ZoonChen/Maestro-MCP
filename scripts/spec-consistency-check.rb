@@ -99,7 +99,7 @@ openapi_paths.each do |path|
   end
 end
 
-errors << "expected 31 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 31
+errors << "expected 32 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 32
 
 # The /auth protocol group (task brief E) is a separate spec: its write
 # surface is exactly one cookie-bound protocol operation (logout), which
@@ -162,11 +162,11 @@ mcp_path = File.join(ROOT, "docs/specs/mcp/tools.schema.json")
 mcp_schema = JSON.parse(File.read(mcp_path))
 catalog = Array(mcp_schema["examples"]).first || {}
 tools = Array(catalog["tools"])
-errors << "expected 19 MCP tools, got #{tools.length}" unless tools.length == 19
+errors << "expected 25 MCP tools, got #{tools.length}" unless tools.length == 25
 errors << "merge_task must not be registered" if tools.any? { |tool| tool["name"] == "merge_task" }
 
 mutating_tools = tools.select { |tool| tool["mutating"] == true }
-errors << "expected 10 mutating MCP tools, got #{mutating_tools.length}" unless mutating_tools.length == 10
+errors << "expected 14 mutating MCP tools, got #{mutating_tools.length}" unless mutating_tools.length == 14
 mcp_forbidden_fields = forbidden_scope_fields | Set.new(%w[command command_string shell argv executable network secret])
 
 tools.each do |tool|

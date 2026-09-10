@@ -1316,13 +1316,17 @@ func assertMCPToolCatalog(t *testing.T, ctx context.Context, mcpClient *client.C
 		t.Fatalf("MCP tools/list: %v", err)
 	}
 	// The frozen v3 catalog (docs/specs/mcp/tools.schema.json) is the exact
-	// public surface: fourteen tools, no legacy remnants, no extras.
+	// public surface: twenty tools, no legacy remnants, no extras. The six
+	// J2c work-graph/asset tools register everywhere; against this SQLite
+	// deployment they answer with explicit boundary states, never data.
 	frozenCatalog := map[string]bool{
 		"list_work_items": true, "get_work_item": true, "get_task_context": true,
 		"get_next_task": true, "heartbeat_task": true, "submit_task_result": true,
 		"report_blocker": true, "get_quality_status": true, "get_gitlab_status": true,
 		"create_work_item": true, "cancel_work_item": true, "retry_work_item": true,
 		"get_verification_task": true, "submit_verification": true,
+		"worktree_graph_query": true, "decomposition_propose": true, "asset_register": true,
+		"asset_review": true, "asset_approve": true, "asset_query": true,
 	}
 	listed := map[string]bool{}
 	for _, tool := range result.Tools {

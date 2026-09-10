@@ -853,6 +853,27 @@ func scanWorkPlan(scan func(dest ...any) error) (*WorkPlan, error) {
 	return plan, nil
 }
 
+// ListWorkPlans returns every plan of the project in human-code order
+// (J2c read surface; no filtering is applied server-side beyond scope).
+func (s pgWorkGraphStore) ListWorkPlans(ctx context.Context, projectID string) ([]*WorkPlan, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+workPlanColumns+` FROM work_plans WHERE project_id = $1 ORDER BY human_code`,
+		projectID)
+	if err != nil {
+		return nil, fmt.Errorf("workgraph: list plans: %w", err)
+	}
+	defer rows.Close()
+	plans := []*WorkPlan{}
+	for rows.Next() {
+		plan, scanErr := scanWorkPlan(rows.Scan)
+		if scanErr != nil {
+			return nil, fmt.Errorf("workgraph: scan plan: %w", scanErr)
+		}
+		plans = append(plans, plan)
+	}
+	return plans, rows.Err()
+}
+
 // GetWorkPlan returns the plan by id.
 func (s pgWorkGraphStore) GetWorkPlan(ctx context.Context, planID string) (*WorkPlan, error) {
 	plan, err := scanWorkPlan(func(dest ...any) error {
@@ -958,4 +979,32 @@ func (s pgWorkGraphStore) CurrentPlanRevision(ctx context.Context, planID string
 		return nil, fmt.Errorf("workgraph: current revision id: %w", err)
 	}
 	return s.GetPlanRevision(ctx, revisionID)
+}
+
+// ListNodeRevisionSpecs returns the node specs recorded for one plan
+// revision (J2c read surface): the typed specs carry the JoinPolicy
+// (success_threshold) and policies the status views project from.
+func (s pgWorkGraphStore) ListNodeRevisionSpecs(ctx context.Context, planID, revisionID string) ([]*WorkNodeRevision, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT nr.id, nr.node_id, nr.plan_revision_id, nr.spec_digest, nr.spec, nr.created_at
+		FROM work_node_revisions nr
+		JOIN work_nodes n ON n.id = nr.node_id
+		WHERE nr.plan_revision_id = $1 AND n.plan_id = $2
+		ORDER BY n.human_code`, revisionID, planID)
+	if err != nil {
+		return nil, fmt.Errorf("workgraph: list node specs: %w", err)
+	}
+	defer rows.Close()
+	revisions := []*WorkNodeRevision{}
+	for rows.Next() {
+		revision := &WorkNodeRevision{}
+		var createdAt time.Time
+		if err := rows.Scan(&revision.ID, &revision.NodeID, &revision.PlanRevisionID,
+			&revision.SpecDigest, &revision.Spec, &createdAt); err != nil {
+			return nil, fmt.Errorf("workgraph: scan node spec: %w", err)
+		}
+		revision.CreatedAt = pgTimeString(createdAt)
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
 }

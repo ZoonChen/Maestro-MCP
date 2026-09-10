@@ -304,6 +304,29 @@ func runRunner(ctx context.Context, args []string, ioStreams streams) error {
 		return fail(exitUsage, "CONFIG_INVALID", err)
 	}
 	options.HTTPLogWriter = ioStreams.err
+	// J2c: when the PostgreSQL control plane is configured, the local
+	// runner's work-graph/asset-ledger tools bind to the same store the
+	// console uses. Nothing else composes here — no identity mount, no
+	// v3 routes, no background workers; those are the server's surfaces,
+	// so a local runner never double-runs a consumer.
+	if cfg.PostgresEnabled() {
+		database, openErr := store.OpenPostgres(ctx, cfg.Database.DSN)
+		if openErr != nil {
+			return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", openErr)
+		}
+		if schemaErr := store.ValidatePostgresSchema(ctx, database); schemaErr != nil {
+			_ = database.Close()
+			return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", schemaErr)
+		}
+		pgStore, storeErr := store.NewPostgresStore(database)
+		if storeErr != nil {
+			_ = database.Close()
+			return fail(exitDependency, "DEPENDENCY_UNAVAILABLE", storeErr)
+		}
+		defer func() { _ = database.Close() }()
+		options.MCPWorkGraph = pgStore.WorkGraph()
+		options.MCPAssets = pgStore.Assets()
+	}
 	if boundProject != "" {
 		// The stdio transport's delegated context (single user, single
 		// project): session and worker identity are server-derived from the
@@ -634,6 +657,12 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		options.MCPGuard = guard
 	}
 
+	// J2c work-graph/asset-ledger MCP tools: backed by the same
+	// PostgreSQL store as the console surface; SQLite deployments keep
+	// them honestly degraded (explicit boundary states).
+	options.MCPWorkGraph = pgStore.WorkGraph()
+	options.MCPAssets = pgStore.Assets()
+
 	// v3 Runner API: requires the device-token secret from the
 	// environment (secrets never live in the config file). Without it the
 	// Runner API stays unexposed — honest degradation, never a fake.
@@ -770,6 +799,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			DeadLetters:   handler.NewDeadLetterHandler(pgStore.Webhooks()),
 			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
 			Jira:          handler.NewJiraHandler(pgStore.Jira()),
+			WorkGraph:     handler.NewWorkGraphHandler(pgStore.WorkGraph(), pgStore.Assets()),
 			Scope:         pgStore.Instances(),
 		}
 	}

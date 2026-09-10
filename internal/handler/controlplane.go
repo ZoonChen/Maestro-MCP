@@ -55,6 +55,21 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/jira-reconcile-items": {
 		http.MethodGet: "project.read",
 	},
+	"/api/v3/projects/:pid/work-graph": {
+		http.MethodGet: "project.read",
+	},
+	"/api/v3/projects/:pid/work-graph/plans/:planId": {
+		http.MethodGet: "project.read",
+	},
+	"/api/v3/projects/:pid/work-graph/plans/:planId/seal": {
+		// ADR-009 §2: the human approval of plan semantics. The frozen
+		// matrix has no product_owner grant yet; project_policy.strengthen
+		// is the interim narrowest governance write (CR registered).
+		http.MethodPost: "project_policy.strengthen",
+	},
+	"/api/v3/projects/:pid/assets": {
+		http.MethodGet: "project.read",
+	},
 	"/api/v3/projects/:pid/pilot-flags/:flag": {
 		http.MethodPut: "pilot.write",
 	},
@@ -95,6 +110,7 @@ type ControlPlaneOptions struct {
 	DeadLetters   *DeadLetterHandler
 	Pilot         *PilotHandler
 	Jira          *JiraHandler
+	WorkGraph     *WorkGraphHandler
 	Scope         ScopeGuard
 }
 
@@ -154,6 +170,12 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	if options.Jira != nil {
 		group.GET("/projects/:pid/jira-anchors", options.Jira.ListJiraAnchors)
 		group.GET("/projects/:pid/jira-reconcile-items", options.Jira.ListJiraReconcileItems)
+	}
+	if options.WorkGraph != nil {
+		group.GET("/projects/:pid/work-graph", options.WorkGraph.ListWorkPlans)
+		group.GET("/projects/:pid/work-graph/plans/:planId", options.WorkGraph.GetWorkGraphPlan)
+		group.POST("/projects/:pid/work-graph/plans/:planId/seal", options.WorkGraph.SealPlan)
+		group.GET("/projects/:pid/assets", options.WorkGraph.ListAssets)
 	}
 }
 
