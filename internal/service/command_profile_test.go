@@ -214,7 +214,7 @@ func testCommandProfile(t *testing.T, mode string) CommandProfile {
 	return CommandProfile{
 		ID:               "go-unit",
 		Version:          "3.0.0",
-		ImageDigest:      "sha256:" + strings.Repeat("b", 64),
+		ImageDigest:      "localhost/fixtures/profile@sha256:" + strings.Repeat("b", 64),
 		Argv:             []string{os.Args[0], "-test.run=TestCommandProfileHelperProcess"},
 		WorkingDirectory: ".",
 		Network:          CommandProfileNetwork{Mode: "none", AllowHosts: []string{}},

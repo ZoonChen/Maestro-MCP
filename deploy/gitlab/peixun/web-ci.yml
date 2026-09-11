@@ -1,0 +1,20 @@
+# peixun-web 首条管线：最小但真实的 vitest 冒烟。
+# registry 经 npm_config_registry 固定为 npmmirror（对齐内网 npm 镜像语义）；
+# 产物含 vitest junit 报告（P5a-2 验收：vitest 报告产物）。
+stages: [verify]
+
+variables:
+  npm_config_registry: "https://registry.npmmirror.com"
+
+verify:vitest:
+  stage: verify
+  image: node:20-bookworm-slim
+  script:
+    - cd ci-smoke
+    - npm ci
+    - npm test -- --reporter=junit --outputFile=junit.xml --reporter=default
+  artifacts:
+    when: always
+    reports:
+      junit: ci-smoke/junit.xml
+    expire_in: 1 week

@@ -1,0 +1,14 @@
+{
+  "name": "peixun-ci-smoke",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "独立冒烟模块：验证 runner/Node/vitest/registry/报告产物链路（不依赖底座 node_modules）。npm test 自带 junit 报告（Maestro npm-build Profile 与 CI 共用同一命令）。",
+  "scripts": {
+    "pretest": "npm ci --registry=https://registry.npmmirror.com",
+    "test": "vitest run --reporter=junit --outputFile=junit.xml --reporter=default"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

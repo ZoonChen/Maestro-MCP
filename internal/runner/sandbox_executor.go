@@ -67,15 +67,23 @@ func (e *SandboxExecutor) Execute(ctx context.Context, lease *Lease, heartbeat f
 		PIDsLimit:         profile.Resources.PIDs,
 		Timeout:           time.Duration(profile.TimeoutSeconds) * time.Second,
 		OutputLimitBytes:  profile.OutputLimitBytes,
+		NetworkMode:       profile.Network.Mode,
+		AllowHosts:        append([]string(nil), profile.Network.AllowHosts...),
+		ExecutionID:       lease.ExecutionID,
 	}
-	if spec.WorkDir == "/" || profile.WorkingDirectory == "" {
+	if profile.WorkingDirectory == "" || profile.WorkingDirectory == "." {
+		// The repo root is the workspace itself; mount it at the
+		// conventional point (a "." or "" would normalize to the invalid
+		// destinations "/." and "/").
 		spec.WorkDir = "/workspace"
 	}
-	// The M1 sandbox is default-no-network; a profile declaring a network
-	// mode other than "none" cannot be honored yet and must not silently
-	// degrade — refuse.
-	if profile.Network.Mode != "" && profile.Network.Mode != "none" {
-		return e.failed(lease, fmt.Sprintf("profile network mode %q is not supported by the M1 sandbox", profile.Network.Mode)), nil
+	// The registry rejects unknown network modes at profile approval; the
+	// executor re-checks so a stale registry can never smuggle an
+	// unsupported mode through to the runtime.
+	switch profile.Network.Mode {
+	case "", "none", "allowlist":
+	default:
+		return e.failed(lease, fmt.Sprintf("profile network mode %q is not supported by the sandbox", profile.Network.Mode)), nil
 	}
 
 	// Heartbeats tick for the whole execution so the lease stays live

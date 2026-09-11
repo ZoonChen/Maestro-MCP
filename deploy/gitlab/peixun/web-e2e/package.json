@@ -1,0 +1,14 @@
+{
+  "name": "peixun-ci-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright 冒烟：浏览器版本由 Maestro playwright-e2e Profile 的镜像 digest 钉（v1.49.1-noble / Chromium 1.49.1）；@playwright/test 1.49.1 由本 lockfile 钉。",
+  "scripts": {
+    "pretest": "npm ci --registry=https://registry.npmmirror.com",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1"
+  }
+}

@@ -45,7 +45,7 @@ func (f *fakeSandbox) Run(ctx context.Context, spec sandbox.ContainerSpec) (sand
 func testProfile() service.CommandProfile {
 	return service.CommandProfile{
 		ID: "go-build", Version: "1.0.0",
-		ImageDigest:      "sha256:" + strings.Repeat("a", 64),
+		ImageDigest:      "localhost/fixtures/profile@sha256:" + strings.Repeat("a", 64),
 		Argv:             []string{"make", "build"},
 		WorkingDirectory: ".",
 		Network:          service.CommandProfileNetwork{Mode: "none"},
@@ -137,7 +137,7 @@ func TestSandboxExecutorRefusesNetworkProfiles(t *testing.T) {
 		return
 	}
 	// Registry refused: the guard is proven at approval time.
-	assert.Contains(t, err.Error(), "network.mode=none")
+	assert.Contains(t, err.Error(), "network.mode must be none or allowlist")
 }
 
 func TestSandboxExecutorMapsFailureAndTimeout(t *testing.T) {

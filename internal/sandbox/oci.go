@@ -45,9 +45,21 @@ func (r *Runtime) Run(ctx context.Context, spec ContainerSpec) (ExitResult, erro
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 
+	// Declared egress (allowlist profiles): a per-execution filtering
+	// proxy on an internal network. None-mode keeps the historical
+	// behavior — no network stack at all.
+	var egress *egressResources
+	if spec.NetworkMode == NetworkAllowlist {
+		var err error
+		egress, err = r.provisionEgress(runCtx, spec.ExecutionID, spec.AllowHosts)
+		if err != nil {
+			return ExitResult{}, err
+		}
+		defer r.teardownEgress(context.WithoutCancel(ctx), egress)
+	}
+
 	args := []string{
 		"run", "--rm",
-		"--network", "none", // default no network
 		"--cap-drop", "ALL", // no Linux capabilities
 		"--security-opt", "no-new-privileges", // no setuid/setgid escape
 		"--read-only",                              // immutable root filesystem
@@ -61,7 +73,20 @@ func (r *Runtime) Run(ctx context.Context, spec ContainerSpec) (ExitResult, erro
 		"--volume", spec.WorkspaceHostPath + ":" + spec.WorkDir + ":rw",
 		"--workdir", spec.WorkDir,
 	}
+	if egress != nil {
+		// Internal network: the only route is the filtering proxy.
+		args = append(args, "--network", egress.network)
+	} else {
+		args = append(args, "--network", "none") // default no network
+	}
+	env := make(map[string]string, len(spec.Env)+6)
 	for key, value := range spec.Env {
+		env[key] = value
+	}
+	if egress != nil {
+		egress.proxyEnvHook(env)
+	}
+	for key, value := range env {
 		args = append(args, "--env", key+"="+value)
 	}
 	// The digest-pinned image and the profile's exact argv.
@@ -137,8 +162,12 @@ func (b *boundedBuffer) String() string {
 // CommandDigestReport returns the exact runtime invocation for audit
 // records without the spec's environment values.
 func CommandDigestReport(spec ContainerSpec) string {
+	network := "--network none"
+	if spec.NetworkMode == NetworkAllowlist {
+		network = "--network maestro-egress-" + spec.ExecutionID + " (filtered proxy egress)"
+	}
 	return strings.Join(append([]string{
-		"run --rm --network none --cap-drop ALL",
+		"run --rm " + network + " --cap-drop ALL",
 		"--security-opt no-new-privileges --read-only --user 65534:65534",
 		fmt.Sprintf("--pids-limit %d --memory %dm --cpus %dm",
 			spec.PIDsLimit, spec.MemoryMB, spec.CPUMillis),

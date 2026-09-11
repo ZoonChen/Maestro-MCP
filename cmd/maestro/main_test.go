@@ -327,7 +327,7 @@ validation:
   command_profiles:
     - id: "go-m0-test"
       version: "3.0.0"
-      image_digest: "sha256:` + strings.Repeat("b", 64) + `"
+      image_digest: "localhost/fixtures/profile@sha256:` + strings.Repeat("b", 64) + `"
       argv: ["go", "test", "./..."]
       working_directory: "."
       network: {mode: "none", allow_hosts: []}
