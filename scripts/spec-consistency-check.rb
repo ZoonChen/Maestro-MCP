@@ -47,6 +47,9 @@ permissions = Set.new
 end
 
 errors << "RBAC default_effect must be deny" unless rbac["default_effect"] == "deny"
+# 67 = the 60 frozen M3 strings + the seven asset.*/workgraph.* family
+# strings added by the M4 J4 slice (CR-1).
+errors << "expected 67 RBAC permissions, got #{permissions.length}" unless permissions.length == 67
 errors << "final merge must remain human-only" unless rbac.dig("protected_actions", "final_merge") == {"executor" => "human_in_gitlab", "maestro_allowed" => false}
 errors << "Agent permissions must be an intersection" unless rbac.dig("delegation", "agent_effective_permissions").to_s.start_with?("intersection(")
 %w[agent_may_define_command_network_or_secret agent_may_self_review_waive_or_merge].each do |key|

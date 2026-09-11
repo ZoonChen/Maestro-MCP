@@ -214,4 +214,33 @@ test.describe('M4.5 J2c Work Graph console (auth-disabled deployment)', () => {
     await page.getByRole('button', { name: '批准并封板该修订' }).click();
     await expect(page.locator('.gov-status-error').first()).toContainText('工作图版本不匹配');
   });
+
+  test('the seal names its frozen permission and a 403 renders the forbidden copy (J4)', async ({ page }) => {
+    // INTERCEPTION: same stub family; the seal POST answers the frozen
+    // 403 a non-technical_lead principal receives under the J4
+    // workgraph.seal grant (DEC-2 terminal state).
+    await stubOverview(page);
+    await page.route('**/api/v3/**/work-graph', (route) => json(route, 200, { plans: [planRow] }));
+    await page.route('**/api/v3/**/work-graph/plans/*', (route) => json(route, 200, planDetail(false)));
+    await page.route('**/api/v3/**/work-graph/plans/*/seal', (route) => json(route, 403, {
+      error: 'Action is not permitted for this principal',
+      error_code: 'FORBIDDEN',
+      correlation_id: 'c-j4',
+    }));
+
+    await openConsole(page, '#/proposals');
+    // The permission hint states the frozen workgraph.seal grant and
+    // its technical_lead functional plane.
+    await expect(page.locator('.gov-note').first()).toContainText('workgraph.seal');
+    await expect(page.locator('.gov-note').first()).toContainText('technical_lead');
+
+    await page.locator('.gov-field select').first().selectOption(project.id);
+    await page.getByRole('button', { name: '读取工作计划' }).click();
+    await page.locator('[data-plan-option="MST-WP-00042"]').click();
+    await page.locator('[data-seal-input="idempotency_key"]').fill('j4-e2e-seal-403-20260911-01');
+    await page.getByRole('button', { name: '批准并封板该修订' }).click();
+    await expect(page.locator('.gov-status-error').first()).toContainText('当前身份没有执行此操作的权限');
+    // The forbidden seal never flips the revision view.
+    await expect(page.locator('[data-seal-result="sealed"]')).toHaveCount(0);
+  });
 });

@@ -83,7 +83,7 @@ export function WorkGraphView({ projects, projectScope }) {
         <h1 id="work-graph-title">Work Graph</h1>
         <p class="gov-lead">
           分层类型化工作图（ADR-009）：contains 树回答"属于谁"，requires 边回答"先做什么"。
-          本视图只读（project.read）；改图只能由 Coordinator 经 MCP 提交拆解提案，封板走拆解提案审批视图。
+          本视图只读（workgraph.read）；改图由 developer/coordinator 级会话经 MCP 提交拆解提案，封板走拆解提案审批视图。
         </p>
         <p class="gov-note" role="note">
           Work Graph 与资产台账存于 PostgreSQL 控制面；SQLite 部署（本地 m0 基线）不暴露本面，读取会得到明确边界提示。

@@ -16,10 +16,10 @@ import (
 // Work Graph and asset-ledger tool surface (J2c, ADR-009 §2/§4). The
 // frozen ROLE-CATALOG principle applies: Maestro builds only the
 // register / review / release / query tool classes plus the graph read
-// and the Coordinator proposal write; creation-class tooling stays in
-// the agents' own environment. Server-exclusive operations (seal,
-// structural mutation, aggregation, replan) are deliberately NOT tools:
-// the console HITL surface owns them.
+// and the developer-level proposal write (J4); creation-class tooling
+// stays in the agents' own environment. Server-exclusive operations
+// (seal, structural mutation, aggregation, replan) are deliberately
+// NOT tools: the console HITL surface owns them.
 
 // WorkGraphStore is the read/proposal surface the tools consume (the
 // J2a/J2b PostgreSQL store implements it; SQLite deployments mount
@@ -302,8 +302,9 @@ func proposalNodeSchema() map[string]any {
 	}
 }
 
-// registerDecompositionPropose adds decomposition_propose (frozen v3.2
-// shape): the Coordinator-only proposal write. The server decides
+// registerDecompositionPropose adds decomposition_propose (frozen v3.3
+// permission, workgraph.propose): the developer-level proposal write
+// (developer and coordinator sessions). The server decides
 // applied/rejected; violations surface verbatim with their stable codes.
 func registerDecompositionPropose(s *mcpserver.MCPServer, services *Services) {
 	s.AddTool(
@@ -340,9 +341,9 @@ func registerDecompositionPropose(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithNumber("expected_graph_version", mcp.Required(), mcp.Description("Graph CAS token the proposal was built against")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		services.guardTool("decomposition_propose", services.guardTool("decomposition_propose", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("decomposition_propose", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleDecompositionPropose(ctx, req, services)
-		})),
+		}),
 	)
 }
 
@@ -450,9 +451,9 @@ func registerAssetRegister(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithString("summary", mcp.Description("Optional summary (max 4000 characters)")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		services.guardTool("asset_register", services.guardTool("asset_register", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("asset_register", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleAssetRegister(ctx, req, services)
-		})),
+		}),
 	)
 }
 
@@ -615,7 +616,7 @@ func registerAssetReview(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithNumber("version", mcp.Required(), mcp.Description("Exact asset version")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		services.guardTool("asset_review", services.guardTool("asset_review", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("asset_review", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if services.Assets == nil {
 				return unavailableError(), nil
 			}
@@ -623,7 +624,7 @@ func registerAssetReview(s *mcpserver.MCPServer, services *Services) {
 				func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
 					return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 				})
-		})),
+		}),
 	)
 }
 
@@ -638,7 +639,7 @@ func registerAssetApprove(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithNumber("version", mcp.Required(), mcp.Description("Exact asset version")),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
-		services.guardTool("asset_approve", services.guardTool("asset_approve", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		services.guardTool("asset_approve", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if services.Assets == nil {
 				return unavailableError(), nil
 			}
@@ -646,7 +647,7 @@ func registerAssetApprove(s *mcpserver.MCPServer, services *Services) {
 				func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
 					return services.Assets.ApproveAsset(ctx, assetID, version, actor)
 				})
-		})),
+		}),
 	)
 }
 

@@ -80,7 +80,7 @@ export function AssetLedgerView({ projects, projectScope }) {
           后继版本经 supersedes 链钉住前驱。机密（confidential）资产只入摘要+指针，正文永不进控制面。
         </p>
         <p class="gov-note" role="note">
-          本视图只读（project.read）；登记与生命周期流转走 MCP 工具（asset_register / asset_review /
+          本视图只读（asset.read）；登记与生命周期流转走 MCP 工具（asset_register / asset_review /
           asset_approve，职能角色审批），控制台不提供旁路。
         </p>
       </header>

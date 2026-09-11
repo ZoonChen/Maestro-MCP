@@ -455,44 +455,74 @@ func TestWorkGraphToolPermissionsRouteThroughFrozenPolicy(t *testing.T) {
 		}
 	}
 
-	// Coordinator proposes; developer and viewer may not (ADR-009 §2).
-	decision, err := guard.Authorize(context.Background(), "decomposition_propose", membership("coordinator"), "proj-wg")
-	require.NoError(t, err)
-	assert.True(t, decision.Allow, "coordinator proposes: %v", decision.Reasons)
-	decision, err = guard.Authorize(context.Background(), "decomposition_propose", membership("developer"), "proj-wg")
-	require.NoError(t, err)
-	assert.False(t, decision.Allow)
+	// The J4 family: developer and coordinator sessions propose (the
+	// developer-level write); viewer/verifier/project_admin may not.
+	for _, role := range []string{"developer", "coordinator"} {
+		decision, err := guard.Authorize(context.Background(), "decomposition_propose", membership(role), "proj-wg")
+		require.NoError(t, err)
+		assert.True(t, decision.Allow, "%s proposes: %v", role, decision.Reasons)
+	}
+	for _, role := range []string{"viewer", "verifier", "project_admin"} {
+		decision, err := guard.Authorize(context.Background(), "decomposition_propose", membership(role), "proj-wg")
+		require.NoError(t, err)
+		assert.False(t, decision.Allow, "%s must not propose", role)
+	}
 
-	// Every project role reads the graph and the ledger.
+	// Every project role reads the graph and the ledger (the viewer floor).
 	for _, role := range []string{"project_admin", "coordinator", "developer", "verifier", "viewer"} {
-		decision, err = guard.Authorize(context.Background(), "worktree_graph_query", membership(role), "proj-wg")
+		decision, err := guard.Authorize(context.Background(), "worktree_graph_query", membership(role), "proj-wg")
 		require.NoError(t, err)
 		assert.True(t, decision.Allow, "%s reads graph: %v", role, decision.Reasons)
+		decision, err = guard.Authorize(context.Background(), "asset_query", membership(role), "proj-wg")
+		require.NoError(t, err)
+		assert.True(t, decision.Allow, "%s queries ledger: %v", role, decision.Reasons)
 	}
 
-	// Register routes on the coordinator creation grant; review and
-	// approve route on the functional planes only.
-	decision, err = guard.Authorize(context.Background(), "asset_register", membership("coordinator"), "proj-wg")
-	require.NoError(t, err)
-	assert.True(t, decision.Allow)
-	decision, err = guard.Authorize(context.Background(), "asset_register", membership("developer"), "proj-wg")
-	require.NoError(t, err)
-	assert.False(t, decision.Allow)
-
-	functional := &model.PrincipalContext{
-		PrincipalID:        "user:2",
-		ProjectMemberships: map[string]string{"proj-wg": "viewer"},
-		FunctionalRoles:    []string{"qa_owner"},
+	// Register routes on the developer-level write plane.
+	for _, role := range []string{"developer", "coordinator"} {
+		decision, err := guard.Authorize(context.Background(), "asset_register", membership(role), "proj-wg")
+		require.NoError(t, err)
+		assert.True(t, decision.Allow, "%s registers: %v", role, decision.Reasons)
 	}
-	decision, err = guard.Authorize(context.Background(), "asset_review", functional, "proj-wg")
-	require.NoError(t, err)
-	assert.True(t, decision.Allow, "qa_owner reviews: %v", decision.Reasons)
-	decision, err = guard.Authorize(context.Background(), "asset_approve", functional, "proj-wg")
-	require.NoError(t, err)
-	assert.True(t, decision.Allow, "qa_owner releases: %v", decision.Reasons)
+	for _, role := range []string{"viewer", "verifier", "project_admin"} {
+		decision, err := guard.Authorize(context.Background(), "asset_register", membership(role), "proj-wg")
+		require.NoError(t, err)
+		assert.False(t, decision.Allow, "%s must not register", role)
+	}
+
+	// Review and approve route on the functional planes only.
+	functional := func(function string) *model.PrincipalContext {
+		return &model.PrincipalContext{
+			PrincipalID:        "user:2",
+			ProjectMemberships: map[string]string{"proj-wg": "viewer"},
+			FunctionalRoles:    []string{function},
+		}
+	}
+	for _, function := range []string{"technical_lead", "qa_owner"} {
+		decision, err := guard.Authorize(context.Background(), "asset_review", functional(function), "proj-wg")
+		require.NoError(t, err)
+		assert.True(t, decision.Allow, "%s reviews: %v", function, decision.Reasons)
+	}
+	for _, function := range []string{"product_owner", "technical_lead", "qa_owner", "operations_owner"} {
+		decision, err := guard.Authorize(context.Background(), "asset_approve", functional(function), "proj-wg")
+		require.NoError(t, err)
+		assert.True(t, decision.Allow, "%s releases: %v", function, decision.Reasons)
+	}
 
 	projectOnly := membership("project_admin")
-	decision, err = guard.Authorize(context.Background(), "asset_approve", projectOnly, "proj-wg")
+	decision, err := guard.Authorize(context.Background(), "asset_approve", projectOnly, "proj-wg")
 	require.NoError(t, err)
 	assert.False(t, decision.Allow, "project roles never release assets")
+	decision, err = guard.Authorize(context.Background(), "asset_review", projectOnly, "proj-wg")
+	require.NoError(t, err)
+	assert.False(t, decision.Allow, "project roles never review assets")
+
+	// The delegated veto survives the family switch: an agent session
+	// holding the functional grant still cannot release an asset.
+	agent := functional("technical_lead")
+	agent.DelegationID = "delegation-j4"
+	decision, err = guard.Authorize(context.Background(), "asset_approve", agent, "proj-wg")
+	require.NoError(t, err)
+	assert.False(t, decision.Allow, "delegated principals never release assets")
+	assert.Contains(t, decision.Reasons[0], "delegated principals")
 }

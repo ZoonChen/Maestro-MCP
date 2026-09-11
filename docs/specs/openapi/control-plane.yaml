@@ -864,7 +864,7 @@ paths:
         code, lifecycle status and graph CAS version in human-code
         order. Read-only like the graph itself; agents query the same
         facts through the MCP worktree_graph_query tool.
-      x-maestro-permission: project.read
+      x-maestro-permission: workgraph.read
       responses:
         '200':
           description: The project's work plans
@@ -893,7 +893,7 @@ paths:
         (success_threshold). The decided decomposition proposals list
         rides along for the HITL review. Scope hides plans outside the
         project as absence.
-      x-maestro-permission: project.read
+      x-maestro-permission: workgraph.read
       responses:
         '200':
           description: The plan's graph, revision and proposal views
@@ -923,7 +923,7 @@ paths:
         revision). This operation is deliberately console-only — the
         MCP catalog never exposes it and delegated principals have no
         path to it.
-      x-maestro-permission: project_policy.strengthen
+      x-maestro-permission: workgraph.seal
       x-maestro-audit-event: workgraph.plan.sealed
       x-maestro-idempotency: sealed-revision-collapse
       x-maestro-concurrency: graph-version-cas
@@ -957,7 +957,7 @@ paths:
         and content pointer. Lifecycle/version-chain/sensitivity
         filtering happens client-side; confidential content itself
         never lives in the control plane (pointer-only by design).
-      x-maestro-permission: project.read
+      x-maestro-permission: asset.read
       responses:
         '200':
           description: The project's asset rows (all versions)
