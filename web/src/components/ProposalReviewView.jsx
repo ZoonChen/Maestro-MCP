@@ -114,7 +114,7 @@ export function ProposalReviewView({ projects, projectScope }) {
           封板（seal）：冻结当前草稿修订，之后结构不可变、工作项才可领取。已决定提案是不可变协议事实。
         </p>
         <p class="gov-note" role="note">
-          封板需 {`project_policy.strengthen`}（{ACTION_PERMISSION_HINTS['project_policy.strengthen']}）。
+          封板需 {`workgraph.seal`}（{ACTION_PERMISSION_HINTS['workgraph.seal']}）。
           封板是控制台专属操作：MCP 目录不含封板工具，Agent 无路径触达。
         </p>
       </header>

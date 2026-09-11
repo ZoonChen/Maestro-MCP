@@ -26,6 +26,8 @@ last_verified_commit: null
 
 权威角色与动作以 `specs/rbac/permissions.yaml` 为准：`platform_admin/project_admin/coordinator/developer/verifier/viewer`。服务账户和 Runner Device 不继承人类角色。认证中间件构造 `PrincipalContext`，业务请求中的 `role/team_ids/project_memberships/delegator_id` 不参与授权。
 
+职能审批面（J1 双轨）：`functional_approvers` 下的五个职能（security_owner、qa_owner、technical_lead、product_owner、operations_owner）在活动项目成员关系之上叠加冻结的职能权限，职能授权只授予该职能的冻结动作集、不叠加项目权限。资产与工作图权限族（J4，CR-1 终态）：`asset.read/workgraph.read` 为 viewer 级读（全体项目角色）；`asset.register/workgraph.propose` 为 developer 级写（developer、coordinator）；`asset.review` 授 technical_lead 与 qa_owner；`asset.approve` 授四个职能 Owner（按制品类型的审批分工由资产 frontmatter 的 reviewers 名单约束，权限保持粗粒度）；`workgraph.seal` 授 technical_lead（DEC-2 终态，取代 project_policy.strengthen 过渡映射）。委托主体对 `asset.approve` 与豁免审批同样被否决（Agent 永不自批）。【待 owner 评审：本段随 J4 切片同步，security_owner 确认权限族语义】
+
 | 主体 | 认证 | 资源边界 |
 | --- | --- | --- |
 | Browser | OIDC Authorization Code + PKCE，BFF 安全 Cookie | 当前成员项目 |

@@ -134,7 +134,12 @@ export const ACTION_PERMISSION_HINTS = {
   'audit.export': 'platform_admin / security_owner（职能角色）',
   'webhook.dead_letter.replay': 'gitlab.reconcile（project_admin / platform_admin），审批人必须不同于请求人',
   'pilot.write': 'platform_admin（本代控制台只读展示）',
-  'project_policy.strengthen': 'project_admin（J2c 过渡映射：ADR-009 §2 计划语义审批；product_owner 授权待契约请求）',
+  'project_policy.strengthen': 'project_admin',
+  'workgraph.seal': 'technical_lead（职能角色，J4 终态）',
+  'asset.read': '全部项目角色（viewer 级读）',
+  'asset.register': 'developer / coordinator',
+  'asset.review': 'technical_lead / qa_owner（职能角色）',
+  'asset.approve': 'product_owner / technical_lead / qa_owner / operations_owner（职能角色；按制品类型的分工由 reviewers 名单约束）',
 };
 
 // AppWithAuth flattens the auth session into { status, principal, roles,

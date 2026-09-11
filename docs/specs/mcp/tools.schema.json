@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
   "title": "Maestro MCP v3 Tool Catalog",
-  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.2 extends the frozen 3.1 catalog with the W4.5 work-graph and asset-ledger surfaces (worktree_graph_query, decomposition_propose, asset_register, asset_review, asset_approve, asset_query); changes require a contract change request through the integration session.",
+  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.2 extended the frozen 3.1 catalog with the W4.5 work-graph and asset-ledger surfaces (worktree_graph_query, decomposition_propose, asset_register, asset_review, asset_approve, asset_query); version 3.3 re-maps those six tools onto the asset.*/workgraph.* permission families and the developer-level propose/register grants (M4 J4 slice, CR-1). Changes require a contract change request through the integration session.",
   "type": "object",
   "required": [
     "version",
@@ -12,7 +12,7 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "const": "3.2"
+      "const": "3.3"
     },
     "work_item_states": {
       "$ref": "#/$defs/workItemStates"
@@ -2064,7 +2064,7 @@
               "const": "worktree_graph_query"
             },
             "required_permission": {
-              "const": "project.read"
+              "const": "workgraph.read"
             },
             "input_schema": {
               "const": {
@@ -2097,7 +2097,7 @@
               "const": "decomposition_propose"
             },
             "required_permission": {
-              "const": "work_item.create"
+              "const": "workgraph.propose"
             },
             "input_schema": {
               "const": {
@@ -2388,7 +2388,7 @@
               "const": "asset_register"
             },
             "required_permission": {
-              "const": "work_item.create"
+              "const": "asset.register"
             },
             "input_schema": {
               "const": {
@@ -2508,7 +2508,7 @@
               "const": "asset_review"
             },
             "required_permission": {
-              "const": "quality_policy.review"
+              "const": "asset.review"
             },
             "input_schema": {
               "const": {
@@ -2571,7 +2571,7 @@
               "const": "asset_approve"
             },
             "required_permission": {
-              "const": "waiver.approve"
+              "const": "asset.approve"
             },
             "input_schema": {
               "const": {
@@ -2634,7 +2634,7 @@
               "const": "asset_query"
             },
             "required_permission": {
-              "const": "project.read"
+              "const": "asset.read"
             },
             "input_schema": {
               "const": {
@@ -2691,7 +2691,7 @@
   },
   "examples": [
     {
-      "version": "3.2",
+      "version": "3.3",
       "work_item_states": [
         "draft",
         "queued",
@@ -3688,7 +3688,7 @@
           "name": "worktree_graph_query",
           "description": "Read one work plan's graph: containment tree, node statuses, the current plan revision and per-node JoinPolicy (success_threshold) evidence view.",
           "mutating": false,
-          "required_permission": "project.read",
+          "required_permission": "workgraph.read",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
@@ -3706,9 +3706,9 @@
         },
         {
           "name": "decomposition_propose",
-          "description": "Submit one DecompositionProposal batch to the plan's draft revision behind the graph CAS. Coordinator-only; the server validates scope/cycle/budget/resource and decides applied/rejected with stable violation codes.",
+          "description": "Submit one DecompositionProposal batch to the plan's draft revision behind the graph CAS. Developer-level write (developer and coordinator sessions); the server validates scope/cycle/budget/resource and decides applied/rejected with stable violation codes.",
           "mutating": true,
-          "required_permission": "work_item.create",
+          "required_permission": "workgraph.propose",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
@@ -3980,7 +3980,7 @@
           "name": "asset_register",
           "description": "Register one asset version into the ledger (digest+pointer mode). Machine checks: frozen type catalog, digest format, sensitivity rules, supersedes chain, confidential pointer-only; the server derives the version and owner.",
           "mutating": true,
-          "required_permission": "work_item.create",
+          "required_permission": "asset.register",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
@@ -4079,9 +4079,9 @@
         },
         {
           "name": "asset_review",
-          "description": "Record the review pass of one asset version (draft to reviewed). Functional review plane; the reviewer may not be the registering owner.",
+          "description": "Record the review pass of one asset version (draft to reviewed). Functional review plane (technical_lead, qa_owner); the reviewer may not be the registering owner.",
           "mutating": true,
-          "required_permission": "quality_policy.review",
+          "required_permission": "asset.review",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
@@ -4123,9 +4123,9 @@
         },
         {
           "name": "asset_approve",
-          "description": "Approve one reviewed asset version (reviewed to approved; the superseded predecessor and stale gate bindings flip in the same transaction). Functional release plane; delegated principals are vetoed.",
+          "description": "Approve one reviewed asset version (reviewed to approved; the superseded predecessor and stale gate bindings flip in the same transaction). Functional release plane (product_owner, technical_lead, qa_owner, operations_owner); delegated principals are vetoed.",
           "mutating": true,
-          "required_permission": "waiver.approve",
+          "required_permission": "asset.approve",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
@@ -4169,7 +4169,7 @@
           "name": "asset_query",
           "description": "Query the asset ledger: filter by asset identity (full version chain), type, sensitivity or lifecycle status.",
           "mutating": false,
-          "required_permission": "project.read",
+          "required_permission": "asset.read",
           "input_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",

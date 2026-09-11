@@ -1,7 +1,8 @@
 // Package mcpspec embeds the frozen MCP tool catalog
-// (docs/specs/mcp/tools.schema.json, version 3.0, frozen by the M1 I1
-// contract-freeze sprint) so the tool-to-permission mapping the policy
-// guard enforces is derived from the same physical authority CI checks —
+// (docs/specs/mcp/tools.schema.json; version history records each
+// contract-freeze extension, currently 3.3 after the J4 permission
+// re-mapping) so the tool-to-permission mapping the policy guard
+// enforces is derived from the same physical authority CI checks —
 // no Go-side copy can drift.
 package mcpspec
 

@@ -43,45 +43,49 @@ func TestCapabilityRoutingDeclarationCoversExactlyTheJ2cTools(t *testing.T) {
 }
 
 // TestCapabilityRoutingPlanesMatchPermissions pins the plane class ↔
-// frozen-permission agreement: query planes are read-only on
-// project.read, the proposal/ledger-write planes carry the
-// coordinator-only creation grant, and the functional planes map onto
-// the frozen functional approver grants only.
+// frozen-permission agreement (J4 family): the query planes read on the
+// read family, the proposal/ledger-write planes carry the
+// developer-level write grants, and the functional planes map onto the
+// frozen functional approver grants only.
 func TestCapabilityRoutingPlanesMatchPermissions(t *testing.T) {
 	j2c := j2cToolNames(t)
+	planePermissions := map[string]map[string]string{
+		PlaneQuery: {
+			"worktree_graph_query": "workgraph.read",
+			"asset_query":          "asset.read",
+		},
+		PlaneProposal:          {"decomposition_propose": "workgraph.propose"},
+		PlaneLedgerWrite:       {"asset_register": "asset.register"},
+		PlaneFunctionalReview:  {"asset_review": "asset.review"},
+		PlaneFunctionalRelease: {"asset_approve": "asset.approve"},
+	}
 	for name, permission := range j2c {
 		route, ok := workGraphCapabilityRoutes[name]
 		require.True(t, ok, "tool %q has no capability route", name)
-		switch route.Plane {
-		case PlaneQuery:
-			assert.Equal(t, "project.read", permission, "%s: query plane must read on project.read", name)
-		case PlaneProposal, PlaneLedgerWrite:
-			assert.Equal(t, "work_item.create", permission, "%s: write plane must carry the coordinator creation grant", name)
-		case PlaneFunctionalReview:
-			assert.Equal(t, "quality_policy.review", permission, "%s: review plane must be functional", name)
-		case PlaneFunctionalRelease:
-			assert.Equal(t, "waiver.approve", permission, "%s: release plane must be functional", name)
-		default:
-			t.Fatalf("unknown capability plane %q", route.Plane)
-		}
+		expected, ok := planePermissions[route.Plane][name]
+		require.True(t, ok, "tool %q has no pinned plane permission", name)
+		assert.Equal(t, expected, permission, "%s: plane %s permission mismatch", name, route.Plane)
 	}
 }
 
-// TestCapabilityRoutingCoordinatorOnlyPlaneIsCoordinatorGrant asserts
-// the ADR-009 §2 boundary where it is expressible in the frozen matrix:
-// the proposal plane's grant (work_item.create) belongs to coordinator
-// and to no other project role.
-func TestCapabilityRoutingCoordinatorOnlyPlaneIsCoordinatorGrant(t *testing.T) {
+// TestCapabilityRoutingDeveloperLevelPlanes asserts the J4 boundary
+// where it is expressible in the frozen matrix: the proposal and
+// registration grants (workgraph.propose / asset.register) belong to
+// exactly the developer-level project roles — developer and
+// coordinator — and to no other role.
+func TestCapabilityRoutingDeveloperLevelPlanes(t *testing.T) {
 	policy, err := identity.EmbeddedPolicy()
 	require.NoError(t, err)
-	granted := map[string]bool{}
-	for role, grants := range policy.Roles {
-		if _, ok := grants.Allow["work_item.create"]; ok {
-			granted[role] = true
+	for _, permission := range []string{"workgraph.propose", "asset.register"} {
+		granted := map[string]bool{}
+		for role, grants := range policy.Roles {
+			if _, ok := grants.Allow[permission]; ok {
+				granted[role] = true
+			}
 		}
+		assert.Equal(t, map[string]bool{"coordinator": true, "developer": true}, granted,
+			"%s must stay on the developer-level project roles", permission)
 	}
-	assert.Equal(t, map[string]bool{"coordinator": true}, granted,
-		"work_item.create must remain coordinator-only for the proposal plane")
 }
 
 // TestCapabilityRoutingServerExclusiveOperationsStayOffTheCatalog is
@@ -99,7 +103,9 @@ func TestCapabilityRoutingServerExclusiveOperationsStayOffTheCatalog(t *testing.
 // TestCapabilityRoutingReleasePlaneVetoesDelegatedPrincipals asserts
 // the release plane's boundary end to end: a delegated (agent)
 // principal holding the qa_owner functional grant is still vetoed by
-// the frozen delegation table — an agent never self-releases.
+// the frozen delegation table — an agent never self-releases. The J4
+// family keeps the veto on asset.approve (the transitional
+// waiver.approve string moves over with the mapping).
 func TestCapabilityRoutingReleasePlaneVetoesDelegatedPrincipals(t *testing.T) {
 	policy, err := identity.EmbeddedPolicy()
 	require.NoError(t, err)
@@ -108,7 +114,7 @@ func TestCapabilityRoutingReleasePlaneVetoesDelegatedPrincipals(t *testing.T) {
 		ProjectMemberships: map[string]string{"proj-wg": "viewer"},
 		FunctionalRoles:    []string{"qa_owner"},
 	}
-	decision := policy.Authorize(context.Background(), human, "waiver.approve", model.Resource{Type: "work_item", ProjectID: "proj-wg"})
+	decision := policy.Authorize(context.Background(), human, "asset.approve", model.Resource{Type: "work_item", ProjectID: "proj-wg"})
 	assert.True(t, decision.Allow, "functional qa_owner must release: %v", decision.Reasons)
 	assert.Equal(t, "functional:qa_owner", identity.Authority(decision))
 
@@ -118,7 +124,7 @@ func TestCapabilityRoutingReleasePlaneVetoesDelegatedPrincipals(t *testing.T) {
 		ProjectMemberships: map[string]string{"proj-wg": "viewer"},
 		FunctionalRoles:    []string{"qa_owner"},
 	}
-	decision = policy.Authorize(context.Background(), agent, "waiver.approve", model.Resource{Type: "work_item", ProjectID: "proj-wg"})
+	decision = policy.Authorize(context.Background(), agent, "asset.approve", model.Resource{Type: "work_item", ProjectID: "proj-wg"})
 	assert.False(t, decision.Allow, "delegated principals must never release assets")
 }
 

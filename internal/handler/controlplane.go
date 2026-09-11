@@ -56,19 +56,20 @@ var controlPlaneActions = map[string]map[string]string{
 		http.MethodGet: "project.read",
 	},
 	"/api/v3/projects/:pid/work-graph": {
-		http.MethodGet: "project.read",
+		http.MethodGet: "workgraph.read",
 	},
 	"/api/v3/projects/:pid/work-graph/plans/:planId": {
-		http.MethodGet: "project.read",
+		http.MethodGet: "workgraph.read",
 	},
 	"/api/v3/projects/:pid/work-graph/plans/:planId/seal": {
 		// ADR-009 §2: the human approval of plan semantics. The frozen
-		// matrix has no product_owner grant yet; project_policy.strengthen
-		// is the interim narrowest governance write (CR registered).
-		http.MethodPost: "project_policy.strengthen",
+		// workgraph.seal grant carries the technical_lead functional plane
+		// (J4, DEC-2 terminal state — the project_policy.strengthen
+		// interim mapping is retired).
+		http.MethodPost: "workgraph.seal",
 	},
 	"/api/v3/projects/:pid/assets": {
-		http.MethodGet: "project.read",
+		http.MethodGet: "asset.read",
 	},
 	"/api/v3/projects/:pid/pilot-flags/:flag": {
 		http.MethodPut: "pilot.write",
