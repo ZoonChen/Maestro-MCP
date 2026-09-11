@@ -1,0 +1,65 @@
+# 一期 Command Profiles（P5a-4，试点双仓）
+#
+# 版本化、镜像 digest 钉死、网络白名单声明式出网（sandbox/egress.go 的
+# 过滤代理执行）。该文件可整体并入运行配置的 validation.command_profiles
+# 段（runner 与 server 同源加载）；变更 = 新版本号 + 新 digest，绝不原地改。
+#
+# 镜像与浏览器钉子：
+#   maven-build      docker.io/library/maven:3.9-eclipse-temurin-17（JDK17）
+#   npm-build        docker.io/library/node:20-bookworm-slim（Node20 ≥ 18 钉）
+#   playwright-e2e   mcr.microsoft.com/playwright:v1.49.1-noble（Chromium 1.49.1
+#                    随镜像钉版本；@playwright/test 1.49.1 由 ci-e2e lockfile 钉）
+#
+# 镜像源域名（对齐内网 Nexus/npmmirror 语义，白名单实测见
+# internal/sandbox/egress_test.go 与 P5a 交接 Evidence）：
+#   maven.aliyun.com / repo.maven.apache.org / registry.npmmirror.com / registry.npmjs.org
+
+validation:
+  command_profiles:
+    - id: maven-build
+      version: 1.0.0
+      image_digest: docker.io/library/maven@sha256:880934ae394bf91bc3e57d573e4fc04774f064f3c4df7ccd7cc10b3b126737bf
+      argv: ["mvn", "-B", "-s", "ci-smoke/settings.xml", "-f", "ci-smoke/pom.xml", "verify"]
+      working_directory: "."
+      network:
+        mode: allowlist
+        allow_hosts: ["maven.aliyun.com", "repo.maven.apache.org"]
+      resources: {cpu_millis: 4000, memory_mb: 4096, disk_mb: 8192, pids: 256}
+      output_limit_bytes: 1048576
+      timeout_seconds: 1500
+      environment:
+        # 本地仓库钉进可写工作区（rootfs 只读，~/.m2 不可用）。出网代理由
+        # 仓内 ci-smoke/settings.xml 的 <proxies> 携带（Maven resolver 不读
+        # JVM 代理属性；settings.xml 同样是内网标准做法）。
+        MAVEN_OPTS: "-Dmaven.repo.local=/workspace/.m2/repository"
+
+    - id: npm-build
+      version: 1.0.0
+      image_digest: docker.io/library/node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+      argv: ["npm", "test", "--prefix", "ci-smoke"]  # package.json: pretest=npm ci; test=vitest junit
+      working_directory: "."
+      network:
+        mode: allowlist
+        allow_hosts: ["registry.npmmirror.com", "cdn.npmmirror.com", "registry.npmjs.org"]
+      resources: {cpu_millis: 2000, memory_mb: 2048, disk_mb: 4096, pids: 128}
+      output_limit_bytes: 1048576
+      timeout_seconds: 900
+      environment:
+        # 沙箱 nobody 用户 HOME 不可写（rootfs 只读）；日志/缓存指到可写面。
+        HOME: "/tmp"
+        NPM_CONFIG_CACHE: "/workspace/.npm-cache"
+
+    - id: playwright-e2e
+      version: 1.0.0
+      image_digest: mcr.microsoft.com/playwright@sha256:70e367e0cbf60340a5b5fd562f6247a34eb3196efab9f88a3dd56482d9fe09d2
+      argv: ["npm", "test", "--prefix", "ci-e2e"]  # package.json: pretest=npm ci; test=playwright junit
+      working_directory: "."
+      network:
+        mode: allowlist
+        allow_hosts: ["registry.npmmirror.com", "cdn.npmmirror.com", "registry.npmjs.org"]
+      resources: {cpu_millis: 2000, memory_mb: 4096, disk_mb: 4096, pids: 128}
+      output_limit_bytes: 1048576
+      timeout_seconds: 900
+      environment:
+        HOME: "/tmp"
+        NPM_CONFIG_CACHE: "/workspace/.npm-cache"

@@ -63,3 +63,7 @@ Desktop.ini
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# local smoke-run artifacts must never enter the repo
+deploy/gitlab/peixun/web-smoke/junit.xml
+deploy/gitlab/peixune/web-e2e/junit.xml

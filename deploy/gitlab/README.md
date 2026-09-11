@@ -44,6 +44,20 @@ make gitlab-rebuild     # down -v 全清重建 + 置备（内网版本对齐后�
 job 镜像 `alpine:3.20`（多架构，Apple Silicon 可跑）；脚本为模拟动作（echo/tar/sleep），
 验证目标是 runner 执行机制、管线编排与跨项目触发，不是真实编译。
 
+## 试点层（peixun 双仓，P5a）
+
+`peixun-provision.sh` 在既有置备之上建试点双仓（组 `peixun`）：
+
+- `peixun-backend`：RuoYi-Vue 底座单提交平整导入（钉基线 SHA，License 随 BOM 02 结论引用）+ 试点 CI 脚手架（`ci-smoke/` 最小 junit+覆盖率）。
+- `peixun-web`：RuoYi-Vue3 底座同构导入 + `ci-smoke/`（vitest junit）与 `ci-e2e/`（Playwright，浏览器由 profile 镜像钉版本）。
+- 一期 Command Profiles（版本化、digest 钉镜像、网络白名单）：`peixun/command-profiles.yaml`；出网由 Maestro 沙箱的过滤代理执行（`internal/sandbox/egress.go`）。
+- 就绪清单与运行手册：`peixun/READINESS.md`。
+
+```bash
+make gitlab-up && make gitlab-provision   # 既有栈
+deploy/gitlab/peixun-provision.sh         # 试点双仓（幂等；首跑拉镜像+依赖）
+```
+
 ## 验收与日常检查
 
 ```bash

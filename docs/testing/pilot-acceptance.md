@@ -30,6 +30,8 @@ Product Owner 负责业务价值；Technical Lead 负责功能完整；Security/
 
 进入条件：M0–M4 对应 required Gate 全部有当前提交 Evidence；clean clone 构建/部署通过；威胁模型无未缓解 HIGH/CRITICAL；身份、项目隔离、Runner、GitLab Sandbox、备份恢复和应急演练通过；Runbook/值班人就绪。选择两个非核心、私有且可回滚项目，至少 6 名成员覆盖全部业务角色，试点持续 10 个工作日。
 
+试点仓库语言范围在原 Go/TypeScript 假设上纳入 Java 与 Vue：试点对象企业学堂平台按 Java（Maven、Spring Boot 底座）后端与 Vue（npm、Vite、Element Plus）前端双仓从零新建于试点 GitLab。理由：与试点团队技术栈一致（owner 2026-09-09 决策），且 Maestro 经版本化 Command Profiles 执行命令、引擎与语言无关，语言扩容只表现为新增 Profile 与沙箱镜像，不改变任何 Evidence 规则；Evidence 口径对所有语言一致——GitLab CI Pipeline/Job 为权威、Runner 结果为诊断，Evidence 仍绑定 source SHA、target SHA、Pipeline/Job 与 policy 版本。语言范围扩容不放宽本节其余进入条件，也不改变 `PILOT-RULE-002` 的人工合并要求。
+
 ## 4. 正常交互及时序图
 
 | 阶段 | 时长 | 允许能力 | 出口 |

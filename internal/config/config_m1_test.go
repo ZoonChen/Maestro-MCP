@@ -195,7 +195,7 @@ func TestRunnerSectionFrozenWindows(t *testing.T) {
 
 func TestHostExecutionRequiresSQLiteDriver(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "maestro.yaml")
-	yaml := "database:\n  driver: postgres\n  dsn_secret_ref: docker-secret://maestro-postgres-dsn\nvalidation:\n  allow_host_execution: true\n  policy_version: m1-contract-test\n  policy_digest: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n  command_profiles:\n    - id: go-m1-contract-test\n      version: \"1.0.0\"\n      image_digest: \"sha256:1111111111111111111111111111111111111111111111111111111111111111\"\n      argv: [\"go\", \"test\", \"./...\"]\n      working_directory: .\n      network: {mode: none, allow_hosts: []}\n      resources: {cpu_millis: 2000, memory_mb: 2048, disk_mb: 4096, pids: 256}\n      output_limit_bytes: 32768\n      timeout_seconds: 60\n"
+	yaml := "database:\n  driver: postgres\n  dsn_secret_ref: docker-secret://maestro-postgres-dsn\nvalidation:\n  allow_host_execution: true\n  policy_version: m1-contract-test\n  policy_digest: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n  command_profiles:\n    - id: go-m1-contract-test\n      version: \"1.0.0\"\n      image_digest: \"localhost/fixtures/profile@sha256:1111111111111111111111111111111111111111111111111111111111111111\"\n      argv: [\"go\", \"test\", \"./...\"]\n      working_directory: .\n      network: {mode: none, allow_hosts: []}\n      resources: {cpu_millis: 2000, memory_mb: 2048, disk_mb: 4096, pids: 256}\n      output_limit_bytes: 32768\n      timeout_seconds: 60\n"
 	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	cfg, err := Load(path)
 	require.NoError(t, err, "Load is decode-only")

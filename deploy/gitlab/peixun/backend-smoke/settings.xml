@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <!-- 沙箱出网：JVM 代理属性对 Maven resolver 不生效，代理走本文件
+       （内网同样以 settings.xml 携带代理与 Nexus）；egress 是沙箱过滤代理别名。 -->
+  <proxies>
+    <proxy>
+      <id>egress-https</id>
+      <active>true</active>
+      <protocol>https</protocol>
+      <host>egress</host>
+      <port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+    </proxy>
+    <proxy>
+      <id>egress-http</id>
+      <active>true</active>
+      <protocol>http</protocol>
+      <host>egress</host>
+      <port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+    </proxy>
+  </proxies>
+  <!-- 沙箱/内网对齐：central 统一经镜像仓（本地沙箱=阿里云 public；内网=Nexus），
+       其余仓库不开放 —— 与 maven-build Command Profile 的网络白名单同源。 -->
+  <mirrors>
+    <mirror>
+      <id>peixun-mirror</id>
+      <mirrorOf>central</mirrorOf>
+      <name>peixun mirror (intranet-aligned)</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+  </mirrors>
+</settings>

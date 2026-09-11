@@ -50,9 +50,17 @@ type CommandProfileRegistry struct {
 var (
 	commandProfileIDRe      = regexp.MustCompile(`^[a-z][a-z0-9-]{2,63}$`)
 	commandProfileVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-	imageDigestRe           = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	environmentNameRe       = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
-	forbiddenEnvNameRe      = regexp.MustCompile(`(?i)(token|secret|password|key)$`)
+	// Bare content digests (policy/evidence/profile digests share this).
+	imageDigestRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// Full immutable image REFERENCE (repository@sha256:<64 hex>): a bare
+	// digest cannot be pulled by the runtime, so image fields require the
+	// repository-qualified form (P5a fix; the sandbox pulls by reference).
+	imageReferenceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*(:[0-9]+)?/[a-z0-9@._/-]+@sha256:[0-9a-f]{64}$`)
+	environmentNameRe  = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+	forbiddenEnvNameRe = regexp.MustCompile(`(?i)(token|secret|password|key)$`)
+	// allowHostPattern mirrors the sandbox host rule: lowercase hostname
+	// or dot-prefixed subdomain match (mirror domains).
+	allowHostPattern = regexp.MustCompile(`^(\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 )
 
 var forbiddenExecutables = map[string]struct{}{
@@ -121,8 +129,8 @@ func validateCommandProfile(profile CommandProfile) error {
 	if !commandProfileIDRe.MatchString(profile.ID) || !commandProfileVersionRe.MatchString(profile.Version) {
 		return fmt.Errorf("invalid id or version")
 	}
-	if !imageDigestRe.MatchString(profile.ImageDigest) {
-		return fmt.Errorf("image_digest must be an immutable sha256 digest")
+	if !imageReferenceRe.MatchString(profile.ImageDigest) {
+		return fmt.Errorf("image_digest must be an immutable repository@sha256 reference")
 	}
 	if len(profile.Argv) == 0 || len(profile.Argv) > 32 {
 		return fmt.Errorf("argv must contain 1..32 items")
@@ -138,8 +146,24 @@ func validateCommandProfile(profile CommandProfile) error {
 	if _, err := validateRelativePath(profile.WorkingDirectory, true); err != nil {
 		return fmt.Errorf("working_directory: %w", err)
 	}
-	if profile.Network.Mode != "none" || len(profile.Network.AllowHosts) != 0 {
-		return fmt.Errorf("M0 local diagnostic profiles require network.mode=none")
+	switch profile.Network.Mode {
+	case "", "none":
+		if len(profile.Network.AllowHosts) != 0 {
+			return fmt.Errorf("network.mode=none cannot carry allow_hosts")
+		}
+	case "allowlist":
+		// Declared egress (P5a): mirror domains through a per-execution
+		// filtering proxy; every other route stays closed.
+		if len(profile.Network.AllowHosts) == 0 || len(profile.Network.AllowHosts) > 16 {
+			return fmt.Errorf("network.mode=allowlist requires 1..16 allow_hosts")
+		}
+		for _, host := range profile.Network.AllowHosts {
+			if !allowHostPattern.MatchString(host) {
+				return fmt.Errorf("allow_host %q must be a hostname or dot-prefixed domain", host)
+			}
+		}
+	default:
+		return fmt.Errorf("network.mode must be none or allowlist")
 	}
 	if profile.Resources.CPUMillis < 100 || profile.Resources.CPUMillis > 8000 ||
 		profile.Resources.MemoryMB < 128 || profile.Resources.MemoryMB > 16384 ||

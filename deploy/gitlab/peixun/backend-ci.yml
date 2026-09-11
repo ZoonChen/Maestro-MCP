@@ -1,0 +1,24 @@
+# peixun-backend 首条管线：最小但真实的 Maven/JUnit 冒烟。
+# 镜像源经 ci-smoke/settings.xml 固定为阿里云 public 仓（对齐内网 Nexus 语义）；
+# 产物含 surefire junit 报告与 jacoco 覆盖率（P5a-2 验收：junit 报告产物）。
+stages: [verify]
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+
+verify:junit:
+  stage: verify
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - mvn -B -s ci-smoke/settings.xml -f ci-smoke/pom.xml verify
+  cache:
+    key: maven-smoke
+    paths:
+      - .m2/repository
+  artifacts:
+    when: always
+    reports:
+      junit: ci-smoke/target/surefire-reports/TEST-*.xml
+    paths:
+      - ci-smoke/target/site/jacoco/
+    expire_in: 1 week
