@@ -60,7 +60,10 @@ func TestSandboxAllowlistEgressFiltering(t *testing.T) {
 	allowed, err := runtime.Run(ctx, spec)
 	require.NoError(t, err)
 	assert.Equal(t, 0, allowed.ExitCode, "allowed host through proxy: %s", allowed.Output)
-	assert.Equal(t, "200", strings.TrimSpace(allowed.Output), "npmmirror answers through the filtered proxy")
+	// podman interleaves image-pull progress into the captured output
+	// (docker keeps it on stderr); the command's own answer is the last
+	// non-empty line under both engines.
+	assert.Equal(t, "200", lastOutputLine(allowed.Output), "npmmirror answers through the filtered proxy")
 
 	// Same spec, non-listed host: the proxy must refuse the CONNECT.
 	deniedSpec := spec
@@ -70,4 +73,15 @@ func TestSandboxAllowlistEgressFiltering(t *testing.T) {
 	denied, err := runtime.Run(ctx, deniedSpec)
 	require.NoError(t, err)
 	assert.NotEqual(t, 0, denied.ExitCode, "non-listed host must not be reachable: %s", denied.Output)
+}
+
+// lastOutputLine returns the last non-empty line of a captured output.
+func lastOutputLine(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		if trimmed := strings.TrimSpace(lines[index]); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
