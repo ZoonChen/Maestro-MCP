@@ -10,18 +10,30 @@ import (
 	"time"
 )
 
-// runDocker executes one docker CLI invocation and returns its combined
-// output. Arguments are server-derived (execution id, validated hosts,
-// pinned digests) — never request data.
-func runDocker(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // server-derived arguments
+// runEngine executes one OCI-engine CLI invocation through the SAME
+// binary the job runs use (DetectRuntime may prefer podman — network
+// and container state does not cross engines, a docker-created network
+// is invisible to a podman-run job and vice versa). Arguments are
+// server-derived (execution id, validated hosts, pinned digests) —
+// never request data.
+func (r *Runtime) runEngine(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, r.binary, args...) //nolint:gosec // server-derived arguments
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func runDockerQuiet(ctx context.Context, args ...string) error {
-	_, err := runDocker(ctx, args...)
+func (r *Runtime) runEngineQuiet(ctx context.Context, args ...string) error {
+	_, err := r.runEngine(ctx, args...)
 	return err
+}
+
+// defaultNetworkName is the engine's default (already internet-facing)
+// network: docker calls it "bridge", rootless podman calls it "podman".
+func (r *Runtime) defaultNetworkName() string {
+	if strings.HasSuffix(r.binary, "podman") {
+		return "podman"
+	}
+	return "bridge"
 }
 
 // Per-execution egress for allowlist profiles (P5a). The job container has
@@ -57,34 +69,34 @@ func (r *Runtime) provisionEgress(ctx context.Context, executionID string, hosts
 	network := "maestro-egress-" + executionID
 	proxyName := "maestro-egress-proxy-" + executionID
 
-	if out, err := runDocker(ctx, "network", "create", "--internal", network); err != nil {
+	if out, err := r.runEngine(ctx, "network", "create", "--internal", network); err != nil {
 		return nil, fmt.Errorf("sandbox: egress network create failed: %s: %w", strings.TrimSpace(out), err)
 	}
 
 	confDir, err := os.MkdirTemp("", "maestro-egress-")
 	if err != nil {
-		_ = runDockerQuiet(ctx, "network", "rm", network)
+		_ = r.runEngineQuiet(ctx, "network", "rm", network)
 		return nil, fmt.Errorf("sandbox: egress conf dir: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(confDir, "squid.conf"), []byte(squidConf(hosts)), 0o600); err != nil {
 		_ = os.RemoveAll(confDir)
-		_ = runDockerQuiet(ctx, "network", "rm", network)
+		_ = r.runEngineQuiet(ctx, "network", "rm", network)
 		return nil, fmt.Errorf("sandbox: egress conf write: %w", err)
 	}
 
-	if out, err := runDocker(ctx, "run", "-d", "--rm",
+	if out, err := r.runEngine(ctx, "run", "-d", "--rm",
 		"--name", proxyName,
 		"--network", network,
 		"--network-alias", egressAlias,
 		"-v", filepath.Join(confDir, "squid.conf")+":/etc/squid/squid.conf:ro",
 		EgressProxyImage); err != nil {
 		_ = os.RemoveAll(confDir)
-		_ = runDockerQuiet(ctx, "network", "rm", network)
+		_ = r.runEngineQuiet(ctx, "network", "rm", network)
 		return nil, fmt.Errorf("sandbox: egress proxy start failed: %s: %w", strings.TrimSpace(out), err)
 	}
 	// The internet foot: attach the proxy to the default bridge so the
 	// job network itself stays internal-only.
-	if out, err := runDocker(ctx, "network", "connect", "bridge", proxyName); err != nil {
+	if out, err := r.runEngine(ctx, "network", "connect", r.defaultNetworkName(), proxyName); err != nil {
 		r.teardownEgress(context.WithoutCancel(ctx), &egressResources{network: network, proxyName: proxyName, confDir: confDir})
 		return nil, fmt.Errorf("sandbox: egress proxy bridge attach failed: %s: %w", strings.TrimSpace(out), err)
 	}
@@ -93,7 +105,7 @@ func (r *Runtime) provisionEgress(ctx context.Context, executionID string, hosts
 	// refused. Bash's /dev/tcp probe needs nothing beyond the image.
 	ready := false
 	for i := 0; i < 40 && !ready; i++ {
-		probeErr := runDockerQuiet(ctx, "exec", proxyName, "bash",
+		probeErr := r.runEngineQuiet(ctx, "exec", proxyName, "bash",
 			"-c", "(echo > /dev/tcp/127.0.0.1/3128) 2>/dev/null")
 		ready = probeErr == nil
 		if !ready {
@@ -130,8 +142,8 @@ func (r *Runtime) teardownEgress(ctx context.Context, e *egressResources) {
 	if e == nil {
 		return
 	}
-	_ = runDockerQuiet(ctx, "rm", "-f", e.proxyName)
-	_ = runDockerQuiet(ctx, "network", "rm", e.network)
+	_ = r.runEngineQuiet(ctx, "rm", "-f", e.proxyName)
+	_ = r.runEngineQuiet(ctx, "network", "rm", e.network)
 	_ = os.RemoveAll(e.confDir)
 }
 
