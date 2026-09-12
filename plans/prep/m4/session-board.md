@@ -140,7 +140,18 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 ### S2 共享栈变更窗口（2026-09-12，会话 S2 登记并执行）
 
 - **窗口 WIN-20260912-S2-01**（ART-incident-002 纪律，brief-S2 切片 S2-1）：常驻栈 `maestro-pilot-server`（8080）换镜像 `maestro-main:local`（自 main 8c8d82e 构建）；**先迁移后换二进制**（J5 红线，库已在 0020，`migrate up` 预期 no-op 并留记录）；退役 8081 对照实例（`p5b-server.sh down`）；换容器时补 `MAESTRO_WEBHOOK_PAYLOAD_KEY`/`MAESTRO_PILOT_WEBHOOK_KEY`（S2-3 webhook 首演前提，一次重启内完成，最小扰动）。
-- 前后 pg_dump 快照存 `maestro-p5a-bases/pilot-backups/`；回滚点=旧镜像 `maestro-j5:local` 保留。实时标记：`pilot-stack/change-window.md`（并行会话可见）。结果行待切片完成后回填。
+- 前后 pg_dump 快照存 `maestro-p5a-bases/pilot-backups/`；回滚点=旧镜像 `maestro-j5:local` 保留。实时标记：`pilot-stack/change-window.md`（并行会话可见）。
+- **结果（全窗口收口）**：WIN-01 ✅（换镜像+退役 8081+smoke：health/readyz/console 302/webhook 面 401/MCP 20 工具）；WIN-02 ✅（补 `MAESTRO_PILOT_GITLAB_PAT`（实例 bot 凭据）后重启，mid 快照；root PAT 经 rails console 重建——原文件随 P5b worktree 清理丢失）；WIN-03 ✅（挂 `resident-config.yaml`：telemetry 生产者+SLO 快照激活，mid2 快照）。配方=**`deploy/gitlab/peixun/resident-server.sh`**（build|migrate|up|down，可重复拉起经两次连续重建+doctor 配置校验证实）。快照四份：pre-183916 / post-185621 / mid-191643 / mid2-193350。
+
+### S2 影子期开工收口（2026-09-12，会话 S2）
+
+- **S2-1 常驻栈重建** ✅（见上窗口段）；smoke 口径修正：MCP 面 live=20 工具，冻结目录钉 25——差的 5 件（get_agent_run/get_defect/get_integration_run/list_defects/report_agent_progress）自 M3 3.1 目录冻结起从未有 Go 实现（先存缺口，登记见下）。
+- **S2-2 flags=shadow** ✅：backend/web 双项目 `rollout=shadow`（PUT 201×2，经 platform_admin 授权通路）；审计 #50/#51 `pilot.decision.recorded`（authority=platform:platform_admin）。playedu-eval/D1 治理域不置位（口径见 s2-evidence.json）。
+- **S2-3 webhook 首演** ✅：双仓 hook（四契约事件）+ host.docker.internal 通路；真实 MR !3（s2/shadow-kickoff）全链：收件 18/18 processed（DLQ 0，负对照 401 TOKEN_MISMATCH）→投影（pipelines 2/2 success、MR merged 含 merge_commit）→对账（reconcile 202，If-Match v1）。
+- **S2-4 观察面** ✅：四面 API spot check（work-graph 200/SLO 200 healthy 100%/jira 对账空=零未决/证据面=evidence 0 行属灰度前预期）；度量清单+周报骨架+首周基线=`deploy/gitlab/peixun/shadow-observation.md`；PLAYBOOK 阶段 2 行已勘误增补。
+- **S2-5 团队开工** ✅：试点仓 `MAESTRO-GUIDE.md`（MR !4 合并，2f94df38）+ 台账登记 ART-opsrunbook-001@1（ops-runbook/internal/digest；审计 #52）。
+- **行动项落地**：ART-incident-002 行动项①（库隔离）部分落地——同 PG 实例新建 `maestro_test` 库供门禁测试（`DROP SCHEMA` 不再触试点库）；**建议后续会话统一改用 `postgres://…:5434/maestro_test`**。
+- **S2 新登记缺口（W5 裁决队列外）**：①MCP 目录 25 vs 实现 20（五件缺陷/Agent 域工具）；②config.schema.json 目标段（server/security/gitlab/observability）运行时不收（KnownFields 拒绝，resident-config 按 Go 形状编写）；③控制台浏览器登录通路（IdP 未发布宿主端口+无 hosts）待运维裁决；④证据面 quality.read 无 project_admin 持有者（冻结矩阵正确行为，verifier/viewer 账号未开）。
 
 ### 第一波（已完成，存档）
 
