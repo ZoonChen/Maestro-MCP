@@ -1,0 +1,54 @@
+# resident-config.yaml — 试点常驻控制面运行时配置（brief-S2 S2-4）
+# 形状按 internal/config 的 yaml 标签（运行时真源）；config.schema.json
+# 的 server/security/gitlab/observability 目标段运行时尚未接受（缺口已登记）。
+# 密钥一律 env 引用，不落本文件。
+http_addr: 0.0.0.0:8080
+allowed_origins:
+  - http://127.0.0.1:8080
+remote_write: true
+database:
+  driver: postgres
+  dsn_secret_ref: env:MAESTRO_DATABASE_DSN
+  max_open_connections: 50
+oidc:
+  issuer: https://keycloak-pilot:8443/realms/maestro
+  client_id: maestro-console
+  client_secret_ref: env:MAESTRO_OIDC_CLIENT_SECRET
+  audience: maestro-console
+backup:
+  full_backup_interval_hours: 24
+  wal_archive: true
+  rpo_minutes: 15   # frozen schema range 1-15; pilot actual cadence = per-stage pg_dump (see SHADOW-OBSERVATION)
+  rto_minutes: 240
+telemetry:
+  producer_interval_seconds: 60
+  redaction_version: pilot-v1
+  platform_project_id: 018fb5b0-0000-7000-8000-000000000004
+slo:
+  window: rolling_7d
+  availability:
+    success_metric: http_requests_success
+    total_metric: http_requests_total
+    at_risk_error_budget_remaining_percent: 25
+  objectives:
+    - kind: api_p95_latency_ms
+      metric: api_p95_latency_ms
+      target: 800
+      at_risk_threshold: 600
+      unit: ms
+      lower_is_better: true
+      runbook_ref: docs/operations/reliability-and-recovery.md
+    - kind: webhook_ingest_p95_latency_ms
+      metric: webhook_ingest_p95_latency_ms
+      target: 500
+      at_risk_threshold: 400
+      unit: ms
+      lower_is_better: true
+      runbook_ref: docs/operations/runbooks/webhook-pipeline-failure.md
+    - kind: inbox_lag_p95_seconds
+      metric: inbox_lag_p95_seconds
+      target: 60
+      at_risk_threshold: 30
+      unit: s
+      lower_is_better: true
+      runbook_ref: docs/operations/runbooks/webhook-pipeline-failure.md

@@ -1,0 +1,90 @@
+{
+  "resident_rebuild": {
+    "window": "WIN-20260912-S2-01",
+    "registered_on": "session-board.md (commit 5acb3eb) + pilot-stack/change-window.md",
+    "image": "maestro-main:local",
+    "built_from": "main 8c8d82e (worktree Maestro-MCP-s2)",
+    "migrate_before_swap": "applied=0 target_schema=20 (DB already at main schema; J5 red line honored)",
+    "swap": "maestro-pilot-server recreated on 127.0.0.1:8080, readyz 200",
+    "retired_8081": "maestro-p5b-server removed (p5b-server.sh down)",
+    "rollback_point": "maestro-j5:local / maestro-p5b:local images retained; pg_dump pre/post",
+    "dumps": {
+      "pre": "pilot-backups/maestro-s2-pre-20260912-183916.sql (238814 B)",
+      "post": "pilot-backups/maestro-s2-post-20260912-185621.sql (238823 B)"
+    },
+    "recipe": "deploy/gitlab/peixun/resident-server.sh (build|migrate|up|down)"
+  },
+  "smoke_after_swap": {
+    "health": "200 {status: ok}",
+    "readyz": "200 {status: ready}",
+    "console": "GET / -> 302 Location /dashboard (unauthenticated redirect, expected)",
+    "webhook_surface": "POST /api/v3/webhooks/gitlab/:instance_id without token -> 401 (receiver mounted, honest rejection)",
+    "mcp_streamable_http": {
+      "method": "initialize + tools/list over POST /mcp with OIDC bearer",
+      "session": "mcp-session handshake 200, notifications/initialized 202",
+      "tools_live": 20,
+      "tools": ["asset_approve", "asset_query", "asset_register", "asset_review", "cancel_work_item", "create_work_item", "decomposition_propose", "get_gitlab_status", "get_next_task", "get_quality_status", "get_task_context", "get_verification_task", "get_work_item", "heartbeat_task", "list_work_items", "report_blocker", "retry_work_item", "submit_task_result", "submit_verification", "worktree_graph_query"]
+    }
+  },
+  "gap_mcp_catalog_vs_live": {
+    "catalog_nail": 25,
+    "live_surface": 20,
+    "missing": ["get_agent_run", "get_defect", "get_integration_run", "list_defects", "report_agent_progress"],
+    "note": "pre-existing since the M3 3.1 catalog freeze (never implemented in Go; git -S search empty); unchanged by this rebuild — registered for the W5-or-later backlog"
+  },
+  "flags_shadow": {
+    "path": "J5 platform grant (pilot-admin -> platform_admin, deed/pilot-platform-admin-2026-09, valid_to 2026-12-11) -> API PUT",
+    "projects": {
+      "018fb5b0-0000-7000-8000-000000000002": {"name": "企业学堂 backend（RuoYi 底座）", "put": 201, "audit_id": 50},
+      "018fb5b0-0000-7000-8000-000000000003": {"name": "企业学堂 web", "put": 201, "audit_id": 51}
+    },
+    "flag": "rollout",
+    "stage": "shadow",
+    "readback": "GET pilot-flags 200, stage=shadow on both projects",
+    "audit": "pilot.decision.recorded x2, decision=allow, authority=platform:platform_admin, policy_version=3.0",
+    "scope_note": "playedu-eval (PoC 已收官) 与 D1 治理域不置位；影子期出口度量按 backend+web 两生产轨项目采集"
+  },
+  "webhook_first_run": {
+    "hooks_registered": {
+      "gitlab_project_3_peixun-backend": {"hook_id": 1, "url": "http://host.docker.internal:8080/api/v3/webhooks/gitlab/018fb5b1-0000-7000-8000-000000000001", "events": ["push", "merge_requests", "pipeline", "job"]},
+      "gitlab_project_4_peixun-web": {"hook_id": 2, "url": "same", "events": ["push", "merge_requests", "pipeline", "job"]}
+    },
+    "reachability": "gitlab-ce container -> host.docker.internal:8080/health = 200 (probe)",
+    "negative_control": "unauthenticated POST -> 401 TOKEN_MISMATCH (delivery row #1, honest rejection)",
+    "real_mr": {
+      "repo": "peixun/peixun-backend",
+      "branch": "s2/shadow-kickoff",
+      "commit": "352cce2",
+      "mr_iid": 3,
+      "pipeline_on_branch": "#37 success (maven-build CI)",
+      "merged_at": "2026-09-12T11:15:02Z",
+      "merge_commit": "f8688ec",
+      "pipeline_on_main_after_merge": "#38 success"
+    },
+    "inbox": "webhook_deliveries: push x2 / merge_request x2 / pipeline x6 / job x8 all token_verified=accepted (10 real events + 1 rejected control); webhook_inbox 18/18 processed attempts=1",
+    "projection": "pipelines x2 rows (sha bound, status success), pipeline_jobs x2, merge_requests row: state=merged, source_sha=352cce2…, merge_commit=f8688ec…, merged_at set",
+    "reconcile": "POST /gitlab/merge-requests/3/reconcile 202 accepted (operation_id s2-reconcile-mr3-003, If-Match mapping v1, reason recorded); provider pull refreshed the same truth path (updated_at bumped to reconcile moment)",
+    "extra_window": "WIN-20260912-S2-02: bot PAT env (env:MAESTRO_PILOT_GITLAB_PAT per gitlab_instances.bot_credential_ref) injected with a mid pg_dump; PAT rebuilt via rails console (P5b-documented procedure, prior file lost with the P5b worktree cleanup)"
+  },
+  "windows_closeout": {
+    "WIN-20260912-S2-01": "image swap + 8081 retirement + smoke",
+    "WIN-20260912-S2-02": "bot PAT env injection (reconcile leg prerequisite)",
+    "WIN-20260912-S2-03": "resident-config.yaml mount: telemetry producer + SLO snapshot activation (doctor config validation: status ok, schema_version 20)",
+    "dumps": ["maestro-s2-pre-20260912-183916.sql", "maestro-s2-post-20260912-185621.sql", "maestro-s2-mid-20260912-191643.sql", "maestro-s2-mid2-20260912-193350.sql"],
+    "repeatable_recipe": "deploy/gitlab/peixun/resident-server.sh build|migrate|up|down (proven by two consecutive container recreations + doctor)"
+  },
+  "observation_surface": {
+    "task_flow": "GET work-graph 200: D1 governance project shows 4 sealed plans; backend/web plans grow with team decomposition",
+    "evidence_side": "pipelines projection 2/2 success + MR merged row (webhook path); formal evidence rows = 0 (expected pre-gray: no maestro/* work-item MRs yet); evidence API 403 for pilot-admin is correct frozen-matrix behavior (quality.read held by worker/verifier/viewer only)",
+    "reconciliation": "jira-reconcile-items 200 empty (zero-open per manual anchoring fallback); MR reconcile 202 demonstrated",
+    "slo": "GET slo-snapshot 200: availability 100% healthy (error budget 100%), api_p95 12.6ms healthy, ingest/inbox no_data (producer started 11:34Z), rpo no_data (backup ledger empty by honest scope cut)",
+    "console": "SPA served behind auth (GET /dashboard 200 + bundles); browser-interactive login blocked by topology (IdP 8443 unpublished, no hosts entry) — registered gap",
+    "deliverable": "deploy/gitlab/peixun/shadow-observation.md (metric list + weekly template + first-week baseline + collection commands + honest notes)"
+  },
+  "team_onboarding": {
+    "manual": "pilot repo peixun-backend MAESTRO-GUIDE.md (MR !4 merged, merge_commit 2f94df38)",
+    "asset": "ART-opsrunbook-001@1 (ops-runbook, internal, digest sha256:ae014ef5…, draft; audit #52 asset.registered)",
+    "second_webhook_chain": "MR !4 drive: push+MR+pipeline+merge events projected (repeat-run confirmation of S2-3 chain)"
+  },
+  "gate_isolation_action": "ART-incident-002 action item #1 partially delivered: dedicated maestro_test database created on the shared PG instance; gate suites must point MAESTRO_TEST_POSTGRES_DSN at maestro_test (tests DROP SCHEMA public CASCADE)"
+}

@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 0 | **准备**（brief-P5a） | 权威 MR/双仓/onboarding/flags=shadow/存量摄取 | 就绪清单全绿 | 一期集：maven-build/npm-build/playwright-e2e |
 | 1 | **PoC 首演**（brief-P5b） | D1 两周对比，0→1 全链路 | 选型 Gate 双签 + 首演复盘 | 无新增 |
-| 2 | **影子**（一期前段，A1/A2 账本域） | 团队照常开发，Maestro 旁路记录 | 零干扰确认 + 控制台数据完整（任务流/证据/对账/SLO） | — |
+| 2 | **影子**（一期前段，A1/A2 账本域） | 团队照常开发，Maestro 旁路记录 | 零干扰确认 + 控制台数据完整（任务流/证据/对账/SLO）；周采口径与首周基线见 `deploy/gitlab/peixun/shadow-observation.md`（brief-S2 实测增补）；团队手册=试点仓 MAESTRO-GUIDE.md（ART-opsrunbook-001） | — |
 | 3 | **灰度**（一期中后段） | flags=gray：Agent 接手测试/扫描类缺陷（M3 闭环真实上场） | Agent 修复 MR 人工合并率 100%、预算超限 <2% | — |
 | 4 | **全量**（二期，BOM 246→238 人日域） | flags=full；直播/移动全治理；IntegrationRun 常态 | BOM 二期量化验收（2000 并发等） | **二期集任务书**：ffmpeg-transcode/srs-loadtest/im-ops（发布时点=影子期结束前一周下发） |
 | 5 | **深水**（三期，学习地图/等保） | 全域治理 + 等保证据包生产 | BOM 三期验收 + 等保差距清单闭环（BLUEPRINT §2.1 [待评审]项全部裁决） | **三期集任务书**：等保证据导出/信创适配验证（D2 决策后） |
