@@ -423,6 +423,25 @@ type IdentityStore interface {
 	// holds (unrevoked, inside the validity window) — the resolver's
 	// authorization view.
 	ActiveFunctionalRoles(ctx context.Context, userID string) ([]string, error)
+
+	// GrantPlatformRole creates one platform-role binding (J5:
+	// platform_grants). Validation fails closed — unknown role/user,
+	// inverted windows and empty authorization-source references are
+	// rejected; a second active grant of the same role conflicts.
+	GrantPlatformRole(ctx context.Context, grant *PlatformGrant) error
+
+	// RevokePlatformRole applies the terminal revocation; unknown or
+	// already-revoked grants answer ErrPlatformGrantNotFound.
+	RevokePlatformRole(ctx context.Context, grantID string) error
+
+	// ListPlatformGrants returns the bindings of one platform role
+	// (all roles when empty), including expired and revoked rows.
+	ListPlatformGrants(ctx context.Context, role string) ([]PlatformGrant, error)
+
+	// ActivePlatformRoles returns the platform roles the user currently
+	// holds (unrevoked, inside the validity window) — the resolver's
+	// authorization view.
+	ActivePlatformRoles(ctx context.Context, userID string) ([]string, error)
 }
 
 // RunnerRegistryStore persists the runner device registry, one-time

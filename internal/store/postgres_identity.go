@@ -39,6 +39,60 @@ type pgExecer interface {
 
 type pgIdentityStore struct{ q pgExecer }
 
+// grantBinding is the shared validity-window shape of one
+// functional-principal or platform-grant binding (J1/J5): the columns
+// and guards are identical, only the role enum and error sentinels
+// differ between the two tables.
+type grantBinding struct {
+	UserID     string
+	SourceRef  string
+	ValidFrom  string // RFC3339; empty defaults to the server clock
+	ValidTo    *string
+}
+
+// validateGrantBinding performs the shared fail-closed checks of an
+// authority binding: known user, non-empty authorization-source
+// reference (the 授权书 citation) and a well-formed validity window.
+// invalid is the caller's sentinel (ErrFunctionalGrantInvalid /
+// ErrPlatformGrantInvalid); the returned validFrom is SQL-ready (nil
+// means "let now() decide").
+func (s pgIdentityStore) validateGrantBinding(ctx context.Context, binding grantBinding, invalid error) (any, *time.Time, error) {
+	if binding.UserID == "" {
+		return nil, nil, fmt.Errorf("%w: user is required", invalid)
+	}
+	if _, err := s.GetUser(ctx, binding.UserID); err != nil {
+		return nil, nil, fmt.Errorf("%w: unknown user", invalid)
+	}
+	if binding.SourceRef == "" {
+		return nil, nil, fmt.Errorf("%w: source_ref is required (authorization deed citation)", invalid)
+	}
+	var validTo *time.Time
+	if binding.ValidTo != nil && *binding.ValidTo != "" {
+		parsed, err := time.Parse(time.RFC3339, *binding.ValidTo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: valid_to is not RFC3339", invalid)
+		}
+		validTo = &parsed
+	}
+	// An absent valid_from defaults to the SERVER clock (SQL now()):
+	// validity is judged by now() in every read, so a client-clocked
+	// default could land microseconds in the server's future and make
+	// a just-granted authority briefly invisible. An inverted window
+	// against the server default still fails the schema CHECK.
+	var validFrom any
+	if binding.ValidFrom != "" {
+		parsed, err := time.Parse(time.RFC3339, binding.ValidFrom)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: valid_from is not RFC3339", invalid)
+		}
+		if validTo != nil && !validTo.After(parsed) {
+			return nil, nil, fmt.Errorf("%w: valid_to must be after valid_from", invalid)
+		}
+		validFrom = parsed
+	}
+	return validFrom, validTo, nil
+}
+
 // GetOrCreateUser maps a verified issuer+subject pair to exactly one user
 // row; repeated logins refresh the display name idempotently.
 func (s pgIdentityStore) GetOrCreateUser(ctx context.Context, issuer, subject, displayName string) (*model.User, error) {

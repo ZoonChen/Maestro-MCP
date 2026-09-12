@@ -75,38 +75,12 @@ func (s pgIdentityStore) GrantFunctionalRole(ctx context.Context, grant *Functio
 	if _, ok := validFunctionalRoles[grant.Function]; !ok {
 		return fmt.Errorf("%w: unknown function %q", ErrFunctionalGrantInvalid, grant.Function)
 	}
-	if grant.UserID == "" {
-		return fmt.Errorf("%w: user is required", ErrFunctionalGrantInvalid)
-	}
-	if _, err := s.GetUser(ctx, grant.UserID); err != nil {
-		return fmt.Errorf("%w: unknown user", ErrFunctionalGrantInvalid)
-	}
-	if grant.SourceRef == "" {
-		return fmt.Errorf("%w: source_ref is required (authorization deed citation)", ErrFunctionalGrantInvalid)
-	}
-	var validTo *time.Time
-	if grant.ValidTo != nil && *grant.ValidTo != "" {
-		parsed, err := time.Parse(time.RFC3339, *grant.ValidTo)
-		if err != nil {
-			return fmt.Errorf("%w: valid_to is not RFC3339", ErrFunctionalGrantInvalid)
-		}
-		validTo = &parsed
-	}
-	// An absent valid_from defaults to the SERVER clock (SQL now()):
-	// validity is judged by now() in every read, so a client-clocked
-	// default could land microseconds in the server's future and make
-	// a just-granted authority briefly invisible. An inverted window
-	// against the server default still fails the schema CHECK.
-	var validFrom any
-	if grant.ValidFrom != "" {
-		parsed, err := time.Parse(time.RFC3339, grant.ValidFrom)
-		if err != nil {
-			return fmt.Errorf("%w: valid_from is not RFC3339", ErrFunctionalGrantInvalid)
-		}
-		if validTo != nil && !validTo.After(parsed) {
-			return fmt.Errorf("%w: valid_to must be after valid_from", ErrFunctionalGrantInvalid)
-		}
-		validFrom = parsed
+	validFrom, validTo, err := s.validateGrantBinding(ctx, grantBinding{
+		UserID: grant.UserID, SourceRef: grant.SourceRef,
+		ValidFrom: grant.ValidFrom, ValidTo: grant.ValidTo,
+	}, ErrFunctionalGrantInvalid)
+	if err != nil {
+		return err
 	}
 
 	result, err := s.q.ExecContext(ctx, `
