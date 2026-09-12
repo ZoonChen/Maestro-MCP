@@ -1,0 +1,178 @@
+{
+  "audit_export_final": {
+    "actions": {
+      "asset.approved": 9,
+      "asset.gate.bound": 5,
+      "asset.registered": 12,
+      "asset.reviewed": 9,
+      "asset.superseded": 1,
+      "workgraph.plan.created": 4,
+      "workgraph.plan.sealed": 4,
+      "workgraph.proposal.applied": 1,
+      "workgraph.proposal.rejected": 1
+    },
+    "chain_digest": "sha256:46884678344e170229a501a57c01a6bd407d22958c0a0b2eeb8f12bdc42c217f",
+    "entries": 46
+  },
+  "audit_export_stage_one": {
+    "actions": {
+      "asset.approved": 6,
+      "asset.gate.bound": 5,
+      "asset.registered": 9,
+      "asset.reviewed": 6,
+      "asset.superseded": 1,
+      "workgraph.plan.created": 4,
+      "workgraph.plan.sealed": 4,
+      "workgraph.proposal.applied": 1,
+      "workgraph.proposal.rejected": 1
+    },
+    "chain_digest": "sha256:9eea79f254d91af895d551e29d75df427897c15406e6d7976214fe87cc4c0ffb",
+    "entries": 37
+  },
+  "baseline_seed": {
+    "instance": "018fb5b1-0000-7000-8000-000000000001",
+    "mappings": [
+      3,
+      4,
+      5
+    ],
+    "origin": "ART-incident-002 recovery, idempotent reseed",
+    "projects": [
+      "018fb5b0-0000-7000-8000-000000000002",
+      "018fb5b0-0000-7000-8000-000000000003",
+      "018fb5b0-0000-7000-8000-000000000004",
+      "018fb5b0-0000-7000-8000-000000000005"
+    ],
+    "team": "018fb5b0-0000-7000-8000-000000000001",
+    "user": "01a09458-ada8-71ad-b5d2-fdebd7a3f8f1"
+  },
+  "blueprint_walk": {
+    "approve_actor": "session:p5b-tech-session",
+    "asset": "ART-blueprint-001@1",
+    "review_actor": "session:p5b-product-session"
+  },
+  "decision_gate_dual_sign": {
+    "approve_actor": "session:p5b-tech-session",
+    "asset": "ART-release-note-001@1",
+    "functional_basis": "pilot-admin holds product_owner+technical_lead (J1 grants); dual-sign expression = two ledger transitions by two function-named sessions — native multi-sign Gate is a registered gap",
+    "review_actor": "session:p5b-product-session"
+  },
+  "decomposition": {
+    "children": [
+      "eval",
+      "loadtest",
+      "estimate",
+      "risk"
+    ],
+    "gate": "d1-gate",
+    "pattern": "poc-two-track",
+    "plan_id": "01a09478-fad8-755f-b5bd-ac2df3b69e73"
+  },
+  "final_ledger": {
+    "approved": {
+      "ART-blueprint-001@1": true,
+      "ART-detailed-design-001@2": true,
+      "ART-incident-002@1": true,
+      "ART-release-note-001@1": true,
+      "ART-research-001@1": true,
+      "ART-retrospective-001@1": true,
+      "ART-test-plan-001@1": true,
+      "ART-test-report-001@1": true
+    },
+    "total_rows": 12
+  },
+  "jira_anchors": {
+    "issue_keys": [
+      "PXPOC-1",
+      "PXPOC-2",
+      "PXPOC-3",
+      "PXPOC-4",
+      "PXPOC-5"
+    ],
+    "source": "manual"
+  },
+  "jira_probe": {
+    "decision": "维持蓝图回退：手工锚定（镜像 worker 不启动）",
+    "error": "Get \"https://172.16.0.114\": tls: failed to verify certificate: x509: cannot validate certificate for 172.16.0.114 because it doesn't contain any IP SANs",
+    "reachable": false,
+    "target": "https://172.16.0.114"
+  },
+  "locked_gate_claim_allowed": {
+    "replay": true,
+    "work_item": "018fb5b3-0000-7000-8000-000000000101"
+  },
+  "locked_gate_draft_bind_denied": {
+    "asset": "ART-detailed-design-001@1",
+    "gate": "poc-detailed-design"
+  },
+  "locked_gate_stale_blocks_claim": {
+    "error": "no available task",
+    "work_items": [
+      "018fb5b3-0000-7000-8000-000000000102",
+      "018fb5b3-0000-7000-8000-000000000103"
+    ]
+  },
+  "locked_gate_supersede_stale_flip": {
+    "asset": "ART-detailed-design-001@1→@2",
+    "stale_bindings": 1
+  },
+  "locked_gate_v2_rebind_claim": {
+    "lease": "01a09461-72d9-72ea-89cf-2a778d1567a6",
+    "work_item": "018fb5b3-0000-7000-8000-000000000102"
+  },
+  "profile_ab": {
+    "p5b-ab-routeA-playedu-r1": {
+      "outcome": "completed",
+      "profile": "maven-build@1.0.0",
+      "repo": "peixun/playedu-eval",
+      "seconds": 163.278888209
+    },
+    "p5b-ab-routeA-playedu-r2": {
+      "outcome": "completed",
+      "profile": "maven-build@1.0.0",
+      "repo": "peixun/playedu-eval",
+      "seconds": 187.918406834
+    }
+  },
+  "seal": {
+    "actor": "pilot-admin(technical_lead)",
+    "api": "http://127.0.0.1:8081",
+    "plan_id": "01a09471-86d7-719e-900d-ae05773ace7b",
+    "replay": true,
+    "status": 200
+  },
+  "seal_before_grant": {
+    "status": "skipped-replay"
+  },
+  "seal_formal_plan": {
+    "order": "proposal applied → technical_lead seal",
+    "plan_id": "01a09478-fad8-755f-b5bd-ac2df3b69e73",
+    "replay": false,
+    "status": 200
+  },
+  "seal_main_plan": {
+    "note": "sealed on the resident pre-J4 server image via the interim project_policy.strengthen mapping (project_admin); the J4 terminal workgraph.seal mapping is demonstrated on the contrast plan",
+    "plan_id": "01a09459-c631-78e1-8d0c-29017c9f6ae7",
+    "sealed_at": "2026-09-12T14:50:09.288949+08:00"
+  },
+  "sod_self_review_denied": {
+    "asset": "ART-research-001"
+  },
+  "stage_one_completed": {
+    "at": "2026-09-12T15:15:52+08:00",
+    "wall_seconds": 0.430647125
+  },
+  "stage_two_completed": {
+    "at": "2026-09-12T16:45:25+08:00",
+    "final_chain_digest": "sha256:46884678344e170229a501a57c01a6bd407d22958c0a0b2eeb8f12bdc42c217f",
+    "wall_seconds": 0.145866708
+  },
+  "work_pattern": {
+    "name": "poc-two-track",
+    "pattern_id": "01a09459-5043-73f3-a00f-010cc0f39a67",
+    "plan_id": "01a09459-c631-78e1-8d0c-29017c9f6ae7",
+    "root_node": "01a09459-c631-78e2-af85-b46ef8a2d953",
+    "status": "active",
+    "version": 1
+  }
+}
