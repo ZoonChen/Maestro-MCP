@@ -122,6 +122,14 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 - **flags=shadow 未执行**：等 J5 #111 合入（观察项）；P5b 非 flags 切片全部完成。
 - **Maestro 待办登记**（详见 PR 描述与 ART-retrospective-001）：职能审批 MCP 通路缺口、asset 多签 Gate 缺口、proposal 幂等键全局命名空间、summary 参数口径（schema 字符串 vs store JSON）、常驻服务器镜像随 main 重建机制。
 
+### P5b 收口：PLAYBOOK 阶段 1 出口达成（2026-09-12，会话 I）
+
+- **J5（#111）合入**：CR-P5a-1 关闭（platform_grants/0020 + 常驻栈 403→200 复现 + 部署红线：先迁移后换二进制）。pilot flags 通路就绪。
+- **P5b（#112）合入**：0→1 全链路首演五切片全过——WorkPattern 封板与真 MCP 提案、七类制品角色工作流（**locked_gate 首次全量生效**：draft 拒绑→approved 可绑→supersede 全量 stale→claim 阻断→重绑愈合）、三仓六 MR 管线绿 + Profile A/B 双轮、D1 决策双签（建议：路线 B 主线+PlayEdu 对照，进 BOM 决策）、Jira 回退手工锚定。终审计 46 条。事故 ART-incident-002 如实登记（共享栈无会话隔离根因，行动项三条）。
+- **W5 契约清理切片立项**（P5b 复盘七项 + 既有登记聚类）：职能审批 MCP 通路、资产多签 Gate、proposal 幂等键全局命名空间、summary 参数口径（500）、locked_gate 下游等待面、OPS-1 终态（DLQ 重放权限）、outbox 事件类型登记 events.yaml。**P5b 首演 bug 修复经验随切片带回归**。
+- **常驻栈行动项（未单方执行，登记）**：按 p5b-server.sh 从 main（d1ccb2e）重建常驻镜像并退役 8081 对照实例——共享栈操作需协调执行（ART-incident-002 根因即共享栈无隔离变更）。
+- **阶段 2（影子期）就绪**：J5 已通→flags=shadow 可置位；首演项=webhook 接线（MAESTRO_WEBHOOK_PAYLOAD_KEY + host.docker.internal 回调）+ 影子期观察（PLAYBOOK §阶段 2 出口）。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
