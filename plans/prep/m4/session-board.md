@@ -104,7 +104,9 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 会话 I 裁决（J2c 三项登记）：
 1. **J2c-DEC-1 接受**：任务书"19→24"为笔误，六件具名工具为准，钉子=25（现实优先，钉随契约走）
 2. **J2c-CR-1 立项**：`asset.*`/`workgraph.*` 权限族 + product/technical/operations 职能授权——排为 **J4 小切片**，与 P5a 并行，**P5b 角色工作流首演前必须合入**（当前单一 qa_owner 审批是 fail-closed 窄面，多角色 Gate 会被卡）
-3. **J2c-DEC-2 接受**：seal 过渡映射 `project_policy.strengthen`，终态随 J4
+3. **J2c-DEC-2 接受**：seal 过渡映射 `project_policy.strengthen`，终态随 J4（J4 已于 #107 合入）
+4. **OPS-1 裁决**（B2 登记）：运维面板维持 deep-link 可达；DLQ 重放权限终态与 outbox 事件类型登记合并为 **W5 契约清理小切片**，P5b 前不阻塞
+5. **蓝图评审启动**：五块 [待评审] 打包为 `plans/prep/pilot/REVIEW-REQUEST.md`（含推荐与批注方式），owner/security/operations 逐块批注，P5b 前完成
 
 ### 第一波（已完成，存档）
 
