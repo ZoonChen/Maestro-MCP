@@ -165,11 +165,19 @@ func (s pgPilotStore) PutFlag(ctx context.Context, projectID, flag string, decis
 	}
 	// The recorded decision and its audit row are atomic: one commit
 	// carries both or neither (pilot.decision.recorded, M4-PILOT-001).
+	// The reason carries the allowing authority class with the same
+	// authority=<class>; shape as waiver transitions (J1-4), so a
+	// platform-granted rollout decision (J5) stays distinguishable from
+	// any future project-scoped authority in the audit trail.
+	auditReason := decision.Reason
+	if decision.Authority != "" {
+		auditReason = fmt.Sprintf("authority=%s; %s", decision.Authority, decision.Reason)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_events
-			(actor_principal, project_id, action, resource_type, resource_id, decision, reason, correlation_id)
-		VALUES ($1, $2, 'pilot.decision.recorded', 'pilot_flag', $3, 'allow', $4, $3)`,
-		decision.Actor, projectID, flag, decision.Reason); err != nil {
+			(actor_principal, project_id, action, resource_type, resource_id, decision, reason, policy_version, correlation_id)
+		VALUES ($1, $2, 'pilot.decision.recorded', 'pilot_flag', $3, 'allow', $4, $5, $3)`,
+		decision.Actor, projectID, flag, auditReason, pgOptionalText(decision.PolicyVersion)); err != nil {
 		return PilotFlag{}, false, fmt.Errorf("pilot store: audit: %w", err)
 	}
 

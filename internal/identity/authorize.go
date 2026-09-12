@@ -33,18 +33,24 @@ var delegationDeniedActions = map[string]struct{}{
 // membership is denied (the transport maps that to 404, never 403).
 // Caller mistakes degrade to deny decisions: this point never errors open.
 //
-// Two grant classes merge (J1): the project-role grants from the
-// membership map and the frozen functional_approvers grants from the
-// principal's ACTIVE functional roles. Each class is evaluated on its
-// own allow/deny algebra — a functional grant confers ONLY the frozen
-// functional permissions and never stacks project permissions, and a
-// project role's deny set constrains the project path, not the
-// functional authority the organization granted separately (the frozen
-// separation-of-duties conditions — membership presence, approver ≠
-// requester — still gate the waiver actions). Both classes require an
-// active membership in the project scope (the frozen
-// project_membership_required condition); the delegated-principal
-// restriction vetoes both.
+// Three grant classes merge (J1 + J5): the project-role grants from the
+// membership map, the frozen functional_approvers grants from the
+// principal's ACTIVE functional roles, and the frozen platform-role
+// grants from the principal's ACTIVE platform grants. Each class is
+// evaluated on its own allow/deny algebra — a functional grant confers
+// ONLY the frozen functional permissions and never stacks project
+// permissions, and a project role's deny set constrains the project
+// path, not the functional authority the organization granted
+// separately (the frozen separation-of-duties conditions — membership
+// presence, approver ≠ requester — still gate the waiver actions). The
+// functional and project classes require an active membership in the
+// project scope (the frozen project_membership_required condition);
+// the platform class is organizational and membership-free — it
+// confers only the frozen platform-role permissions (pilot.write,
+// gitlab_instance.configure, …) on every scope, because the frozen
+// memberships CHECK deliberately bars platform_admin from project
+// membership (CR-P5a-1). The delegated-principal restriction vetoes
+// every class.
 func (p *Policy) Authorize(_ context.Context, principal *model.PrincipalContext, action string, resource model.Resource) model.Decision {
 	if principal == nil {
 		return deny(p, "no principal")
@@ -60,11 +66,6 @@ func (p *Policy) Authorize(_ context.Context, principal *model.PrincipalContext,
 		}
 	}
 
-	role, ok := principal.ProjectMemberships[resource.ProjectID]
-	if !ok {
-		return deny(p, fmt.Sprintf("no membership in project scope %q", resource.ProjectID))
-	}
-
 	// Delegated principals act at the intersection of human grants and
 	// the frozen agent restrictions; the veto applies to every grant
 	// class (an agent never self-reviews, waives or merges).
@@ -75,6 +76,38 @@ func (p *Policy) Authorize(_ context.Context, principal *model.PrincipalContext,
 	}
 
 	reasons := []string{}
+
+	// Platform-role grant path (J5): organizational authority that
+	// rides the frozen roles map (platform_admin), evaluated BEFORE the
+	// membership gate — a platform principal holds its frozen platform
+	// permissions in every project scope and on scopeless platform
+	// resources, because the membership CHECK deliberately refuses the
+	// platform_admin role. The path confers only the frozen
+	// platform-role allow set; the role's deny set still vetoes.
+	for _, platformRole := range principal.PlatformRoles {
+		grants, known := p.Roles[platformRole]
+		if !known {
+			reasons = append(reasons, fmt.Sprintf("unknown platform role %q", platformRole))
+			continue
+		}
+		if _, denied := grants.Deny[action]; denied {
+			reasons = append(reasons, fmt.Sprintf("platform role %q denies %s", platformRole, action))
+			continue
+		}
+		if _, allowed := grants.Allow[action]; allowed {
+			return model.Decision{
+				Allow:         true,
+				PolicyVersion: p.Version,
+				Reasons:       []string{fmt.Sprintf("platform role %q allows %s", platformRole, action)},
+			}
+		}
+		reasons = append(reasons, fmt.Sprintf("platform role %q does not grant %s", platformRole, action))
+	}
+
+	role, ok := principal.ProjectMemberships[resource.ProjectID]
+	if !ok {
+		return deny(p, fmt.Sprintf("no membership in project scope %q", resource.ProjectID))
+	}
 
 	// Project-role grant path.
 	grants, known := p.Roles[role]
@@ -172,16 +205,22 @@ func deny(p *Policy, reason string) model.Decision {
 }
 
 // Authority reports which grant class produced an allow decision, for
-// the audit subject distinction (J1-4): "functional:security_owner" or
-// "project:viewer". It reads the canonical allow reason written by
-// Authorize in this same package; a deny or unrecognized shape reports
-// "" and the caller must not treat it as an authority claim.
+// the audit subject distinction (J1-4 + J5): "platform:platform_admin",
+// "functional:security_owner" or "project:viewer". It reads the
+// canonical allow reason written by Authorize in this same package; a
+// deny or unrecognized shape reports "" and the caller must not treat
+// it as an authority claim.
 func Authority(decision model.Decision) string {
 	if !decision.Allow || len(decision.Reasons) == 0 {
 		return ""
 	}
 	reason := decision.Reasons[0]
 	switch {
+	case strings.HasPrefix(reason, platformAllowPrefix):
+		role := strings.TrimPrefix(reason, platformAllowPrefix)
+		if idx := strings.Index(role, `" allows `); idx >= 0 {
+			return "platform:" + role[:idx]
+		}
 	case strings.HasPrefix(reason, functionalAllowPrefix):
 		role := strings.TrimPrefix(reason, functionalAllowPrefix)
 		if idx := strings.Index(role, `" allows `); idx >= 0 {
@@ -197,6 +236,7 @@ func Authority(decision model.Decision) string {
 }
 
 const (
+	platformAllowPrefix   = `platform role "`
 	functionalAllowPrefix = `functional role "`
 	projectAllowPrefix    = `role "`
 )

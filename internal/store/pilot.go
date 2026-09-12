@@ -118,11 +118,17 @@ func PilotGrayActive(flag, subject string, grayPercent int) bool {
 
 // PilotDecision is one recorded rollout decision. Actor comes from the
 // server-side authorization context, never from the request body.
+// Authority and PolicyVersion ride the atomic audit row so the grant
+// class that allowed the decision (platform:platform_admin since J5)
+// stays distinguishable in audit_events — the same J1-4 convention as
+// waiver transitions.
 type PilotDecision struct {
-	Stage       string
-	GrayPercent int
-	Actor       string
-	Reason      string
+	Stage         string
+	GrayPercent   int
+	Actor         string
+	Reason        string
+	Authority     string
+	PolicyVersion string
 }
 
 // PilotFlagState is the current stored state one decision is checked

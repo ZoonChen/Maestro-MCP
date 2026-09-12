@@ -25,11 +25,13 @@ type PrincipalByIDResolver interface {
 
 // StaticResolver serves tests and the local single-tenant baseline: a
 // fixed, server-configured membership map. Functional is the parallel
-// explicit functional-role map (J1): subject -> active functions. An
-// absent entry means no functional authority.
+// explicit functional-role map (J1) and Platform the explicit
+// platform-grant map (J5): subject -> active grants. An absent entry
+// means no such authority.
 type StaticResolver struct {
 	Memberships map[string]map[string]string // subject -> project -> role
 	Functional  map[string][]string          // subject -> active functional roles
+	Platform    map[string][]string          // subject -> active platform roles
 }
 
 // Resolve returns the configured principal for a subject, failing closed
@@ -47,6 +49,7 @@ func (s *StaticResolver) Resolve(_ context.Context, issuer, subject string) (*mo
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: memberships,
 		FunctionalRoles:    sortedCopy(s.Functional[subject]),
+		PlatformRoles:      sortedCopy(s.Platform[subject]),
 	}, nil
 }
 

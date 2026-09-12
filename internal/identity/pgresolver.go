@@ -26,7 +26,9 @@ func NewStoreResolver(identities store.IdentityStore) *StoreResolver {
 // issuer+subject — and a user with no active memberships resolves to an
 // empty principal that authorizes nothing. Functional roles resolve
 // beside the memberships (J1): only the frozen functional permissions
-// ride them, never project permissions.
+// ride them, never project permissions. Platform grants resolve the
+// same way (J5): only the frozen platform-role permissions, no
+// membership requirement.
 func (r *StoreResolver) Resolve(ctx context.Context, issuer, subject string) (*model.PrincipalContext, error) {
 	user, err := r.identities.GetOrCreateUser(ctx, issuer, subject, "")
 	if err != nil {
@@ -44,19 +46,24 @@ func (r *StoreResolver) Resolve(ctx context.Context, issuer, subject string) (*m
 	if err != nil {
 		return nil, fmt.Errorf("identity: derive functional roles: %w", err)
 	}
+	platform, err := r.identities.ActivePlatformRoles(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: derive platform roles: %w", err)
+	}
 	return &model.PrincipalContext{
 		PrincipalID:        user.ID,
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: scoped,
 		FunctionalRoles:    functional,
+		PlatformRoles:      platform,
 	}, nil
 }
 
 // ResolveByID rebuilds the principal for an established session user.
 // A suspended/removed user or a store failure resolves to an error —
 // never to a stale principal: the cookie path fails closed. Functional
-// grants re-resolve per request, so expiry and revocation propagate on
-// the next call.
+// and platform grants re-resolve per request, so expiry and revocation
+// propagate on the next call.
 func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.PrincipalContext, error) {
 	user, err := r.identities.GetUser(ctx, userID)
 	if err != nil {
@@ -77,10 +84,15 @@ func (r *StoreResolver) ResolveByID(ctx context.Context, userID string) (*model.
 	if err != nil {
 		return nil, fmt.Errorf("identity: derive functional roles: %w", err)
 	}
+	platform, err := r.identities.ActivePlatformRoles(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("identity: derive platform roles: %w", err)
+	}
 	return &model.PrincipalContext{
 		PrincipalID:        user.ID,
 		Type:               model.PrincipalTypeHuman,
 		ProjectMemberships: scoped,
 		FunctionalRoles:    functional,
+		PlatformRoles:      platform,
 	}, nil
 }

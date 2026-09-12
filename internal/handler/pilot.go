@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 )
 
@@ -94,10 +95,23 @@ func (h *PilotHandler) PutPilotFlag(c *gin.Context) {
 		return
 	}
 
-	stored, created, err := h.flags.PutFlag(c.Request.Context(), c.Param("pid"), flag, store.PilotDecision{
+	decision := store.PilotDecision{
 		Stage: request.Stage, GrayPercent: request.GrayPercent,
 		Actor: principal.PrincipalID, Reason: request.Reason,
-	})
+		Authority: "unattributed",
+	}
+	// The audit row carries the authority class that admitted the
+	// request (platform:platform_admin vs any future project-scoped
+	// grant) and the frozen matrix version — the J1-4 convention; a
+	// missing decision degrades to unattributed, never to an invented
+	// authority.
+	if admitted, ok := AuthorizationFromContext(c); ok {
+		if authority := identity.Authority(admitted); authority != "" {
+			decision.Authority = authority
+		}
+		decision.PolicyVersion = admitted.PolicyVersion
+	}
+	stored, created, err := h.flags.PutFlag(c.Request.Context(), c.Param("pid"), flag, decision)
 	switch {
 	case errors.Is(err, store.ErrPilotDecisionInvalid):
 		staticErrorReply(c, http.StatusUnprocessableEntity, "PILOT_DECISION_INVALID", err.Error())
