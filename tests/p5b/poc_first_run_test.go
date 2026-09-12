@@ -157,9 +157,9 @@ func (s p5bAssetSpec) idem(stage string) string {
 	return fmt.Sprintf("%s-%s-0000000001", s.key, stage)
 }
 
-// mustJSONString wraps free text as a JSON string: the register tool's
-// summary reaches the store as raw JSON bytes, so a bare Chinese
-// sentence is a 500 (finding recorded in the retrospective).
+// mustJSONString wraps free text as a JSON string: the summary must be
+// one JSON document (W5-4 now rejects a bare sentence as
+// INVALID_PARAMETER before the store instead of the first-run 500).
 func p5bJSONSummary(text string) string {
 	raw, err := json.Marshal(text)
 	if err != nil {
@@ -353,9 +353,21 @@ func TestP5bStageOne(t *testing.T) {
 			})
 		}
 		if asset.Status == store.AssetStatusReviewed && stage == "approve" {
-			runner.callOK(t, "asset_approve", map[string]any{
-				"asset_id": spec.assetID, "version": float64(version), "idempotency_key": spec.idem("approve"),
-			})
+			if len(asset.RequiredApproverRoles) > 0 {
+				// W5-2 multi-sign: the delegated runner carries no
+				// functional roles, so the harness signs each required
+				// role directly through the store — the pilot operator
+				// (pilot-admin) holds the J1 grants the first run used.
+				for _, role := range asset.RequiredApproverRoles {
+					_, signErr := f.pg.Assets().ApproveAsset(ctx, spec.assetID, version, "user:pilot-admin", []string{role})
+					require.NoError(t, signErr, "signoff by %s", role)
+				}
+			} else {
+				// The single-approve contract stays on the MCP face.
+				runner.callOK(t, "asset_approve", map[string]any{
+					"asset_id": spec.assetID, "version": float64(version), "idempotency_key": spec.idem("approve"),
+				})
+			}
 		}
 	}
 	requireApproved := func(t *testing.T, assetID string, version int) {

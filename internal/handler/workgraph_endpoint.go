@@ -33,6 +33,11 @@ type WorkGraphConsoleStore interface {
 // AssetConsoleStore is the ledger read surface.
 type AssetConsoleStore interface {
 	ListAssets(ctx context.Context, projectID string) ([]*store.Asset, error)
+	// ListWaitingGateBindings is the W5-5 downstream waiting surface:
+	// stale gate bindings enriched with the latest registered asset
+	// version, so the console answers "which version does this gate
+	// wait for" while dispatch is blocked.
+	ListWaitingGateBindings(ctx context.Context, projectID string) ([]*store.WaitingGateBinding, error)
 }
 
 // WorkGraphHandler serves the J2c console tree.
@@ -209,12 +214,33 @@ func (h *WorkGraphHandler) GetWorkGraphPlan(c *gin.Context) {
 
 // ListAssets serves GET /projects/:pid/assets (the ledger view; the
 // sensitivity/lifecycle filtering happens client-side on the frozen
-// full listing — the pilot ledger is small by design).
+// full listing — the pilot ledger is small by design). The response
+// also carries the W5-5 waiting surface: every stale gate binding with
+// the asset version it waits for, so a blocked dispatch is explainable
+// from the console instead of surfacing only as ErrNoAvailableTask.
 func (h *WorkGraphHandler) ListAssets(c *gin.Context) {
 	assets, err := h.assets.ListAssets(c.Request.Context(), c.Param("pid"))
 	if err != nil {
 		publicErrorReply(c, err)
 		return
+	}
+	waiting, err := h.assets.ListWaitingGateBindings(c.Request.Context(), c.Param("pid"))
+	if err != nil {
+		publicErrorReply(c, err)
+		return
+	}
+	waitingOut := make([]gin.H, 0, len(waiting))
+	for _, entry := range waiting {
+		waitingOut = append(waitingOut, gin.H{
+			"work_item_id":   entry.WorkItemID,
+			"gate_id":        entry.GateID,
+			"asset_id":       entry.AssetID,
+			"bound_version":  entry.BoundVersion,
+			"binding_status": entry.Status,
+			"staled_at":      entry.StaledAt,
+			"latest_version": entry.LatestVersion,
+			"latest_status":  entry.LatestStatus,
+		})
 	}
 	type assetRow struct {
 		AssetID        string   `json:"asset_id"`
@@ -244,7 +270,7 @@ func (h *WorkGraphHandler) ListAssets(c *gin.Context) {
 			ReviewedAt: asset.ReviewedAt, ApprovedAt: asset.ApprovedAt, SupersededAt: asset.SupersededAt,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"assets": out})
+	c.JSON(http.StatusOK, gin.H{"assets": out, "waiting_gates": waitingOut})
 }
 
 // SealPlan serves POST /projects/:pid/work-graph/plans/:planId/seal —

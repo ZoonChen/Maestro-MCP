@@ -24,6 +24,7 @@ export function AssetLedgerView({ projects, projectScope }) {
   const [status, setStatus] = useState('idle'); // idle|loading|ready|error
   const [error, setError] = useState('');
   const [assets, setAssets] = useState(null);
+  const [waitingGates, setWaitingGates] = useState([]);
   const [sensitivity, setSensitivity] = useState('');
   const [lifecycle, setLifecycle] = useState('');
   const [assetType, setAssetType] = useState('');
@@ -40,9 +41,11 @@ export function AssetLedgerView({ projects, projectScope }) {
     try {
       const row = await apiGet(`/api/v3/projects/${effectiveProjectId}/assets`);
       setAssets(Array.isArray(row?.assets) ? row.assets : []);
+      setWaitingGates(Array.isArray(row?.waiting_gates) ? row.waiting_gates : []);
       setStatus('ready');
     } catch (e) {
       setAssets(null);
+      setWaitingGates([]);
       setError(describeAPIError(e));
       setStatus('error');
     }
@@ -136,6 +139,46 @@ export function AssetLedgerView({ projects, projectScope }) {
               </select>
             </label>
           </div>
+
+          {waitingGates.length > 0 ? (
+            <div class="gov-fieldset" data-waiting-gates="panel" role="group" aria-label="locked_gate 下游等待面">
+              <h2>locked_gate 下游等待面</h2>
+              <p class="gov-note" role="note">
+                下列工作项的 Gate 绑定已随制品 supersede 转 stale，派发被 fail-closed 阻断；
+                「等待版本」即 Gate 等待重绑的制品版本，重绑已 approved 的后继版本即愈合。
+              </p>
+              <div class="gov-table-wrap">
+                <table class="gov-table" aria-label="等待面">
+                  <thead>
+                    <tr>
+                      <th scope="col">工作项</th>
+                      <th scope="col">Gate</th>
+                      <th scope="col">制品 / 绑定版本</th>
+                      <th scope="col">等待版本</th>
+                      <th scope="col">绑定态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waitingGates.map((gate) => (
+                      <tr key={`${gate.work_item_id}:${gate.gate_id}`} data-waiting-gate-row={`${gate.asset_id}@${gate.bound_version}`}>
+                        <td class="gov-mono">{gate.work_item_id}</td>
+                        <td class="gov-mono">{gate.gate_id}</td>
+                        <td class="gov-mono">{gate.asset_id}@{gate.bound_version}</td>
+                        <td class="gov-mono">
+                          {gate.latest_version > 0
+                            ? `v${gate.latest_version}（${gate.latest_status || '未知'}）`
+                            : '—'}
+                        </td>
+                        <td>
+                          <span class="gov-chip gov-chip-failed">{gate.binding_status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           {chains.length === 0 ? (
             <p class="gov-empty">没有匹配的资产行（诚实空态：未登记的制品不产生台账行）。</p>

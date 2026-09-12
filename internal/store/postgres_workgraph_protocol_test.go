@@ -83,7 +83,7 @@ func twoItemProposal(f *graphFixture) workgraph.DecompositionProposal {
 func submitProposal(t *testing.T, f *graphFixture, p workgraph.DecompositionProposal, key string) *DecompositionProposalRecord {
 	t.Helper()
 	record, err := f.graph.SubmitDecompositionProposal(context.Background(), SubmitDecompositionProposalInput{
-		Proposal: p, IdempotencyKey: key, SubmittedBy: "coordinator-1",
+		Proposal: p, IdempotencyKey: key, ProjectID: f.projectID, SubmittedBy: "coordinator-1",
 		Limits: workgraph.ProposalLimits{MaxNodes: 10, MaxContainmentDepth: 4, MaxFanOut: 8, BudgetCeilingUnits: 10000,
 			Now: time.Now().UTC()},
 	})
@@ -167,7 +167,7 @@ func TestDecompositionProposalOnSealedPlanRequiresReplan(t *testing.T) {
 	require.NoError(t, err)
 	later.ExpectedGraphVersion = plan.GraphVersion
 	_, err = f.graph.SubmitDecompositionProposal(ctx, SubmitDecompositionProposalInput{
-		Proposal: later, IdempotencyKey: "prop-seal-2", SubmittedBy: "coordinator-1",
+		Proposal: later, IdempotencyKey: "prop-seal-2", ProjectID: f.projectID, SubmittedBy: "coordinator-1",
 		Limits: workgraph.ProposalLimits{Now: time.Now().UTC()},
 	})
 	require.ErrorIs(t, err, ErrRevisionSealed)

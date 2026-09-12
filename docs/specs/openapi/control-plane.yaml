@@ -655,8 +655,10 @@ paths:
         no re-verification bypass and no side-effect duplication. The approver
         identity is the authenticated principal; it must differ from
         requested_by (runbook section 9 dual-person control). The requeue, the
-        approval and the audit row land in one transaction.
-      x-maestro-permission: gitlab.reconcile
+        approval and the audit row land in one transaction. The frozen
+        permission is webhook.deadletter.replay (W5-6 / OPS-1 terminal
+        state): the operations_owner functional plane holds it.
+      x-maestro-permission: webhook.deadletter.replay
       x-maestro-audit-event: webhook.dead_letter.replayed
       x-maestro-idempotency: quarantined-row-state-collapse
       x-maestro-concurrency: single-row-transactional-guard
@@ -2193,11 +2195,31 @@ components:
     AssetList:
       type: object
       additionalProperties: false
-      required: [assets]
+      required: [assets, waiting_gates]
       properties:
         assets:
           type: array
           items: {$ref: '#/components/schemas/AssetRow'}
+        waiting_gates:
+          type: array
+          description: >-
+            The W5-5 downstream waiting surface: every stale gate binding
+            with the asset version it waits for (the heal path is the
+            in-place rebind to the approved successor).
+          items: {$ref: '#/components/schemas/WaitingGateBinding'}
+    WaitingGateBinding:
+      type: object
+      additionalProperties: false
+      required: [work_item_id, gate_id, asset_id, bound_version, binding_status, latest_version, latest_status]
+      properties:
+        work_item_id: {type: string, format: uuid}
+        gate_id: {type: string}
+        asset_id: {type: string, pattern: '^ART-[a-z-]+-[0-9]{3,}$'}
+        bound_version: {type: integer, minimum: 1, description: 'the stale-pinned version'}
+        binding_status: {type: string, enum: [stale]}
+        staled_at: {type: string}
+        latest_version: {type: integer, minimum: 0, description: 'latest registered version (0 when the asset vanished)'}
+        latest_status: {type: string, description: 'lifecycle of the latest registered version'}
     AssetRow:
       type: object
       additionalProperties: false

@@ -73,14 +73,14 @@ func TestAssetLedgerLifecycle(t *testing.T) {
 
 	// Jumping the lifecycle is rejected (application guard; the trigger
 	// is the backstop asserted below).
-	_, err = assets.ApproveAsset(ctx, "ART-research-001", 1, "product")
+	_, err = assets.ApproveAsset(ctx, "ART-research-001", 1, "product", nil)
 	assert.ErrorIs(t, err, ErrAssetTransitionInvalid)
 
 	reviewed, err := assets.ReviewAsset(ctx, "ART-research-001", 1, "tech-lead")
 	require.NoError(t, err)
 	assert.Equal(t, AssetStatusReviewed, reviewed.Status)
 
-	approved, err := assets.ApproveAsset(ctx, "ART-research-001", 1, "product")
+	approved, err := assets.ApproveAsset(ctx, "ART-research-001", 1, "product", nil)
 	require.NoError(t, err)
 	assert.Equal(t, AssetStatusApproved, approved.Status)
 	assert.NotEmpty(t, approved.ApprovedAt)
@@ -96,7 +96,7 @@ func TestAssetLedgerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	_, err = assets.ReviewAsset(ctx, "ART-research-001", 2, "tech-lead")
 	require.NoError(t, err)
-	_, err = assets.ApproveAsset(ctx, "ART-research-001", 2, "product")
+	_, err = assets.ApproveAsset(ctx, "ART-research-001", 2, "product", nil)
 	require.NoError(t, err)
 
 	v1After, err := assets.GetAsset(ctx, "ART-research-001", 1)
@@ -137,7 +137,7 @@ func TestAssetLedgerLifecycle(t *testing.T) {
 
 	// Idempotent replay: re-approving the approved version audits
 	// nothing new.
-	_, err = assets.ApproveAsset(ctx, "ART-research-001", 2, "product")
+	_, err = assets.ApproveAsset(ctx, "ART-research-001", 2, "product", nil)
 	require.NoError(t, err)
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT count(*) FROM audit_events WHERE action = 'asset.approved' AND resource_id = $1`,
@@ -173,7 +173,7 @@ func TestAssetGateConsumptionAndStalePropagation(t *testing.T) {
 		require.NoError(t, err)
 		_, err = assets.ReviewAsset(ctx, "ART-detailed-design-001", version, "tech-lead")
 		require.NoError(t, err)
-		_, err = assets.ApproveAsset(ctx, "ART-detailed-design-001", version, "product")
+		_, err = assets.ApproveAsset(ctx, "ART-detailed-design-001", version, "product", nil)
 		require.NoError(t, err)
 	}
 	register(1, "", digest)

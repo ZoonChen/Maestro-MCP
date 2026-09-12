@@ -104,7 +104,7 @@ func newWorkgraphConsoleFixture(t *testing.T) *workgraphConsoleFixture {
 		}},
 	}
 	record, err := graph.SubmitDecompositionProposal(ctx, store.SubmitDecompositionProposalInput{
-		Proposal: proposal, IdempotencyKey: "j4-seed-proposal-0001", SubmittedBy: "coordinator-1",
+		Proposal: proposal, IdempotencyKey: "j4-seed-proposal-0001", ProjectID: j4ProjectID, SubmittedBy: "coordinator-1",
 		Limits: workgraph.ProposalLimits{MaxNodes: 10, MaxContainmentDepth: 4, MaxFanOut: 8,
 			BudgetCeilingUnits: 10000, Now: time.Now().UTC()},
 	})
@@ -180,6 +180,48 @@ func TestWorkGraphSealRoutesOnTechnicalLeadOnly(t *testing.T) {
 		assets := f.request(t, f.viewerTK, http.MethodGet, "/api/v3/projects/"+j4ProjectID+"/assets", nil, "")
 		require.Equal(t, http.StatusOK, assets.Code, assets.Body.String())
 		assert.Contains(t, assets.Body.String(), `"assets":[]`)
+		assert.Contains(t, assets.Body.String(), `"waiting_gates":[]`, "the W5-5 field is always present")
+	})
+
+	t.Run("the ledger carries the W5-5 waiting surface for stale gates", func(t *testing.T) {
+		const workItemID = "018f7500-0000-7000-8000-0000000000e2"
+		_, err := f.db.Exec(`INSERT INTO work_items (id, project_id, title, status) VALUES ($1, $2, 'waiting-gate item', 'queued')`, workItemID, j4ProjectID)
+		require.NoError(t, err)
+
+		digestV1 := "sha256:" + strings.Repeat("ab", 32)
+		digestV2 := "sha256:" + strings.Repeat("cd", 32)
+		ledger := f.pg.Assets()
+		_, err = ledger.RegisterAsset(ctx, store.Asset{
+			AssetID: "ART-detailed-design-401", Version: 1, ProjectID: j4ProjectID, AssetType: "detailed-design",
+			Title: "J4 台账 v1", Status: store.AssetStatusDraft, OwnerPrincipal: "session:j4-owner",
+			Sensitivity: store.SensitivityInternal, SourceDigest: digestV1,
+		}, "session:j4-owner")
+		require.NoError(t, err)
+		_, err = ledger.ReviewAsset(ctx, "ART-detailed-design-401", 1, "user:j4-reviewer")
+		require.NoError(t, err)
+		_, err = ledger.ApproveAsset(ctx, "ART-detailed-design-401", 1, "user:j4-approver", nil)
+		require.NoError(t, err)
+		_, err = ledger.BindAssetGate(ctx, j4ProjectID, workItemID, "ART-detailed-design-401", 1, "j4-waiting-gate", "j4-harness")
+		require.NoError(t, err)
+		_, err = ledger.RegisterAsset(ctx, store.Asset{
+			AssetID: "ART-detailed-design-401", Version: 2, ProjectID: j4ProjectID, AssetType: "detailed-design",
+			Title: "J4 台账 v2", Status: store.AssetStatusDraft, OwnerPrincipal: "session:j4-owner",
+			Sensitivity: store.SensitivityInternal, SourceDigest: digestV2, SupersedesRef: "ART-detailed-design-401@1",
+		}, "session:j4-owner")
+		require.NoError(t, err)
+		_, err = ledger.ReviewAsset(ctx, "ART-detailed-design-401", 2, "user:j4-reviewer")
+		require.NoError(t, err)
+		_, err = ledger.ApproveAsset(ctx, "ART-detailed-design-401", 2, "user:j4-approver", nil)
+		require.NoError(t, err, "the v2 approve supersedes v1 and flips its binding stale")
+
+		waiting := f.request(t, f.viewerTK, http.MethodGet, "/api/v3/projects/"+j4ProjectID+"/assets", nil, "")
+		require.Equal(t, http.StatusOK, waiting.Code, waiting.Body.String())
+		body := waiting.Body.String()
+		assert.Contains(t, body, `"waiting_gates":[`)
+		assert.Contains(t, body, `"gate_id":"j4-waiting-gate"`)
+		assert.Contains(t, body, `"bound_version":1`)
+		assert.Contains(t, body, `"latest_version":2`)
+		assert.Contains(t, body, `"latest_status":"approved"`)
 	})
 
 	sealPath := "/api/v3/projects/" + j4ProjectID + "/work-graph/plans/" + f.planID + "/seal"
