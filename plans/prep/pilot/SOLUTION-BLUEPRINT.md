@@ -33,6 +33,8 @@
 | 安全合规 | — | viewer | security_owner | — |
 | 运维工程师 | — | viewer | operations_owner | — |
 
+**平台主体（J5 交付后）**：`platform_admin` 不是企业岗位、也不映射 Jira/GitLab 侧任何岗位——它是 **Maestro 平台自身的主体**，经 `platform_grants` 表绑定（迁移 0020；有效期窗口 + 终态撤销 + 授权书引用，与职能主体同一纪律），持有冻结矩阵 platform_admin 角色的平台权限串（pilot.write / gitlab_instance.configure / platform.configure / oidc.configure / company_policy.manage / security.emergency_stop / audit.export / pilot.read）。平台授权与项目角色**正交**：不需要项目 membership（memberships CHECK 有意禁 platform_admin 入项目），也不叠加职能权限；试点期的试点负责人（flags 置位/灰度推进）与沙箱 GitLab 实例管理员按此路径授予。
+
 ## 2. 安全与合规
 
 ### 2.1 等保 2.0 三级 ↔ Maestro 控制项映射（骨架，写实部分标注）
@@ -84,7 +86,7 @@ RuoYi-Vue3(MIT)/SRS(MIT)/Centrifugo(Apache)/kkFileView(Apache)/SurveyKing(MIT) �
 
 ### 4.2 职能审批授权书 **[待评审]**
 
-`我授权 <主体> 在 <项目/范围> 行使 <职能角色>（security_owner/qa_owner/…），有效期至 <日期>，撤销条件 <…>`——登记为 `internal` 资产并产生 `asset.approved` 类审计事件；J1 的职能角色绑定必须能追溯到一份有效授权书。
+`我授权 <主体> 在 <项目/范围> 行使 <职能角色>（security_owner/qa_owner/…），有效期至 <日期>，撤销条件 <…>`——登记为 `internal` 资产并产生 `asset.approved` 类审计事件；J1 的职能角色绑定必须能追溯到一份有效授权书。**平台授权（J5）同一流程**：`我授权 <主体> 行使 <平台角色>（platform_admin），有效期至 <日期>，撤销条件 <…>`——`platform_grants.source_ref` 必须指向一份可追溯的授权书资产（试点期先为非空文本引用，绑定校验随 J2a 授权书补强切片统一落地）；平台授权因权限面更大（试点 flags、实例配置、审计导出、紧急停止），建议有效期短于职能授权并强制定期续授。
 
 ### 4.3 推广门槛（写实指标，阈值 [待评审]）
 

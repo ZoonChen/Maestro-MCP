@@ -432,8 +432,16 @@ type PrincipalContext struct {
 	// permissions; the resolver refreshes them per request so
 	// revocation propagates immediately.
 	FunctionalRoles []string `json:"functional_roles,omitempty"`
-	DelegationID    string   `json:"delegation_id,omitempty"`
-	TokenIDHash     string   `json:"token_id_hash,omitempty"`
+	// PlatformRoles carries the ACTIVE platform grants (J5:
+	// platform_admin from platform_grants) resolved server-side beside
+	// the memberships. They grant only the frozen platform-role
+	// permissions (pilot.write, gitlab_instance.configure, …), need no
+	// project membership, and never stack project or functional
+	// permissions; the resolver refreshes them per request so expiry
+	// and revocation propagate immediately.
+	PlatformRoles []string `json:"platform_roles,omitempty"`
+	DelegationID  string   `json:"delegation_id,omitempty"`
+	TokenIDHash   string   `json:"token_id_hash,omitempty"`
 }
 
 // Resource identifies the authorization target of an action. ProjectID is

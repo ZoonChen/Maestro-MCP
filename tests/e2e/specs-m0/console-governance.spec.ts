@@ -76,6 +76,12 @@ const IDS = {
   deadLetter: 'ffffffff-ffff-7fff-8fff-ffffffffffff',
   jiraAnchor: '12121212-1212-7121-8121-121212121212',
   jiraReconcile: '13131313-1313-7131-8131-131313131313',
+  // J5: a platform principal (platform_grants row, ZERO memberships) and
+  // the peixun pilot stand-in project its rollout lifecycle runs on.
+  userPlatform: '14141414-1414-7141-8141-141414141414',
+  peixunTeam: '18181818-1818-7181-8181-181818181818',
+  peixunProject: '15151515-1515-7151-8151-151515151515',
+  platformGrant: '16161616-1616-7161-8161-161616161616',
 };
 const SHA_A = 'a1'.repeat(20);
 const SHA_B = 'b2'.repeat(20);
@@ -86,10 +92,11 @@ type GovFixture = {
   devToken: string;
   adminToken: string;
   viewerToken: string;
+  platToken: string;
   lastWaiverId: string;
 };
 
-const gov: GovFixture = { available: false, reason: 'not initialized', devToken: '', adminToken: '', viewerToken: '', lastWaiverId: '' };
+const gov: GovFixture = { available: false, reason: 'not initialized', devToken: '', adminToken: '', viewerToken: '', platToken: '', lastWaiverId: '' };
 
 function sh(command: string, options: { cwd?: string; env?: Record<string, string> } = {}) {
   return execSync(command, {
@@ -337,11 +344,24 @@ INSERT INTO work_items (id, project_id, title) VALUES ('${IDS.workItem}', '${IDS
 INSERT INTO users (id, issuer, subject, display_name, status)
   VALUES ('${IDS.userDev}', '${IDP_ISSUER}', 'ui-e2e-dev', 'Dev E2E', 'active'),
          ('${IDS.userAdmin}', '${IDP_ISSUER}', 'ui-e2e-admin', 'Admin E2E', 'active'),
-         ('${IDS.userViewer}', '${IDP_ISSUER}', 'ui-e2e-viewer', 'Viewer E2E', 'active');
+         ('${IDS.userViewer}', '${IDP_ISSUER}', 'ui-e2e-viewer', 'Viewer E2E', 'active'),
+         ('${IDS.userPlatform}', '${IDP_ISSUER}', 'ui-e2e-platform', 'Platform E2E', 'active');
 INSERT INTO memberships (team_id, user_id, role)
   VALUES ('${IDS.team}', '${IDS.userDev}', 'developer'),
          ('${IDS.team}', '${IDS.userAdmin}', 'project_admin'),
          ('${IDS.team}', '${IDS.userViewer}', 'viewer');
+-- J5: the platform principal holds a platform_grants row and NO
+-- membership — platform_admin can never be a membership role (0001
+-- CHECK), which is exactly the CR-P5a-1 gap this grant closes.
+INSERT INTO platform_grants (id, user_id, role, source_ref)
+  VALUES ('${IDS.platformGrant}', '${IDS.userPlatform}', 'platform_admin', 'deed/e2e-platform-2026-09');
+-- The peixun pilot stand-in on its OWN team (memberships are per team:
+-- sharing the ui-e2e team would leak a second developer role into every
+-- seeded member's session). The rollout lifecycle below runs on this
+-- project, which the platform principal is NOT a member of.
+INSERT INTO teams (id, name) VALUES ('${IDS.peixunTeam}', 'peixun pilot team');
+INSERT INTO projects (id, team_id, key, name, status)
+  VALUES ('${IDS.peixunProject}', '${IDS.peixunTeam}', 'peixun', '企业学堂（试点）', 'active');
 INSERT INTO gitlab_instances (id, base_url, display_name, status, bot_credential_ref, webhook_secret_ref)
   VALUES ('${IDS.instance}', 'https://gitlab.example.com', 'E2E GitLab', 'active', 'ref:bot', 'ref:hook');
 INSERT INTO gitlab_project_mappings (gitlab_instance_id, gitlab_project_id, project_id, default_branch)
@@ -487,6 +507,7 @@ test.beforeAll(async () => {
     gov.devToken = mintToken(idp.key, 'ui-e2e-dev');
     gov.adminToken = mintToken(idp.key, 'ui-e2e-admin');
     gov.viewerToken = mintToken(idp.key, 'ui-e2e-viewer');
+    gov.platToken = mintToken(idp.key, 'ui-e2e-platform');
 
     psql(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE);`);
     psql(`CREATE DATABASE ${DB_NAME};`);
@@ -794,6 +815,82 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
     }
   });
 
+  // --- P5 task brief J5 (CR-P5a-1): the pilot rollout lifecycle through
+  // a REAL platform grant. The platform principal (ui-e2e-platform)
+  // holds zero memberships — pilot.write is unreachable for every
+  // project role, and the seeded platform_grants row is the only legal
+  // path. The same PUT that P5a reproduced as 403 flips green here. ---
+
+  test('pilot flag lifecycle runs end to end through the platform grant (CR-P5a-1 flips green)', async ({ request }, testInfo) => {
+    requireGovernance(testInfo);
+    const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+    const putFlag = async (token: string, project: string, flag: string, body: object) =>
+      request.put(`${GOV_ORIGIN}/api/v3/projects/${project}/pilot-flags/${flag}`, {
+        headers: { ...bearer(token), 'Idempotency-Key': `j5-${flag}-${JSON.stringify(body).length}`, 'Content-Type': 'application/json' },
+        data: body,
+      });
+
+    // CR-P5a-1 reproduction, pre-fix side: a real project_admin member
+    // PUTs a flag and the frozen matrix refuses — no project role
+    // carries pilot.write.
+    const refused = await putFlag(gov.adminToken, IDS.project, 'admin_attempt', { stage: 'off', reason: 'project_admin 不持有 pilot.write（CR-P5a-1 复现）' });
+    expect(refused.status()).toBe(403);
+
+    // The guarded lifecycle over the peixun pilot stand-in, carried by
+    // the platform grant alone (the principal is NOT a member of the
+    // project): register → shadow → gray → full → rolled_back.
+    const lifecycle: Array<{ body: object; status: number; stage: string; percent: number }> = [
+      { body: { stage: 'off', reason: '注册 agent.autofix 试点旗标（J5 e2e）' }, status: 201, stage: 'off', percent: 0 },
+      { body: { stage: 'shadow', reason: '影子期开始：双仓进入只读影子运行，观察两个迭代周期' }, status: 200, stage: 'shadow', percent: 0 },
+      { body: { stage: 'gray', gray_percent: 25, reason: '灰度起步：先放开 25% 试点队列验证无阻断' }, status: 200, stage: 'gray', percent: 25 },
+      { body: { stage: 'gray', gray_percent: 60, reason: '灰度推进：连续两个周期无阻断，提升到 60% 队列' }, status: 200, stage: 'gray', percent: 60 },
+      { body: { stage: 'full', reason: '灰度收敛：连续观察无阻断事件，全量放开试点面' }, status: 200, stage: 'full', percent: 0 },
+      { body: { stage: 'rolled_back', reason: '预算超限触发紧急停止：旗标进入终态 rolled_back' }, status: 200, stage: 'rolled_back', percent: 0 },
+    ];
+    for (const step of lifecycle) {
+      const response = await putFlag(gov.platToken, IDS.peixunProject, 'agent.autofix', step.body);
+      expect(response.status(), JSON.stringify(step.body)).toBe(step.status);
+      const flag = await response.json();
+      expect(flag.stage).toBe(step.stage);
+      expect(flag.gray_percent).toBe(step.percent);
+      expect(flag.changed_by).toBe(IDS.userPlatform);
+    }
+
+    // The lifecycle guard stays frozen for the platform principal too:
+    // a new flag cannot skip the shadow phase.
+    const skipped = await putFlag(gov.platToken, IDS.peixunProject, 'skip_shadow', { stage: 'gray', gray_percent: 25, reason: '灰度不能开 lifecycle（守卫断言）' });
+    expect(skipped.status()).toBe(409);
+
+    // Revocation propagates on the very next request: with zero
+    // memberships the revoked platform principal cannot even see the
+    // project (resource hiding, 404 — never 403).
+    psql(`UPDATE platform_grants SET revoked_at = now() WHERE id = '${IDS.platformGrant}'`, DB_NAME);
+    const hidden = await putFlag(gov.platToken, IDS.peixunProject, 'post_revoke', { stage: 'off', reason: '撤销后的平台授权立即失效：任何平台动作都不再被授予' });
+    expect(hidden.status()).toBe(404);
+
+    // A fresh grant restores the authority (the renewal path).
+    psql(`INSERT INTO platform_grants (id, user_id, role, source_ref) VALUES ('17171717-1717-7171-8171-171717171717', '${IDS.userPlatform}', 'platform_admin', 'deed/e2e-platform-renewal')`, DB_NAME);
+    const renewed = await putFlag(gov.platToken, IDS.peixunProject, 'post_renewal', { stage: 'off', reason: '续授后的平台授权重新生效：pilot.write 再次可达' });
+    expect(renewed.status()).toBe(201);
+
+    // The list wire answers for the platform principal (pilot.read is
+    // on the frozen platform allow list).
+    const list = await request.get(`${GOV_ORIGIN}/api/v3/projects/${IDS.peixunProject}/pilot-flags`, { headers: bearer(gov.platToken) });
+    expect(list.status()).toBe(200);
+    const listed = await list.json();
+    const byName = Object.fromEntries(listed.flags.map((flag: { flag: string; stage: string }) => [flag.flag, flag.stage]));
+    expect(byName['agent.autofix']).toBe('rolled_back');
+    expect(byName['post_renewal']).toBe('off');
+
+    // The atomic audit trail carries the platform authority class
+    // (J1-4 shape) — inspected straight in the scratch database.
+    const auditReason = sh(
+      `docker exec ${pgContainer()} psql -U maestro -d ${DB_NAME} -t -A -c `
+      + `"SELECT reason FROM audit_events WHERE action = 'pilot.decision.recorded' AND project_id = '${IDS.peixunProject}' ORDER BY id DESC LIMIT 1"`,
+    ).trim();
+    expect(auditReason).toContain('authority=platform:platform_admin');
+  });
+
   // --- W4.5 task brief J3: the Jira connector read surface (anchors
   // with both sides of the mirror + the reconcile list). ---
 
@@ -860,9 +957,10 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
   test('audit export states the real permission boundary (functional roles unreachable)', async ({ browser }, testInfo) => {
     requireGovernance(testInfo);
     // audit.export is granted to platform_admin and functional owners
-    // (security/qa); the identity layer models neither, so every
-    // reachable membership role gets a real 403 — rendered as the
-    // stable permission copy, the honest boundary of this generation.
+    // (security/qa); the seeded dev principal holds neither a platform
+    // grant nor a functional grant, so the real answer is 403 —
+    // rendered as the stable permission copy, the honest boundary of
+    // this generation.
     const { context, page } = await governancePage(browser, gov.devToken, '#/admin');
     try {
       await expect(page.getByRole('heading', { name: '审计链导出与验证' })).toBeVisible();

@@ -321,7 +321,15 @@ func (m *OIDCMiddleware) authorizeRoute(c *gin.Context, actions map[string]map[s
 		return
 	}
 
+	// The v1 tree scopes its routes with :id and the v3 control-plane
+	// tree with :pid; both name the project scope, so both feed the
+	// SAME scoped decision (J5: a v3 route evaluated scopeless would
+	// authorize against ANY membership and leak cross-project reads —
+	// the scope guard only hides nonexistent projects).
 	projectID := c.Param("id")
+	if projectID == "" {
+		projectID = c.Param("pid")
+	}
 	resource := model.Resource{Type: "project", ProjectID: projectID}
 	if strings.Contains(route, ":tid") || strings.Contains(route, "board") || strings.Contains(route, "tasks") {
 		resource.Type = "work_item"
@@ -331,10 +339,21 @@ func (m *OIDCMiddleware) authorizeRoute(c *gin.Context, actions map[string]map[s
 	}
 
 	// Scopeless routes (global project list, overview, metrics) authorize
-	// against ANY membership: the handler then filters per project. No
-	// membership anywhere denies without hiding (there is no single
-	// resource to hide).
+	// against ANY membership: the handler then filters per project. A
+	// scopeless PLATFORM route (the instance list, platform
+	// configuration) has no project scope to iterate at all — it
+	// authorizes through the platform grant path alone (J5), which
+	// needs no membership; without a platform grant no membership can
+	// ever carry the frozen platform permission strings
+	// (CR-P5a-1). No allow anywhere denies without hiding (there is
+	// no single resource to hide).
 	if projectID == "" {
+		if decision := m.policy.Authorize(c.Request.Context(), principal, action,
+			model.Resource{Type: "platform"}); decision.Allow {
+			c.Set(authorizationDecisionKey, decision)
+			c.Next()
+			return
+		}
 		for scope := range principal.ProjectMemberships {
 			scoped := resource
 			scoped.ProjectID = scope
