@@ -114,6 +114,14 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 - **CR-P5a-1 确诊为 P5b 硬阻塞并裁决开 J5**：平台级权限串（pilot.write/gitlab_instance.configure 等）在 PG 部署下无合法授予路径（memberships CHECK 禁 platform_admin、J1 职能主体只覆盖职能串）——**brief-J5-platform-grants.md**（平台授权小切片）下发，与 P5b 并行，**门控 P5b 的 flags 步骤**（shadow 置位/灰度推进）。
 - **P5b 可开工**：非 flags 切片（拆解提案/制品生产/角色工作流）不依赖 J5；flags 相关步骤等 J5 合入。
 
+### P5b 收口（2026-09-12，会话 P5b）
+
+- **Stage One/Two harness 全绿**（`tests/p5b/`，tag p5b）：基线重铺（事故恢复）→ WorkPattern v1 封板 + decomposition_propose 父子图（4 子任务+D1 Gate）→ seal J1 通路首用（8081 当前代码实例 403→授权→200 实证；常驻 8080 仍为 J4 前镜像，**J5 #111 合入后重建常驻镜像并退役 8081**）→ 制品台账七类走通（blueprint/详设 v1v2/test-plan/test-report/release-note/retrospective/incident/research 重登记；SoD 拒绝实证）→ locked_gate 全生命周期（draft 拒绑/supersede 转 stale/claim 阻断/重绑愈合）→ Jira 复测不可达按蓝图回退手工锚定（5 锚点，对账清单空）→ 审计链导出+验证（verify 200）。
+- **工程链路**：三仓六 MR 人工合并全绿（web CI 修复、playedu 基线+两次契约对齐、backend 制品两批）；maven-build Profile A/B 双轮实测：B 线 RuoYi 141.9/154.3s、A 线 playedu 163.8/188.4s（环境契约对齐成本一次性）；终审计链 46 条（registered×12/reviewed×9/approved×9/gate.bound×5/superseded×1/plan.sealed×4/proposal.applied×1+rejected×1），导出+验证 200。
+- **事故**：P5a 种子数据被 J5 并行会话重建共享库抹除（ART-incident-002，根因=共享栈无隔离+重建动作无登记）；行动项三条（库隔离/最小备份 pg_dump 已起/审计异地导出规程）。
+- **flags=shadow 未执行**：等 J5 #111 合入（观察项）；P5b 非 flags 切片全部完成。
+- **Maestro 待办登记**（详见 PR 描述与 ART-retrospective-001）：职能审批 MCP 通路缺口、asset 多签 Gate 缺口、proposal 幂等键全局命名空间、summary 参数口径（schema 字符串 vs store JSON）、常驻服务器镜像随 main 重建机制。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。

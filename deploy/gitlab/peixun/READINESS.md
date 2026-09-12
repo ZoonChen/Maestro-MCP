@@ -57,3 +57,10 @@
 - TLS 面：`maestro-pilot-gitlab-tls`（nginx，别名 `gitlab-pilot`）。
 - token 刷新：`pilot-stack/fetch-token.sh`（password grant，900s）。
 - 全部容器挂 `maestro-pilot` 网络；重建命令随 PR 描述存档。
+
+## 8. P5b 首演运行态（2026-09-12 追加）
+
+- **事故与恢复**：P5a 种子数据因 J5 并行会话重建共享库丢失（根因时间线见 ART-incident-002，试点仓 `assets/ART-incident-002/`）；P5b harness S0 幂等重铺（新 ID 见 `tests/p5b/poc_first_run_test.go` 常量区）。GitLab root PAT 经 rails console 重建（`deploy/gitlab/.root-pat`，gitignored）；此后每阶段 pg_dump 快照存 `~/Works/yuandong/projects/maestro-p5a-bases/pilot-backups/`。
+- **第二控制面服务器**：`deploy/gitlab/peixun/p5b-server.sh` 在 127.0.0.1:8081 起当前代码实例（镜像 `maestro-p5b:local`）。常驻 8080 服务器是 J4 合入前镜像（seal 走 interim 映射 project_policy.strengthen）；J4 终态映射（workgraph.seal 仅 technical_lead）的 403→授权→200 对照在 8081 实证（日志 2026-09-12T07:07:43Z）。**J5（#111）合入后应重建常驻镜像并退役 8081**。
+- **首演入口**：`go test -tags p5b ./tests/p5b/ -run 'TestP5bStage' -v -count=1`（Stage One=基线/拆解/封板/制品/Gate/Jira/审计；Stage Two=终局制品+终审计）；A/B：`-run TestP5bProfileAB`。环境变量见 `tests/p5b/harness_test.go` 头注。runner 二进制在 J5 重叠期用 `MAESTRO_BINARY` 指向 J5 工作区构建（库带 0020 迁移）；J5 合入后恢复主构建。
+- **新仓**：`peixun/playedu-eval`（GitLab #5，Apache-2.0，上游 da45a835 镜像 + ci-smoke 冒烟）；Maestro 侧 projects/mappings 见 harness 常量。
