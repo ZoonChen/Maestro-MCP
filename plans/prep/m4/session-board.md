@@ -106,6 +106,12 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 2. **J2c-CR-1 立项**：`asset.*`/`workgraph.*` 权限族 + product/technical/operations 职能授权——排为 **J4 小切片**，与 P5a 并行，**P5b 角色工作流首演前必须合入**（当前单一 qa_owner 审批是 fail-closed 窄面，多角色 Gate 会被卡）
 3. **J2c-DEC-2 接受**：seal 过渡映射 `project_policy.strengthen`，终态随 J4
 
+### P5a 收口与 J5（2026-09-11，会话 I）
+
+- **P5a 已合入（#108，五项 CI 全绿）**：权威 MR（Java/Vue 栈范围，owner 批准随 PR）、peixun 双仓（RuoYi 底座+首条管线全绿）、三 Command Profile 真实执行（maven 96s/npm/playwright + 白名单出网 CI 级测试）、存量三资产入台账（asset.registered 审计落链）、Jira 实测不可达按蓝图回退（VPN 复测为 P5b 观察项）。两处 M1 遗留真 bug 随修（image_digest 口径断裂、workdir 归一）。集成会话追加两处 CI 修复（跨引擎网络可见性、podman 输出断言）。
+- **CR-P5a-1 确诊为 P5b 硬阻塞并裁决开 J5**：平台级权限串（pilot.write/gitlab_instance.configure 等）在 PG 部署下无合法授予路径（memberships CHECK 禁 platform_admin、J1 职能主体只覆盖职能串）——**brief-J5-platform-grants.md**（平台授权小切片）下发，与 P5b 并行，**门控 P5b 的 flags 步骤**（shadow 置位/灰度推进）。
+- **P5b 可开工**：非 flags 切片（拆解提案/制品生产/角色工作流）不依赖 J5；flags 相关步骤等 J5 合入。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
