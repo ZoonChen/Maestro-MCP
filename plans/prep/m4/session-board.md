@@ -137,6 +137,11 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 | W5 | brief-W5-contract-cleanup.md | 契约清理：P5b 复盘七项 + OPS-1 终态 + outbox 事件登记 | 灰度期前落定；契约面集中变更 |
 | S2 | brief-S2-shadow-phase.md | 影子期开工：常驻栈重建（登记窗口+备份纪律）/flags=shadow/webhook 首演/观察面 | 含共享栈变更，执行前登记窗口 |
 
+### S2 共享栈变更窗口（2026-09-12，会话 S2 登记并执行）
+
+- **窗口 WIN-20260912-S2-01**（ART-incident-002 纪律，brief-S2 切片 S2-1）：常驻栈 `maestro-pilot-server`（8080）换镜像 `maestro-main:local`（自 main 8c8d82e 构建）；**先迁移后换二进制**（J5 红线，库已在 0020，`migrate up` 预期 no-op 并留记录）；退役 8081 对照实例（`p5b-server.sh down`）；换容器时补 `MAESTRO_WEBHOOK_PAYLOAD_KEY`/`MAESTRO_PILOT_WEBHOOK_KEY`（S2-3 webhook 首演前提，一次重启内完成，最小扰动）。
+- 前后 pg_dump 快照存 `maestro-p5a-bases/pilot-backups/`；回滚点=旧镜像 `maestro-j5:local` 保留。实时标记：`pilot-stack/change-window.md`（并行会话可见）。结果行待切片完成后回填。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
