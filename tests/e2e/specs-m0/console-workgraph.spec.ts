@@ -85,6 +85,18 @@ function planDetail(sealed: boolean) {
 }
 
 const assetRows = {
+  waiting_gates: [
+    {
+      work_item_id: '018f7500-0000-7000-8000-0000000000e1',
+      gate_id: 'poc-detailed-design',
+      asset_id: 'ART-blueprint-001',
+      bound_version: 1,
+      binding_status: 'stale',
+      staled_at: '2026-09-05T00:00:00Z',
+      latest_version: 2,
+      latest_status: 'approved',
+    },
+  ],
   assets: [
     { asset_id: 'ART-blueprint-001', version: 1, asset_type: 'blueprint', title: '试点蓝图 v1', status: 'superseded', owner_principal: 'session:owner-1', sensitivity: 'internal', supersedes_ref: '', source_digest: digest('1'), content_ref: 'assets/ART-blueprint-001/v1.md', reviewers: [], created_at: '2026-09-01T00:00:00Z', reviewed_at: '', approved_at: '', superseded_at: '2026-09-05T00:00:00Z' },
     { asset_id: 'ART-blueprint-001', version: 2, asset_type: 'blueprint', title: '试点蓝图 v2', status: 'approved', owner_principal: 'session:owner-1', sensitivity: 'internal', supersedes_ref: 'ART-blueprint-001@1', source_digest: digest('2'), content_ref: 'assets/ART-blueprint-001/v2.md', reviewers: ['qa-owner'], created_at: '2026-09-05T00:00:00Z', reviewed_at: '2026-09-06T00:00:00Z', approved_at: '2026-09-07T00:00:00Z', superseded_at: '' },
@@ -152,6 +164,13 @@ test.describe('M4.5 J2c Work Graph console (auth-disabled deployment)', () => {
     await page.locator('[data-asset-filter="sensitivity"]').selectOption('confidential');
     await expect(page.locator('[data-asset-row="ART-blueprint-001@1"]')).toHaveCount(0);
     await expect(page.locator('[data-asset-row="ART-sec-review-001@1"]')).toBeVisible();
+
+    // W5-5: the waiting surface answers WHICH asset version the stale
+    // gate waits for (the v1 binding went stale when v2 superseded it).
+    await expect(page.locator('[data-waiting-gates="panel"]')).toBeVisible();
+    await expect(page.locator('[data-waiting-gate-row="ART-blueprint-001@1"]')).toContainText('poc-detailed-design');
+    await expect(page.locator('[data-waiting-gate-row="ART-blueprint-001@1"]')).toContainText('v2');
+    await expect(page.locator('[data-waiting-gate-row="ART-blueprint-001@1"]')).toContainText('approved');
   });
 
   test('proposal review renders decided proposals and the HITL seal completes', async ({ page }) => {

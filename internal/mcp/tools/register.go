@@ -43,9 +43,31 @@ type Services struct {
 // catalog's required_permission is enforced through the same
 // Policy.Authorize the REST surface uses. Unregistered sessions and
 // unknown tools fail closed before any handler logic runs.
+//
+// W5-1 identity-bound transports skip the session synthesis entirely:
+// the engine-wide identity layer has already resolved the caller's
+// principal (memberships + functional + platform roles), and THAT
+// principal drives the decision — functional approvers reach the
+// asset.review / asset.approve planes over MCP through the same frozen
+// policy REST uses.
 func (s *Services) guardTool(name string, handler mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if s == nil || s.Guard == nil {
+			return handler(ctx, req)
+		}
+		if principal := identityPrincipal(ctx); principal != nil {
+			projectID, scopeErr := identityProject(ctx)
+			if scopeErr != nil {
+				return errorResult(scopeErr), nil
+			}
+			decision, authErr := s.Guard.Authorize(ctx, name, principal, projectID)
+			if authErr != nil {
+				// Unknown tool names deny: the catalog is the only surface.
+				return maestroToolError(MaestroError{Code: "FORBIDDEN", Message: "Tool is not in the frozen catalog"}), nil //nolint:nilerr // catalog violations deny rather than error open
+			}
+			if !decision.Allow {
+				return Deny(decision), nil
+			}
 			return handler(ctx, req)
 		}
 		projectID, sessionID, _, err := s.Binding.scope()

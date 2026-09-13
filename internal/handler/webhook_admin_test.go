@@ -49,7 +49,12 @@ func TestDeadLetterReplayEndpoint(t *testing.T) {
 	requestedBy := "ops-colleague-7"
 	substantive := "runbook drill: delivery retried after the TLS rotation fix landed"
 
-	t.Run("developer without gitlab.reconcile is denied", func(t *testing.T) {
+	// W5-6 / OPS-1 terminal state: the frozen permission is
+	// webhook.deadletter.replay on the operations_owner functional plane
+	// (admin-1 above); a plain developer is denied, and so is a
+	// project_admin without the operations grant (gitlab.reconcile no
+	// longer reaches this route).
+	t.Run("developer without webhook.deadletter.replay is denied", func(t *testing.T) {
 		response := f.request(t, f.devTK, http.MethodPost, replayPath, nil,
 			`{"requested_by": "`+requestedBy+`", "reason": "`+substantive+`"}`)
 		assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

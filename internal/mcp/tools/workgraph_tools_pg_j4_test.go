@@ -100,7 +100,7 @@ func j4TransitionRequest(assetID, key string) mcp.CallToolRequest {
 func j4Review(t *testing.T, services *Services, req mcp.CallToolRequest) {
 	t.Helper()
 	result, err := handleAssetTransition(ctxBG(), req, services, "review",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
+		func(ctx context.Context, assetID string, version int, actor string, _ []string) (*store.Asset, error) {
 			return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 		})
 	require.NoError(t, err)
@@ -110,8 +110,8 @@ func j4Review(t *testing.T, services *Services, req mcp.CallToolRequest) {
 func j4Approve(t *testing.T, services *Services, assetID string, req mcp.CallToolRequest) *store.Asset {
 	t.Helper()
 	result, err := handleAssetTransition(ctxBG(), req, services, "approve",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
-			return services.Assets.ApproveAsset(ctx, assetID, version, actor)
+		func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error) {
+			return services.Assets.ApproveAsset(ctx, assetID, version, actor, approverRoles)
 		})
 	require.NoError(t, err)
 	require.False(t, result.IsError, mcpResultText(result))
@@ -155,7 +155,7 @@ func TestFunctionalOwnersWalkAssetReviewApprovePG(t *testing.T) {
 	// functional session continues the walk.
 	selfReview := j4TransitionRequest("ART-prd-101", "j4-pg-selfreview-00001")
 	denied, err := handleAssetTransition(ctxBG(), selfReview, services, "review",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
+		func(ctx context.Context, assetID string, version int, actor string, _ []string) (*store.Asset, error) {
 			return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 		})
 	require.NoError(t, err)

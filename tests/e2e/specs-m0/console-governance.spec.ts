@@ -350,6 +350,11 @@ INSERT INTO memberships (team_id, user_id, role)
   VALUES ('${IDS.team}', '${IDS.userDev}', 'developer'),
          ('${IDS.team}', '${IDS.userAdmin}', 'project_admin'),
          ('${IDS.team}', '${IDS.userViewer}', 'viewer');
+-- W5-6 / OPS-1 terminal state: the DLQ replay rides the frozen
+-- webhook.deadletter.replay string on the operations_owner functional
+-- plane — the project_admin membership alone no longer reaches it.
+INSERT INTO functional_principals (id, user_id, function, source_ref)
+  VALUES ('66666666-6666-7666-8666-666666666666', '${IDS.userAdmin}', 'operations_owner', 'deed/e2e-ops-replay-2026-09');
 -- J5: the platform principal holds a platform_grants row and NO
 -- membership — platform_admin can never be a membership role (0001
 -- CHECK), which is exactly the CR-P5a-1 gap this grant closes.
@@ -923,7 +928,8 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
 
   test('DLQ replay walks the dual-person contract through the real endpoint', async ({ browser }, testInfo) => {
     requireGovernance(testInfo);
-    // project_admin holds gitlab.reconcile: the replay POST is a real
+    // The admin principal holds the operations_owner functional grant
+    // (W5-6: webhook.deadletter.replay): the replay POST is a real
     // authorized write. First the separation-of-duties rejection (the
     // requester equals the authenticated approver), then the real
     // requeue under the original event identity, then the spent-row 404.

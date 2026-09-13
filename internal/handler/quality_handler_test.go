@@ -94,7 +94,8 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 		"plat-1":   {qProjectID: "platform_admin"},
 		"sec-1":    {qProjectID: "viewer"},
 	}, Functional: map[string][]string{
-		"sec-1": {"security_owner"},
+		"sec-1":   {"security_owner"},
+		"admin-1": {"operations_owner"}, // W5-6: the DLQ replay rides the operations functional plane
 	}}
 	verifier, err := identity.NewTokenVerifier(idp.server.URL, "maestro", idp.server.Client())
 	require.NoError(t, err)

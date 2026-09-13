@@ -178,7 +178,7 @@ func TestSealRejectsUnboundRequiredInputs(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.Assets().ReviewAsset(ctx, asset.AssetID, 1, "tech-lead")
 	require.NoError(t, err)
-	_, err = store.Assets().ApproveAsset(ctx, asset.AssetID, 1, "product")
+	_, err = store.Assets().ApproveAsset(ctx, asset.AssetID, 1, "product", nil)
 	require.NoError(t, err)
 
 	require.NoError(t, graph.AddNodeArtifactFlow(ctx, AddNodeArtifactFlowInput{

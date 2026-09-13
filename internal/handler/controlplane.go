@@ -88,7 +88,11 @@ var controlPlaneActions = map[string]map[string]string{
 		http.MethodGet: "quality.read",
 	},
 	"/api/v3/webhooks/dead-letters/:inbox_id/replay": {
-		http.MethodPost: "gitlab.reconcile",
+		// W5-6 / OPS-1 terminal state: the replay is an OPERATIONS
+		// action on the frozen webhook.deadletter.replay string held by
+		// the operations_owner functional plane — no longer the MR
+		// reconciliation string project_admin happens to carry.
+		http.MethodPost: "webhook.deadletter.replay",
 	},
 	"/api/v3/projects/:pid/gates/:gid/waivers": {
 		http.MethodPost: "waiver.request",

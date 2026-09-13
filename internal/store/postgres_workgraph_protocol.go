@@ -206,22 +206,31 @@ type SubmitDecompositionProposalInput struct {
 	Proposal       workgraph.DecompositionProposal
 	Payload        []byte // the wire document as received (audited verbatim)
 	IdempotencyKey string
-	SubmittedBy    string
-	CorrelationID  string
-	Limits         workgraph.ProposalLimits
+	// ProjectID is the SERVER-SIDE scope the proposal was admitted
+	// under (W5-3): idempotency keys are unique per project, so two
+	// projects minting the same caller key never replay each other's
+	// decided proposals. The plan row re-derives and must agree.
+	ProjectID     string
+	SubmittedBy   string
+	CorrelationID string
+	Limits        workgraph.ProposalLimits
 }
 
 // SubmitDecompositionProposal validates and decides one proposal:
 // clean proposals apply atomically to the plan's draft revision
 // (nodes + node revisions + requires edges + artifact flows behind the
 // graph CAS); rejected proposals persist their stable violation codes.
-// Replaying the idempotency key returns the decided record unchanged.
+// Replaying the idempotency key inside the SAME project returns the
+// decided record unchanged (W5-3: the namespace is (project_id, key)).
 func (s pgWorkGraphStore) SubmitDecompositionProposal(ctx context.Context, in SubmitDecompositionProposalInput) (*DecompositionProposalRecord, error) {
 	if in.IdempotencyKey == "" {
 		return nil, fmt.Errorf("%w: idempotency key is required", ErrInvalidParameter)
 	}
+	if in.ProjectID == "" {
+		return nil, fmt.Errorf("%w: project scope is required to namespace the idempotency key", ErrInvalidParameter)
+	}
 	// Idempotent replay: the decision is final, return it verbatim.
-	if existing, err := s.GetDecompositionProposalByKey(ctx, in.IdempotencyKey); err == nil {
+	if existing, err := s.GetDecompositionProposalByKey(ctx, in.ProjectID, in.IdempotencyKey); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -244,6 +253,9 @@ func (s pgWorkGraphStore) SubmitDecompositionProposal(ctx context.Context, in Su
 	}
 	if err != nil {
 		return nil, fmt.Errorf("workgraph: lock plan: %w", err)
+	}
+	if projectID != in.ProjectID {
+		return nil, fmt.Errorf("%w: plan %s lives outside the scoped project", ErrInvalidParameter, in.Proposal.PlanID)
 	}
 	if graphVersion != in.Proposal.ExpectedGraphVersion {
 		return nil, ErrGraphVersionMismatch
@@ -296,7 +308,7 @@ func (s pgWorkGraphStore) SubmitDecompositionProposal(ctx context.Context, in Su
 		if err := tx.Commit(); err != nil {
 			return nil, fmt.Errorf("workgraph: commit: %w", err)
 		}
-		return s.GetDecompositionProposalByKey(ctx, in.IdempotencyKey)
+		return s.GetDecompositionProposalByKey(ctx, in.ProjectID, in.IdempotencyKey)
 	}
 
 	// Clean proposal: apply everything in this transaction.
@@ -332,17 +344,19 @@ func (s pgWorkGraphStore) SubmitDecompositionProposal(ctx context.Context, in Su
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("workgraph: commit: %w", err)
 	}
-	return s.GetDecompositionProposalByKey(ctx, in.IdempotencyKey)
+	return s.GetDecompositionProposalByKey(ctx, in.ProjectID, in.IdempotencyKey)
 }
 
-// GetDecompositionProposalByKey loads one proposal by idempotency key.
-func (s pgWorkGraphStore) GetDecompositionProposalByKey(ctx context.Context, key string) (*DecompositionProposalRecord, error) {
+// GetDecompositionProposalByKey loads one proposal by its project-
+// namespaced idempotency key (W5-3): the same caller key under another
+// project is a different namespace entry, never a replay.
+func (s pgWorkGraphStore) GetDecompositionProposalByKey(ctx context.Context, projectID, key string) (*DecompositionProposalRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id::text, project_id::text, plan_id::text, work_pattern_id::text,
 		       expected_graph_version, payload, idempotency_key, status,
 		       COALESCE(violations, 'null'), COALESCE(applied_node_ids, 'null'),
 		       submitted_by, COALESCE(decided_at::text, ''), created_at::text
-		FROM decomposition_proposals WHERE idempotency_key = $1`, key)
+		FROM decomposition_proposals WHERE project_id = $1 AND idempotency_key = $2`, projectID, key)
 	return scanDecompositionProposal(row.Scan)
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,22 +28,23 @@ func (s *PostgresStore) Assets() pgAssetsStore { return pgAssetsStore{db: s.db} 
 
 const assetColumns = `asset_id, version, project_id::text, asset_type, title, status, owner_principal,
 	reviewers, sensitivity, supersedes_ref, source_digest, locked_gate, content_ref, summary,
-	created_at, reviewed_at, approved_at, superseded_at`
+	required_approver_roles, created_at, reviewed_at, approved_at, superseded_at`
 
 func scanAsset(scan func(dest ...any) error) (*Asset, error) {
 	asset := &Asset{}
-	var reviewers, summary []byte
+	var reviewers, summary, requiredApprovers []byte
 	var supersedesRef, lockedGate, contentRef sql.NullString
 	var createdAt time.Time
 	var reviewedAt, approvedAt, supersededAt sql.NullTime
 	if err := scan(&asset.AssetID, &asset.Version, &asset.ProjectID, &asset.AssetType,
 		&asset.Title, &asset.Status, &asset.OwnerPrincipal, &reviewers, &asset.Sensitivity,
 		&supersedesRef, &asset.SourceDigest, &lockedGate, &contentRef, &summary,
-		&createdAt, &reviewedAt, &approvedAt, &supersededAt); err != nil {
+		&requiredApprovers, &createdAt, &reviewedAt, &approvedAt, &supersededAt); err != nil {
 		return nil, err
 	}
 	asset.Reviewers = decodeStringList(reviewers)
 	asset.Summary = summary
+	asset.RequiredApproverRoles = decodeStringList(requiredApprovers)
 	if supersedesRef.Valid {
 		asset.SupersedesRef = supersedesRef.String
 	}
@@ -85,6 +87,11 @@ func (s pgAssetsStore) RegisterAsset(ctx context.Context, asset Asset, actor str
 	if err := ValidateAssetRegistration(asset); err != nil {
 		return nil, err
 	}
+	requiredApprovers, err := NormalizeRequiredApprovers(asset.AssetType, asset.RequiredApproverRoles)
+	if err != nil {
+		return nil, err
+	}
+	asset.RequiredApproverRoles = requiredApprovers
 	reviewers, err := json.Marshal(asset.Reviewers)
 	if err != nil {
 		return nil, fmt.Errorf("assets: reviewers encode: %w", err)
@@ -92,6 +99,10 @@ func (s pgAssetsStore) RegisterAsset(ctx context.Context, asset Asset, actor str
 	summary, err := CanonicalJSON(asset.Summary)
 	if err != nil {
 		return nil, fmt.Errorf("assets: summary encode: %w", err)
+	}
+	encodedApprovers, err := json.Marshal(requiredApprovers)
+	if err != nil {
+		return nil, fmt.Errorf("assets: required approvers encode: %w", err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -125,12 +136,12 @@ func (s pgAssetsStore) RegisterAsset(ctx context.Context, asset Asset, actor str
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO assets (asset_id, version, project_id, asset_type, title, status,
 			owner_principal, reviewers, sensitivity, supersedes_ref, source_digest,
-			locked_gate, content_ref, summary)
-		VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)`,
+			locked_gate, content_ref, summary, required_approver_roles)
+		VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)`,
 		asset.AssetID, asset.Version, asset.ProjectID, asset.AssetType, asset.Title,
 		asset.OwnerPrincipal, string(reviewers), asset.Sensitivity, optionalText(asset.SupersedesRef),
 		asset.SourceDigest, optionalText(asset.LockedGate), optionalText(asset.ContentRef),
-		string(summary)); err != nil {
+		string(summary), string(encodedApprovers)); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, fmt.Errorf("%w: %s", ErrAssetAlreadyRegistered, FormatAssetRef(asset.AssetID, asset.Version))
@@ -159,17 +170,47 @@ func (s pgAssetsStore) ReviewAsset(ctx context.Context, assetID string, version 
 	return s.transitionAsset(ctx, assetID, version, AssetStatusReviewed, actor, "asset.reviewed")
 }
 
-// ApproveAsset moves reviewed -> approved. When this version supersedes
-// another one, the target flips to superseded and every gate binding
-// pinned to the target version goes stale in the SAME transaction —
-// downstream work items then fail the locked-gate consumption check
-// (WGM-INV-009/015).
-func (s pgAssetsStore) ApproveAsset(ctx context.Context, assetID string, version int, actor string) (*Asset, error) {
+// ApproveAsset moves reviewed -> approved. W5-2 multi-sign: when the
+// asset carries required approver roles, the call first records the
+// caller's functional signoffs (asset_approvals) and the approved flip
+// lands only after EVERY required role has a distinct signoff — one
+// signature alone never releases the version (the release-note class
+// defaults to the product_owner + technical_lead pair). When this
+// version supersedes another one, the target flips to superseded and
+// every gate binding pinned to the target version goes stale in the
+// SAME transaction — downstream work items then fail the locked-gate
+// consumption check (WGM-INV-009/015).
+func (s pgAssetsStore) ApproveAsset(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*Asset, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("assets: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	current, err := readAssetTx(ctx, tx, assetID, version)
+	if err != nil {
+		return nil, err
+	}
+	// Signoffs only land on the reviewed plane: the review pass is the
+	// non-owner gate that precedes every release decision, so a draft
+	// approve fails closed at the transition guard below.
+	if current.Status == AssetStatusReviewed && len(current.RequiredApproverRoles) > 0 {
+		if err := recordAssetSignoffs(ctx, tx, current, actor, approverRoles); err != nil {
+			return nil, err
+		}
+		signoffs, err := countAssetSignoffs(ctx, tx, assetID, version)
+		if err != nil {
+			return nil, err
+		}
+		if signoffs < len(current.RequiredApproverRoles) {
+			// A counted-but-incomplete release: the version stays
+			// reviewed with its partial signoff ledger visible.
+			if err := tx.Commit(); err != nil {
+				return nil, fmt.Errorf("assets: commit: %w", err)
+			}
+			return s.GetAsset(ctx, assetID, version)
+		}
+	}
 
 	approved, err := transitionAssetTx(ctx, tx, assetID, version, AssetStatusApproved, actor, "asset.approved")
 	if err != nil {
@@ -177,36 +218,8 @@ func (s pgAssetsStore) ApproveAsset(ctx context.Context, assetID string, version
 	}
 
 	if approved.SupersedesRef != "" {
-		targetID, targetVersion, parseErr := ParseSupersedesRef(approved.SupersedesRef)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE assets SET status = 'superseded', superseded_at = now()
-			WHERE asset_id = $1 AND version = $2 AND status = 'approved'`,
-			targetID, targetVersion)
-		if err != nil {
-			return nil, fmt.Errorf("assets: supersede target: %w", err)
-		}
-		if affected, _ := result.RowsAffected(); affected > 0 {
-			staleResult, err := tx.ExecContext(ctx, `
-				UPDATE asset_gate_bindings SET status = 'stale', staled_at = now()
-				WHERE asset_id = $1 AND bound_version = $2 AND status = 'bound'`,
-				targetID, targetVersion)
-			if err != nil {
-				return nil, fmt.Errorf("assets: stale bindings: %w", err)
-			}
-			staled, _ := staleResult.RowsAffected()
-			payload := map[string]any{"asset": approved.SupersedesRef,
-				"successor": FormatAssetRef(assetID, version), "stale_bindings": staled}
-			if err := recordGovernanceEvent(ctx, tx, governanceEvent{
-				ProjectID: approved.ProjectID, Action: "asset.superseded", ResourceType: "asset",
-				ResourceID: approved.SupersedesRef, Actor: actor,
-				Reason:     "superseded by " + FormatAssetRef(assetID, version),
-				OutboxType: "asset.superseded", Payload: mustMarshal(payload),
-			}); err != nil {
-				return nil, err
-			}
+		if err := supersedeTargetBindings(ctx, tx, approved, actor); err != nil {
+			return nil, err
 		}
 	}
 
@@ -214,6 +227,126 @@ func (s pgAssetsStore) ApproveAsset(ctx context.Context, assetID string, version
 		return nil, fmt.Errorf("assets: commit: %w", err)
 	}
 	return s.GetAsset(ctx, assetID, version)
+}
+
+// recordAssetSignoffs lands the caller-side functional signoffs for one
+// multi-sign asset version. The (asset, version, role) key makes a
+// re-sign idempotent; each NEW signoff carries its own audit + outbox
+// pair. A caller holding none of the required roles fails closed.
+func recordAssetSignoffs(ctx context.Context, tx *sql.Tx, asset *Asset, actor string, approverRoles []string) error {
+	required := make(map[string]struct{}, len(asset.RequiredApproverRoles))
+	for _, role := range asset.RequiredApproverRoles {
+		required[role] = struct{}{}
+	}
+	matched := 0
+	for _, role := range approverRoles {
+		if _, needed := required[role]; !needed {
+			continue
+		}
+		matched++
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO asset_approvals (asset_id, version, approver_role, approver_principal)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (asset_id, version, approver_role) DO NOTHING`,
+			asset.AssetID, asset.Version, role, actor)
+		if err != nil {
+			return fmt.Errorf("assets: record signoff: %w", err)
+		}
+		if affected, _ := result.RowsAffected(); affected == 0 {
+			continue // the role already signed: idempotent replay
+		}
+		if err := recordGovernanceEvent(ctx, tx, governanceEvent{
+			ProjectID: asset.ProjectID, Action: "asset.approval.recorded", ResourceType: "asset",
+			ResourceID: FormatAssetRef(asset.AssetID, asset.Version), Actor: actor,
+			Reason:     "signoff by " + role,
+			OutboxType: "asset.approval.recorded",
+			Payload: mustMarshal(map[string]any{
+				"asset": FormatAssetRef(asset.AssetID, asset.Version), "role": role, "principal": actor,
+			}),
+		}); err != nil {
+			return err
+		}
+	}
+	if matched == 0 {
+		return fmt.Errorf("%w: %s requires one of [%s], the caller holds none",
+			ErrAssetApprovalRoleRequired, FormatAssetRef(asset.AssetID, asset.Version),
+			strings.Join(asset.RequiredApproverRoles, ", "))
+	}
+	return nil
+}
+
+// countAssetSignoffs counts the distinct required roles already signed.
+func countAssetSignoffs(ctx context.Context, tx *sql.Tx, assetID string, version int) (int, error) {
+	var signoffs int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT count(DISTINCT approver_role) FROM asset_approvals
+		WHERE asset_id = $1 AND version = $2`,
+		assetID, version).Scan(&signoffs); err != nil {
+		return 0, fmt.Errorf("assets: count signoffs: %w", err)
+	}
+	return signoffs, nil
+}
+
+// supersedeTargetBindings flips the approved supersedes target to
+// superseded and marks every gate binding pinned to the target version
+// stale, with the asset.superseded audit + outbox pair, on the caller's
+// transaction.
+func supersedeTargetBindings(ctx context.Context, tx *sql.Tx, approved *Asset, actor string) error {
+	targetID, targetVersion, parseErr := ParseSupersedesRef(approved.SupersedesRef)
+	if parseErr != nil {
+		return parseErr
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE assets SET status = 'superseded', superseded_at = now()
+		WHERE asset_id = $1 AND version = $2 AND status = 'approved'`,
+		targetID, targetVersion)
+	if err != nil {
+		return fmt.Errorf("assets: supersede target: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		staleResult, err := tx.ExecContext(ctx, `
+			UPDATE asset_gate_bindings SET status = 'stale', staled_at = now()
+			WHERE asset_id = $1 AND bound_version = $2 AND status = 'bound'`,
+			targetID, targetVersion)
+		if err != nil {
+			return fmt.Errorf("assets: stale bindings: %w", err)
+		}
+		staled, _ := staleResult.RowsAffected()
+		payload := map[string]any{"asset": approved.SupersedesRef,
+			"successor": FormatAssetRef(approved.AssetID, approved.Version), "stale_bindings": staled}
+		if err := recordGovernanceEvent(ctx, tx, governanceEvent{
+			ProjectID: approved.ProjectID, Action: "asset.superseded", ResourceType: "asset",
+			ResourceID: approved.SupersedesRef, Actor: actor,
+			Reason:     "superseded by " + FormatAssetRef(approved.AssetID, approved.Version),
+			OutboxType: "asset.superseded", Payload: mustMarshal(payload),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListAssetApprovals returns the recorded signoffs for one asset
+// version (role order stable for the wire).
+func (s pgAssetsStore) ListAssetApprovals(ctx context.Context, assetID string, version int) ([]*AssetApproval, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT asset_id, version, approver_role, approver_principal, decided_at::text
+		FROM asset_approvals WHERE asset_id = $1 AND version = $2 ORDER BY approver_role`,
+		assetID, version)
+	if err != nil {
+		return nil, fmt.Errorf("assets: list approvals: %w", err)
+	}
+	defer rows.Close()
+	approvals := []*AssetApproval{}
+	for rows.Next() {
+		approval := &AssetApproval{}
+		if err := rows.Scan(&approval.AssetID, &approval.Version, &approval.ApproverRole,
+			&approval.ApproverPrincipal, &approval.DecidedAt); err != nil {
+			return nil, fmt.Errorf("assets: scan approval: %w", err)
+		}
+		approvals = append(approvals, approval)
+	}
+	return approvals, rows.Err()
 }
 
 // transitionAsset performs one guarded lifecycle step outside a wider
@@ -512,6 +645,51 @@ func (s pgAssetsStore) ListStaleBindings(ctx context.Context, projectID string) 
 		binding.BoundAt = pgTimeString(boundAt)
 		binding.StaledAt = optionalTimeString(staledAt)
 		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
+}
+
+// ListWaitingGateBindings is the W5-5 downstream waiting surface: every
+// stale binding of the project joined with the asset's latest registered
+// version and its lifecycle status, so the console answers "which asset
+// version does this gate wait for" (the heal path is the in-place rebind
+// to the approved successor).
+func (s pgAssetsStore) ListWaitingGateBindings(ctx context.Context, projectID string) ([]*WaitingGateBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT b.id, b.project_id::text, b.work_item_id, b.asset_id, b.bound_version,
+		       b.bound_digest, b.gate_id, b.status, b.bound_at, b.staled_at,
+		       latest.version, latest.status
+		FROM asset_gate_bindings b
+		LEFT JOIN LATERAL (
+			SELECT version, status FROM assets
+			WHERE asset_id = b.asset_id ORDER BY version DESC LIMIT 1
+		) latest ON true
+		WHERE b.project_id = $1 AND b.status = 'stale'
+		ORDER BY b.staled_at`,
+		projectID)
+	if err != nil {
+		return nil, fmt.Errorf("assets: list waiting gates: %w", err)
+	}
+	defer rows.Close()
+	bindings := []*WaitingGateBinding{}
+	for rows.Next() {
+		waiting := &WaitingGateBinding{}
+		var staledAt sql.NullTime
+		var boundAt time.Time
+		var latestVersion sql.NullInt64
+		var latestStatus sql.NullString
+		if err := rows.Scan(&waiting.ID, &waiting.ProjectID, &waiting.WorkItemID, &waiting.AssetID,
+			&waiting.BoundVersion, &waiting.BoundDigest, &waiting.GateID, &waiting.Status,
+			&boundAt, &staledAt, &latestVersion, &latestStatus); err != nil {
+			return nil, fmt.Errorf("assets: scan waiting gate: %w", err)
+		}
+		waiting.BoundAt = pgTimeString(boundAt)
+		waiting.StaledAt = optionalTimeString(staledAt)
+		if latestVersion.Valid {
+			waiting.LatestVersion = int(latestVersion.Int64)
+		}
+		waiting.LatestStatus = latestStatus.String
+		bindings = append(bindings, waiting)
 	}
 	return bindings, rows.Err()
 }

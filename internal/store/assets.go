@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 )
 
@@ -24,7 +25,62 @@ var (
 	ErrAssetGateNotSatisfied  = errors.New("locked gate asset not consumable (not approved, digest drift or stale binding)")
 	ErrAssetBindingNotFound   = errors.New("asset gate binding not found")
 	ErrAssetContentForbidden  = errors.New("confidential assets are pointer-only: content may not be registered")
+	// ErrAssetApprovalRoleRequired fails closed when a multi-sign asset
+	// receives an approve call whose caller carries none of the required
+	// functional roles (W5-2): a signoff that cannot count must not land.
+	ErrAssetApprovalRoleRequired = errors.New("asset approval requires a functional role the caller does not hold")
 )
+
+// FunctionalRoleCatalog is the frozen five-entry functional plane (J1;
+// 0021 asset_approvals CHECK mirrors this list).
+var FunctionalRoleCatalog = []string{
+	FunctionalRoleSecurityOwner, FunctionalRoleQAOwner, FunctionalRoleOperationsOwner,
+	FunctionalRoleProductOwner, FunctionalRoleTechnicalLead,
+}
+
+// DefaultRequiredApprovers returns the server-side multi-sign floor for
+// one asset type (W5-2): release-note class assets always require the
+// product_owner (review) and technical_lead (release) pair — callers may
+// add roles but never opt out of the frozen pair. Every other type keeps
+// the single-approve contract unless the registration declares roles.
+func DefaultRequiredApprovers(assetType string) []string {
+	if assetType == "release-note" {
+		return []string{FunctionalRoleProductOwner, FunctionalRoleTechnicalLead}
+	}
+	return nil
+}
+
+// NormalizeRequiredApprovers folds the registration's declared roles on
+// top of the type's frozen floor: sorted, deduplicated, validated against
+// the functional catalog. The result is stored on the asset row so the
+// approval ledger never re-derives policy.
+func NormalizeRequiredApprovers(assetType string, declared []string) ([]string, error) {
+	required := make([]string, 0, len(declared)+2)
+	required = append(required, declared...)
+	required = append(required, DefaultRequiredApprovers(assetType)...)
+	seen := make(map[string]struct{}, len(required))
+	out := make([]string, 0, len(required))
+	for _, role := range required {
+		known := false
+		for _, catalogRole := range FunctionalRoleCatalog {
+			if role == catalogRole {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return nil, fmt.Errorf("%w: required approver role %q is outside the functional catalog",
+				ErrInvalidParameter, role)
+		}
+		if _, duplicate := seen[role]; duplicate {
+			continue
+		}
+		seen[role] = struct{}{}
+		out = append(out, role)
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 // AssetTypeCatalog is the frozen 15-entry pilot catalog (0017 assets
 // CHECK mirrors this list; growing it requires a new migration by
@@ -66,10 +122,25 @@ type Asset struct {
 	LockedGate     string
 	ContentRef     string
 	Summary        []byte
-	CreatedAt      string
-	ReviewedAt     string
-	ApprovedAt     string
-	SupersededAt   string
+	// RequiredApproverRoles is the multi-sign floor (W5-2): the sorted
+	// functional roles whose distinct signoffs flip this version to
+	// approved. Empty keeps the single-approve contract.
+	RequiredApproverRoles []string
+	CreatedAt             string
+	ReviewedAt            string
+	ApprovedAt            string
+	SupersededAt          string
+}
+
+// AssetApproval is one stored asset_approvals row: one functional role's
+// signoff on one asset version (W5-2). The (asset, version, role) key is
+// unique — the second holder of the same role re-signs idempotently.
+type AssetApproval struct {
+	AssetID           string
+	Version           int
+	ApproverRole      string
+	ApproverPrincipal string
+	DecidedAt         string
 }
 
 // AssetGateBinding is one stored asset_gate_bindings row: the pilot
@@ -85,6 +156,16 @@ type AssetGateBinding struct {
 	Status       string
 	BoundAt      string
 	StaledAt     string
+}
+
+// WaitingGateBinding is the W5-5 console waiting surface: one stale
+// binding enriched with the asset's latest registered version and its
+// lifecycle status, so the operator sees WHICH version the gate waits
+// for (the heal path is the in-place rebind to the approved successor).
+type WaitingGateBinding struct {
+	AssetGateBinding
+	LatestVersion int
+	LatestStatus  string
 }
 
 // ContentDigest streams raw file bytes through sha256 and returns the
@@ -148,6 +229,9 @@ func ValidateAssetRegistration(asset Asset) error {
 	}
 	if err := ValidateSpecDigestFormat(asset.SourceDigest); err != nil {
 		return fmt.Errorf("%w: %w", ErrAssetDigestInvalid, err)
+	}
+	if _, err := NormalizeRequiredApprovers(asset.AssetType, asset.RequiredApproverRoles); err != nil {
+		return err
 	}
 	if asset.SupersedesRef != "" {
 		targetID, targetVersion, err := ParseSupersedesRef(asset.SupersedesRef)

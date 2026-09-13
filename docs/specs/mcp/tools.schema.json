@@ -2456,11 +2456,27 @@
                   },
                   "summary": {
                     "type": "string",
-                    "maxLength": 4000
+                    "maxLength": 4000,
+                    "description": "Optional summary: one JSON document serialized as a string. Non-JSON or over-long values are rejected as INVALID_PARAMETER before the store (W5-4)."
                   },
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "required_approver_roles": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 5,
+                    "items": {
+                      "enum": [
+                        "security_owner",
+                        "qa_owner",
+                        "operations_owner",
+                        "product_owner",
+                        "technical_lead"
+                      ]
+                    },
+                    "description": "Functional roles whose distinct signoffs release this version (W5-2 multi-sign gate). The release-note type always requires product_owner+technical_lead server-side; declaring roles can only add to that floor."
                   }
                 },
                 "required": [
@@ -3978,7 +3994,7 @@
         },
         {
           "name": "asset_register",
-          "description": "Register one asset version into the ledger (digest+pointer mode). Machine checks: frozen type catalog, digest format, sensitivity rules, supersedes chain, confidential pointer-only; the server derives the version and owner.",
+          "description": "Register one asset version into the ledger (digest+pointer mode). Machine checks: frozen type catalog, digest format, sensitivity rules, supersedes chain, confidential pointer-only; the server derives the version and owner. Multi-sign floor (W5-2): release-note assets always require product_owner+technical_lead signoffs.",
           "mutating": true,
           "required_permission": "asset.register",
           "input_schema": {
@@ -4046,11 +4062,27 @@
               },
               "summary": {
                 "type": "string",
-                "maxLength": 4000
+                "maxLength": 4000,
+                "description": "Optional summary: one JSON document serialized as a string. Non-JSON or over-long values are rejected as INVALID_PARAMETER before the store (W5-4)."
               },
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "required_approver_roles": {
+                "type": "array",
+                "uniqueItems": true,
+                "maxItems": 5,
+                "items": {
+                  "enum": [
+                    "security_owner",
+                    "qa_owner",
+                    "operations_owner",
+                    "product_owner",
+                    "technical_lead"
+                  ]
+                },
+                "description": "Functional roles whose distinct signoffs release this version (W5-2 multi-sign gate). The release-note type always requires product_owner+technical_lead server-side; declaring roles can only add to that floor."
               }
             },
             "required": [
@@ -4123,7 +4155,7 @@
         },
         {
           "name": "asset_approve",
-          "description": "Approve one reviewed asset version (reviewed to approved; the superseded predecessor and stale gate bindings flip in the same transaction). Functional release plane (product_owner, technical_lead, qa_owner, operations_owner); delegated principals are vetoed.",
+          "description": "Approve one reviewed asset version (reviewed to approved; the superseded predecessor and stale gate bindings flip in the same transaction). Functional release plane; delegated principals are vetoed. Multi-sign (W5-2): with required approver roles each call records the caller's functional signoff and the flip lands only after every required role signed.",
           "mutating": true,
           "required_permission": "asset.approve",
           "input_schema": {

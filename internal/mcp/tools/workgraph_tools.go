@@ -36,13 +36,21 @@ type WorkGraphStore interface {
 type AssetStore interface {
 	RegisterAsset(ctx context.Context, asset store.Asset, actor string) (*store.Asset, error)
 	ReviewAsset(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error)
-	ApproveAsset(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error)
+	// ApproveAsset carries the caller's ACTIVE functional roles for the
+	// multi-sign ledger (W5-2); the roles come from the server-side
+	// principal, never from a payload field.
+	ApproveAsset(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error)
 	GetAsset(ctx context.Context, assetID string, version int) (*store.Asset, error)
 	LatestAsset(ctx context.Context, assetID string) (*store.Asset, error)
 	ListAssets(ctx context.Context, projectID string) ([]*store.Asset, error)
+	ListAssetApprovals(ctx context.Context, assetID string, version int) ([]*store.AssetApproval, error)
 }
 
 const workGraphStoreReason = "the work graph and asset ledger live in the PostgreSQL control-plane store; this deployment runs without it"
+
+// maxAssetSummaryRunes is the frozen summary bound (tools.schema.json
+// asset_register.summary.maxLength; W5-4 enforces it before the store).
+const maxAssetSummaryRunes = 4000
 
 // Wire DTOs: the store row types carry no JSON tags on purpose (storage
 // shape); the tool wire contract is snake_case, so the boundary lives
@@ -104,9 +112,20 @@ type wireAsset struct {
 	SourceDigest   string   `json:"source_digest"`
 	ContentRef     string   `json:"content_ref"`
 	Summary        any      `json:"summary,omitempty"`
-	CreatedAt      string   `json:"created_at"`
-	ReviewedAt     string   `json:"reviewed_at"`
-	ApprovedAt     string   `json:"approved_at"`
+	// RequiredApproverRoles is the multi-sign floor (W5-2): empty keeps
+	// the single-approve contract.
+	RequiredApproverRoles []string       `json:"required_approver_roles"`
+	Approvals             []wireApproval `json:"approvals,omitempty"`
+	CreatedAt             string         `json:"created_at"`
+	ReviewedAt            string         `json:"reviewed_at"`
+	ApprovedAt            string         `json:"approved_at"`
+}
+
+// wireApproval is one recorded functional signoff (W5-2).
+type wireApproval struct {
+	Role      string `json:"role"`
+	Principal string `json:"principal"`
+	DecidedAt string `json:"decided_at"`
 }
 
 func assetWire(asset *store.Asset) wireAsset {
@@ -116,10 +135,27 @@ func assetWire(asset *store.Asset) wireAsset {
 		OwnerPrincipal: asset.OwnerPrincipal, Reviewers: asset.Reviewers,
 		Sensitivity: asset.Sensitivity, SupersedesRef: asset.SupersedesRef,
 		SourceDigest: asset.SourceDigest, ContentRef: asset.ContentRef,
-		CreatedAt: asset.CreatedAt, ReviewedAt: asset.ReviewedAt, ApprovedAt: asset.ApprovedAt,
+		RequiredApproverRoles: asset.RequiredApproverRoles,
+		CreatedAt:             asset.CreatedAt, ReviewedAt: asset.ReviewedAt, ApprovedAt: asset.ApprovedAt,
+	}
+	if wire.RequiredApproverRoles == nil {
+		wire.RequiredApproverRoles = []string{}
 	}
 	if len(asset.Summary) > 0 {
 		wire.Summary = json.RawMessage(asset.Summary)
+	}
+	return wire
+}
+
+// assetWireWithApprovals enriches one wire asset with its recorded
+// signoffs (the transition results carry the live multi-sign state).
+func assetWireWithApprovals(asset *store.Asset, approvals []*store.AssetApproval) wireAsset {
+	wire := assetWire(asset)
+	wire.Approvals = make([]wireApproval, 0, len(approvals))
+	for _, approval := range approvals {
+		wire.Approvals = append(wire.Approvals, wireApproval{
+			Role: approval.ApproverRole, Principal: approval.ApproverPrincipal, DecidedAt: approval.DecidedAt,
+		})
 	}
 	return wire
 }
@@ -183,7 +219,7 @@ func handleWorktreeGraphQuery(ctx context.Context, req mcp.CallToolRequest, serv
 	if err != nil {
 		return errorResult(err), nil
 	}
-	projectID, _, _, err := services.Binding.scope()
+	projectID, err := services.callProject(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
@@ -358,7 +394,7 @@ func handleDecompositionPropose(ctx context.Context, req mcp.CallToolRequest, se
 	if services.WorkGraph == nil {
 		return unavailableError(), nil
 	}
-	projectID, _, _, err := services.Binding.scope()
+	projectID, err := services.callProject(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
@@ -386,7 +422,7 @@ func handleDecompositionPropose(ctx context.Context, req mcp.CallToolRequest, se
 		return errorResult(err), nil
 	}
 
-	actor, err := services.sessionActor()
+	actor, err := services.callActor(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
@@ -394,8 +430,11 @@ func handleDecompositionPropose(ctx context.Context, req mcp.CallToolRequest, se
 		Proposal:       proposal,
 		Payload:        raw,
 		IdempotencyKey: idempotencyKey,
-		SubmittedBy:    actor,
-		Limits:         workgraph.ProposalLimits{}, // conservative defaults apply inside the validator
+		// W5-3: the key namespace is (project, key); the scope is the
+		// server-resolved project, never a payload field.
+		ProjectID:   projectID,
+		SubmittedBy: actor,
+		Limits:      workgraph.ProposalLimits{}, // conservative defaults apply inside the validator
 	})
 	if err != nil {
 		return errorResult(fmt.Errorf("submit proposal: %w", err)), nil
@@ -448,7 +487,9 @@ func registerAssetRegister(s *mcpserver.MCPServer, services *Services) {
 			mcp.WithString("content_ref", mcp.Description("Content pointer (repository path); required for confidential assets")),
 			mcp.WithString("supersedes_ref", mcp.Description("Predecessor version as <asset_id>@<version>")),
 			mcp.WithArray("reviewers", mcp.Description("Optional reviewer principals (max 20)")),
-			mcp.WithString("summary", mcp.Description("Optional summary (max 4000 characters)")),
+			mcp.WithString("summary", mcp.Description("Optional summary: one JSON document serialized as a string, max 4000 characters")),
+			mcp.WithArray("required_approver_roles", mcp.Description("Functional roles whose distinct signoffs release this version (release-note always requires product_owner+technical_lead server-side)"),
+				mcp.Items(map[string]any{"enum": []string{"security_owner", "qa_owner", "operations_owner", "product_owner", "technical_lead"}})),
 			mcp.WithString("idempotency_key", mcp.Required(), mcp.Description("16-128 character replay key")),
 		),
 		services.guardTool("asset_register", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -481,9 +522,26 @@ func handleAssetRegister(ctx context.Context, req mcp.CallToolRequest, services 
 	supersedesRef := req.GetString("supersedes_ref", "")
 	contentRef := req.GetString("content_ref", "")
 	summary := req.GetString("summary", "")
+	// W5-4: parameter validation runs BEFORE the store — an over-long or
+	// non-JSON summary is a caller mistake (INVALID_PARAMETER), never a
+	// store encode failure (the ledger column is canonical JSON).
+	if summary != "" {
+		if length := len([]rune(summary)); length > maxAssetSummaryRunes {
+			return errorResult(fmt.Errorf("%w: summary must be at most %d characters, got %d",
+				store.ErrInvalidParameter, maxAssetSummaryRunes, length)), nil
+		}
+		if !json.Valid([]byte(summary)) {
+			return errorResult(fmt.Errorf("%w: summary must be one JSON document serialized as a string",
+				store.ErrInvalidParameter)), nil
+		}
+	}
 	reviewers, err := requireStringSlice(req, "reviewers", 0, 20)
 	if err != nil {
 		return errorResult(fmt.Errorf("reviewers: %w", err)), nil
+	}
+	requiredApproverRoles, err := requireStringSlice(req, "required_approver_roles", 0, 5)
+	if err != nil {
+		return errorResult(fmt.Errorf("required_approver_roles: %w", err)), nil
 	}
 	if _, err := req.RequireString("idempotency_key"); err != nil {
 		return errorResult(err), nil
@@ -491,11 +549,11 @@ func handleAssetRegister(ctx context.Context, req mcp.CallToolRequest, services 
 	if services.Assets == nil {
 		return unavailableError(), nil
 	}
-	projectID, _, _, err := services.Binding.scope()
+	projectID, err := services.callProject(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
-	actor, err := services.sessionActor()
+	actor, err := services.callActor(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
@@ -527,6 +585,10 @@ func handleAssetRegister(ctx context.Context, req mcp.CallToolRequest, services 
 		SupersedesRef:  supersedesRef,
 		SourceDigest:   sourceDigest,
 		ContentRef:     contentRef,
+		// W5-2: the declared multi-sign floor folds onto the type's
+		// frozen default inside the store (release-note is never
+		// single-approvable, and callers cannot opt out of the pair).
+		RequiredApproverRoles: requiredApproverRoles,
 	}
 	if summary != "" {
 		asset.Summary = []byte(summary)
@@ -553,7 +615,7 @@ func separationDeny(action string) *mcp.CallToolResult {
 }
 
 func loadScopedAsset(ctx context.Context, services *Services, assetID string, version int) (*store.Asset, string, error) {
-	projectID, _, _, err := services.Binding.scope()
+	projectID, err := services.callProject(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -569,7 +631,7 @@ func loadScopedAsset(ctx context.Context, services *Services, assetID string, ve
 
 func handleAssetTransition(
 	ctx context.Context, req mcp.CallToolRequest, services *Services, action string,
-	transition func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error),
+	transition func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error),
 ) (*mcp.CallToolResult, error) {
 	assetID, err := req.RequireString("asset_id")
 	if err != nil {
@@ -589,18 +651,25 @@ func handleAssetTransition(
 	if err != nil {
 		return errorResult(fmt.Errorf("asset: %w", err)), nil
 	}
-	actor, err := services.sessionActor()
+	actor, err := services.callActor(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}
 	if asset.OwnerPrincipal == actor {
 		return separationDeny(action), nil
 	}
-	updated, err := transition(ctx, assetID, int(rawVersion), actor)
+	// W5-2: the signoff roles are the caller's ACTIVE functional roles
+	// from the server-side principal — a payload field can never claim
+	// one, and a delegated session carries none.
+	updated, err := transition(ctx, assetID, int(rawVersion), actor, identityFunctionalRoles(ctx))
 	if err != nil {
 		return errorResult(fmt.Errorf("%s asset: %w", action, err)), nil
 	}
-	payload, err := json.Marshal(assetWire(updated))
+	approvals, err := services.Assets.ListAssetApprovals(ctx, assetID, int(rawVersion))
+	if err != nil {
+		return errorResult(fmt.Errorf("list approvals: %w", err)), nil
+	}
+	payload, err := json.Marshal(assetWireWithApprovals(updated, approvals))
 	if err != nil {
 		return nil, fmt.Errorf("marshal asset: %w", err)
 	}
@@ -621,7 +690,7 @@ func registerAssetReview(s *mcpserver.MCPServer, services *Services) {
 				return unavailableError(), nil
 			}
 			return handleAssetTransition(ctx, req, services, "review",
-				func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
+				func(ctx context.Context, assetID string, version int, actor string, _ []string) (*store.Asset, error) {
 					return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 				})
 		}),
@@ -644,8 +713,8 @@ func registerAssetApprove(s *mcpserver.MCPServer, services *Services) {
 				return unavailableError(), nil
 			}
 			return handleAssetTransition(ctx, req, services, "approve",
-				func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
-					return services.Assets.ApproveAsset(ctx, assetID, version, actor)
+				func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error) {
+					return services.Assets.ApproveAsset(ctx, assetID, version, actor, approverRoles)
 				})
 		}),
 	)
@@ -674,7 +743,7 @@ func handleAssetQuery(ctx context.Context, req mcp.CallToolRequest, services *Se
 	assetType := req.GetString("asset_type", "")
 	sensitivity := req.GetString("sensitivity", "")
 	status := req.GetString("status", "")
-	projectID, _, _, err := services.Binding.scope()
+	projectID, err := services.callProject(ctx)
 	if err != nil {
 		return errorResult(err), nil
 	}

@@ -13,6 +13,11 @@ info:
       description: Verified GitLab ingress and reconciled object changes.
     - name: workflow
       description: Durable workflow, quality, defect, Runner, and Agent state changes.
+    - name: workgraph
+      description: >-
+        Work-graph and asset-ledger governance events (ADR-009): plan,
+        proposal, node, attempt and asset lifecycle facts written by the
+        PostgreSQL control plane through the shared governance outbox.
 defaultContentType: application/json
 channels:
   gitlabWebhookReceived:
@@ -95,6 +100,121 @@ channels:
     messages:
       event:
         $ref: "#/components/messages/BudgetExhausted"
+  workgraphPlanCreated:
+    address: workgraph.plan.created
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphPlanCreated"
+  workgraphPlanIntentAttached:
+    address: workgraph.plan.intent_attached
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphPlanIntentAttached"
+  workgraphPlanReplanned:
+    address: workgraph.plan.replanned
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphPlanReplanned"
+  workgraphPlanSealed:
+    address: workgraph.plan.sealed
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphPlanSealed"
+  workgraphProposalRejected:
+    address: workgraph.proposal.rejected
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphProposalRejected"
+  workgraphProposalApplied:
+    address: workgraph.proposal.applied
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphProposalApplied"
+  workgraphNodeAdded:
+    address: workgraph.node.added
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeAdded"
+  workgraphNodeClaimed:
+    address: workgraph.node.claimed
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeClaimed"
+  workgraphNodeStatusChanged:
+    address: workgraph.node.status_changed
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeStatusChanged"
+  workgraphNodeAggregated:
+    address: workgraph.node.aggregated
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeAggregated"
+  workgraphNodeDetached:
+    address: workgraph.node.detached
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeDetached"
+  workgraphNodeCancelled:
+    address: workgraph.node.cancelled
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphNodeCancelled"
+  workgraphDependencyAdded:
+    address: workgraph.dependency.added
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphDependencyAdded"
+  workgraphLineageAdded:
+    address: workgraph.lineage.added
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphLineageAdded"
+  workgraphFlowAdded:
+    address: workgraph.flow.added
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphFlowAdded"
+  workgraphAttemptCompleted:
+    address: workgraph.attempt.completed
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphAttemptCompleted"
+  workgraphAttemptExpired:
+    address: workgraph.attempt.expired
+    messages:
+      event:
+        $ref: "#/components/messages/WorkgraphAttemptExpired"
+  assetRegistered:
+    address: asset.registered
+    messages:
+      event:
+        $ref: "#/components/messages/AssetRegistered"
+  assetReviewed:
+    address: asset.reviewed
+    messages:
+      event:
+        $ref: "#/components/messages/AssetReviewed"
+  assetApproved:
+    address: asset.approved
+    messages:
+      event:
+        $ref: "#/components/messages/AssetApproved"
+  assetApprovalRecorded:
+    address: asset.approval.recorded
+    messages:
+      event:
+        $ref: "#/components/messages/AssetApprovalRecorded"
+  assetSuperseded:
+    address: asset.superseded
+    messages:
+      event:
+        $ref: "#/components/messages/AssetSuperseded"
+  assetGateBound:
+    address: asset.gate.bound
+    messages:
+      event:
+        $ref: "#/components/messages/AssetGateBound"
 operations:
   consumeGitLabWebhook:
     action: receive
@@ -176,6 +296,121 @@ operations:
     description: Publishes a budget ledger reaching its stop boundary.
     channel:
       $ref: "#/channels/budgetExhausted"
+  publishWorkgraphPlanCreated:
+    action: send
+    description: Publishes the audited workgraph.plan.created governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphPlanCreated"
+  publishWorkgraphPlanIntentAttached:
+    action: send
+    description: Publishes the audited workgraph.plan.intent_attached governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphPlanIntentAttached"
+  publishWorkgraphPlanReplanned:
+    action: send
+    description: Publishes the audited workgraph.plan.replanned governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphPlanReplanned"
+  publishWorkgraphPlanSealed:
+    action: send
+    description: Publishes the audited workgraph.plan.sealed governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphPlanSealed"
+  publishWorkgraphProposalRejected:
+    action: send
+    description: Publishes the audited workgraph.proposal.rejected governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphProposalRejected"
+  publishWorkgraphProposalApplied:
+    action: send
+    description: Publishes the audited workgraph.proposal.applied governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphProposalApplied"
+  publishWorkgraphNodeAdded:
+    action: send
+    description: Publishes the audited workgraph.node.added governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeAdded"
+  publishWorkgraphNodeClaimed:
+    action: send
+    description: Publishes the audited workgraph.node.claimed governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeClaimed"
+  publishWorkgraphNodeStatusChanged:
+    action: send
+    description: Publishes the audited workgraph.node.status_changed governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeStatusChanged"
+  publishWorkgraphNodeAggregated:
+    action: send
+    description: Publishes the audited workgraph.node.aggregated governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeAggregated"
+  publishWorkgraphNodeDetached:
+    action: send
+    description: Publishes the audited workgraph.node.detached governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeDetached"
+  publishWorkgraphNodeCancelled:
+    action: send
+    description: Publishes the audited workgraph.node.cancelled governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphNodeCancelled"
+  publishWorkgraphDependencyAdded:
+    action: send
+    description: Publishes the audited workgraph.dependency.added governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphDependencyAdded"
+  publishWorkgraphLineageAdded:
+    action: send
+    description: Publishes the audited workgraph.lineage.added governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphLineageAdded"
+  publishWorkgraphFlowAdded:
+    action: send
+    description: Publishes the audited workgraph.flow.added governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphFlowAdded"
+  publishWorkgraphAttemptCompleted:
+    action: send
+    description: Publishes the audited workgraph.attempt.completed governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphAttemptCompleted"
+  publishWorkgraphAttemptExpired:
+    action: send
+    description: Publishes the audited workgraph.attempt.expired governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/workgraphAttemptExpired"
+  publishAssetRegistered:
+    action: send
+    description: Publishes the audited asset.registered governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetRegistered"
+  publishAssetReviewed:
+    action: send
+    description: Publishes the audited asset.reviewed governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetReviewed"
+  publishAssetApproved:
+    action: send
+    description: Publishes the audited asset.approved governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetApproved"
+  publishAssetApprovalRecorded:
+    action: send
+    description: Publishes the audited asset.approval.recorded governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetApprovalRecorded"
+  publishAssetSuperseded:
+    action: send
+    description: Publishes the audited asset.superseded governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetSuperseded"
+  publishAssetGateBound:
+    action: send
+    description: Publishes the audited asset.gate.bound governance fact (ADR-009; W5-7 registration of the J2a/J2b outbox catalog).
+    channel:
+      $ref: "#/channels/assetGateBound"
 components:
   schemas:
     ContractVersionedPayload:
@@ -574,6 +809,181 @@ components:
         budget_tokens:
           type: integer
           minimum: 1
+    WorkGraphPlanPayload:
+      type: object
+      additionalProperties: false
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+        human_code:
+          type: string
+          maxLength: 64
+        problem_id:
+          type: string
+          format: uuid
+        revision_no:
+          type: integer
+          minimum: 1
+        supersedes:
+          type: integer
+          minimum: 0
+        spec_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        overridden_nodes:
+          type: integer
+          minimum: 0
+        carried_nodes:
+          type: integer
+          minimum: 0
+    WorkGraphProposalPayload:
+      type: object
+      additionalProperties: false
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+        violations:
+          type: [array, "null"]
+          items:
+            type: object
+        nodes:
+          type: [array, "null"]
+          items:
+            type: string
+            format: uuid
+    WorkGraphNodePayload:
+      type: object
+      additionalProperties: false
+      required: [node_id]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          maxLength: 32
+        attempt_id:
+          type: string
+          format: uuid
+        context_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        worker_id:
+          type: string
+          maxLength: 128
+        budget_units:
+          type: integer
+          minimum: 0
+        outcome:
+          type: string
+          maxLength: 32
+        usage_units:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+          maxLength: 255
+        children:
+          type: integer
+          minimum: 0
+        cancel_policy:
+          type: string
+          maxLength: 32
+        cancelled:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        detached:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        cancelled_ancestor:
+          type: string
+          format: uuid
+    WorkGraphEdgePayload:
+      type: object
+      additionalProperties: false
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        from:
+          type: string
+          format: uuid
+        to:
+          type: string
+          format: uuid
+        node:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          maxLength: 32
+        slot_key:
+          type: string
+          maxLength: 64
+        direction:
+          type: string
+          maxLength: 32
+        asset:
+          type: string
+          pattern: "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+        port:
+          type: string
+          maxLength: 64
+    AssetPayload:
+      type: object
+      additionalProperties: false
+      required: [asset]
+      properties:
+        asset:
+          type: string
+          pattern: "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+        type:
+          type: string
+          maxLength: 32
+        sensitivity:
+          type: string
+          maxLength: 32
+        from:
+          type: string
+          maxLength: 32
+        to:
+          type: string
+          maxLength: 32
+        successor:
+          type: string
+          pattern: "^ART-[a-z-]+-[0-9]{3,}@[0-9]+$"
+        stale_bindings:
+          type: integer
+          minimum: 0
+        work_item:
+          type: string
+          format: uuid
+        gate:
+          type: string
+          maxLength: 128
+        digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        role:
+          type: string
+          maxLength: 32
+        principal:
+          type: string
+          maxLength: 255
   messages:
     GitLabWebhookReceived:
       payload:
@@ -735,3 +1145,233 @@ components:
                 const: budget.exhausted
               payload:
                 $ref: "#/components/schemas/BudgetExhaustedPayload"
+    WorkgraphPlanCreated:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.plan.created
+              payload:
+                $ref: "#/components/schemas/WorkGraphPlanPayload"
+    WorkgraphPlanIntentAttached:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.plan.intent_attached
+              payload:
+                $ref: "#/components/schemas/WorkGraphPlanPayload"
+    WorkgraphPlanReplanned:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.plan.replanned
+              payload:
+                $ref: "#/components/schemas/WorkGraphPlanPayload"
+    WorkgraphPlanSealed:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.plan.sealed
+              payload:
+                $ref: "#/components/schemas/WorkGraphPlanPayload"
+    WorkgraphProposalRejected:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.proposal.rejected
+              payload:
+                $ref: "#/components/schemas/WorkGraphProposalPayload"
+    WorkgraphProposalApplied:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.proposal.applied
+              payload:
+                $ref: "#/components/schemas/WorkGraphProposalPayload"
+    WorkgraphNodeAdded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.added
+              payload:
+                $ref: "#/components/schemas/WorkGraphEdgePayload"
+    WorkgraphNodeClaimed:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.claimed
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphNodeStatusChanged:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.status_changed
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphNodeAggregated:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.aggregated
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphNodeDetached:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.detached
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphNodeCancelled:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.node.cancelled
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphDependencyAdded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.dependency.added
+              payload:
+                $ref: "#/components/schemas/WorkGraphEdgePayload"
+    WorkgraphLineageAdded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.lineage.added
+              payload:
+                $ref: "#/components/schemas/WorkGraphEdgePayload"
+    WorkgraphFlowAdded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.flow.added
+              payload:
+                $ref: "#/components/schemas/WorkGraphEdgePayload"
+    WorkgraphAttemptCompleted:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.attempt.completed
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    WorkgraphAttemptExpired:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: workgraph.attempt.expired
+              payload:
+                $ref: "#/components/schemas/WorkGraphNodePayload"
+    AssetRegistered:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.registered
+              payload:
+                $ref: "#/components/schemas/AssetPayload"
+    AssetReviewed:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.reviewed
+              payload:
+                $ref: "#/components/schemas/AssetPayload"
+    AssetApproved:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.approved
+              payload:
+                $ref: "#/components/schemas/AssetPayload"
+    AssetApprovalRecorded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.approval.recorded
+              payload:
+                $ref: "#/components/schemas/AssetPayload"
+    AssetSuperseded:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.superseded
+              payload:
+                $ref: "#/components/schemas/AssetPayload"
+    AssetGateBound:
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/Envelope"
+          - type: object
+            properties:
+              event_type:
+                const: asset.gate.bound
+              payload:
+                $ref: "#/components/schemas/AssetPayload"

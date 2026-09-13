@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
@@ -113,8 +114,12 @@ func (f *fakeAssets) ReviewAsset(_ context.Context, assetID string, version int,
 	return f.transition(assetID, version, store.AssetStatusReviewed)
 }
 
-func (f *fakeAssets) ApproveAsset(_ context.Context, assetID string, version int, _ string) (*store.Asset, error) {
+func (f *fakeAssets) ApproveAsset(_ context.Context, assetID string, version int, _ string, _ []string) (*store.Asset, error) {
 	return f.transition(assetID, version, store.AssetStatusApproved)
+}
+
+func (f *fakeAssets) ListAssetApprovals(_ context.Context, _ string, _ int) ([]*store.AssetApproval, error) {
+	return nil, nil
 }
 
 func (f *fakeAssets) GetAsset(_ context.Context, assetID string, version int) (*store.Asset, error) {
@@ -367,7 +372,7 @@ func TestAssetReviewAndApproveEnforceSeparationOfDuties(t *testing.T) {
 		"idempotency_key": "j2c-review-idem-0001",
 	}
 	result, err := handleAssetTransition(ctxBG(), review, services, "review",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
+		func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error) {
 			return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 		})
 	require.NoError(t, err)
@@ -378,7 +383,7 @@ func TestAssetReviewAndApproveEnforceSeparationOfDuties(t *testing.T) {
 	// A different session reviews and approves cleanly.
 	services.Binding.SessionID = "reviewer-session"
 	approved, err := handleAssetTransition(ctxBG(), review, services, "review",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
+		func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error) {
 			return services.Assets.ReviewAsset(ctx, assetID, version, actor)
 		})
 	require.NoError(t, err)
@@ -387,8 +392,8 @@ func TestAssetReviewAndApproveEnforceSeparationOfDuties(t *testing.T) {
 	approve := mcp.CallToolRequest{}
 	approve.Params.Arguments = review.Params.Arguments
 	result, err = handleAssetTransition(ctxBG(), approve, services, "approve",
-		func(ctx context.Context, assetID string, version int, actor string) (*store.Asset, error) {
-			return services.Assets.ApproveAsset(ctx, assetID, version, actor)
+		func(ctx context.Context, assetID string, version int, actor string, approverRoles []string) (*store.Asset, error) {
+			return services.Assets.ApproveAsset(ctx, assetID, version, actor, approverRoles)
 		})
 	require.NoError(t, err)
 	require.False(t, result.IsError, mcpResultText(result))
@@ -525,4 +530,106 @@ func TestWorkGraphToolPermissionsRouteThroughFrozenPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, decision.Allow, "delegated principals never release assets")
 	assert.Contains(t, decision.Reasons[0], "delegated principals")
+}
+
+// W5-4: the summary parameter validates BEFORE the store — an
+// over-long summary and a bare non-JSON sentence are caller mistakes
+// (INVALID_PARAMETER), never a 500 from the canonical-JSON encode.
+func TestAssetRegisterSummaryValidatesBeforeStore(t *testing.T) {
+	services, _, _ := workGraphFixture(t)
+
+	overLong := mcp.CallToolRequest{}
+	args := registerArguments()
+	args["asset_id"] = "ART-research-501"
+	args["idempotency_key"] = "w5-summary-long-00000001"
+	args["summary"] = strings.Repeat("字", maxAssetSummaryRunes+1)
+	overLong.Params.Arguments = args
+	result, err := handleAssetRegister(ctxBG(), overLong, services)
+	require.NoError(t, err)
+	require.True(t, result.IsError, "an over-long summary must fail parameter validation")
+	assert.Contains(t, mcpResultText(result), "INVALID_PARAMETER")
+
+	bareSentence := mcp.CallToolRequest{}
+	args = registerArguments()
+	args["asset_id"] = "ART-research-502"
+	args["idempotency_key"] = "w5-summary-bare-0000001"
+	args["summary"] = "一句裸文本摘要（P5b 首演 500 复现）"
+	bareSentence.Params.Arguments = args
+	result, err = handleAssetRegister(ctxBG(), bareSentence, services)
+	require.NoError(t, err)
+	require.True(t, result.IsError, "a bare non-JSON sentence must fail parameter validation")
+	// The wire carries the stable code (diagnostic detail never leaves
+	// the server); the JSON requirement is asserted via the cause.
+	assert.Contains(t, mcpResultText(result), "INVALID_PARAMETER")
+	var public struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(mcpResultText(result)), &public))
+	assert.Equal(t, "INVALID_PARAMETER", public.Code)
+
+	// The accepted shape: one JSON document serialized as a string.
+	valid := mcp.CallToolRequest{}
+	args = registerArguments()
+	args["asset_id"] = "ART-research-503"
+	args["idempotency_key"] = "w5-summary-json-00000001"
+	args["summary"] = `{"note":"试点结论","decision":"路线 B"}`
+	valid.Params.Arguments = args
+	result, err = handleAssetRegister(ctxBG(), valid, services)
+	require.NoError(t, err)
+	require.False(t, result.IsError, mcpResultText(result))
+}
+
+// W5-2: the registration declares the multi-sign floor; the fake store
+// carries it onto the wire so callers see the contract they signed up
+// for (release-note normalization is store-side, proven in PG).
+func TestAssetRegisterCarriesRequiredApproverRoles(t *testing.T) {
+	services, _, _ := workGraphFixture(t)
+	req := mcp.CallToolRequest{}
+	args := registerArguments()
+	args["asset_id"] = "ART-test-report-501"
+	args["idempotency_key"] = "w5-roles-register-000001"
+	args["required_approver_roles"] = []any{"qa_owner", "technical_lead"}
+	req.Params.Arguments = args
+	result, err := handleAssetRegister(ctxBG(), req, services)
+	require.NoError(t, err)
+	require.False(t, result.IsError, mcpResultText(result))
+	assert.Contains(t, mcpResultText(result), `"required_approver_roles":["qa_owner","technical_lead"]`)
+}
+
+// W5-1: an identity-bound call with zero or several project memberships
+// fails closed — the MCP protocol carries no project selector, and
+// guessing one would silently retarget writes.
+func TestIdentityScopeFailsClosedWithoutExactlyOneMembership(t *testing.T) {
+	services, projectID, _ := workGraphFixture(t)
+
+	multi := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
+		PrincipalID: "user:multi", Type: model.PrincipalTypeHuman,
+		ProjectMemberships: map[string]string{projectID: "developer", "018f6200-0000-7000-8000-0000000000f1": "viewer"},
+		FunctionalRoles:    []string{"technical_lead"},
+	})
+	_, err := services.callProject(multi)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one active project membership")
+
+	none := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
+		PrincipalID: "user:none", Type: model.PrincipalTypeHuman,
+		ProjectMemberships: map[string]string{},
+		FunctionalRoles:    []string{"technical_lead"},
+	})
+	_, err = services.callProject(none)
+	require.Error(t, err)
+
+	// The delegated context (no identity principal) keeps the binding
+	// scope; the identity helpers are inert there.
+	single := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
+		PrincipalID: "user:single", Type: model.PrincipalTypeHuman,
+		ProjectMemberships: map[string]string{projectID: "developer"},
+		FunctionalRoles:    []string{"technical_lead"},
+	})
+	scoped, err := services.callProject(single)
+	require.NoError(t, err)
+	assert.Equal(t, projectID, scoped)
+	actor, err := services.callActor(single)
+	require.NoError(t, err)
+	assert.Equal(t, "user:user:single", actor)
 }

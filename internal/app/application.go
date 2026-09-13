@@ -440,7 +440,10 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 }
 
 func (a *Application) mountRuntimeRoutes(router *gin.Engine) {
-	streamable := mcpserver.NewStreamableHTTPServer(a.mcpServer)
+	// W5-1: the request-context principal rides into the tool-handler
+	// context, so identity-bound MCP calls authorize through the same
+	// frozen policy as REST (the delegated stdio runner is unchanged).
+	streamable := mcpserver.NewStreamableHTTPServer(a.mcpServer, mcpserver.WithHTTPContextFunc(handler.MCPRequestContext))
 	a.mcpHTTP = streamable
 
 	// These routes are registered after SetupRouter so that they inherit the
@@ -458,7 +461,7 @@ func (a *Application) mountRuntimeRoutes(router *gin.Engine) {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
-	router.Any("/mcp", gin.WrapH(streamable))
+	router.Any("/mcp", handler.BridgeMCPTransport(streamable))
 }
 
 // WebhookDispatchOptions wires the webhook inbox drain loop.

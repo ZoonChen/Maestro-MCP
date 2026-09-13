@@ -1,8 +1,10 @@
 # Frozen at version 3.0 by the M1 I1 contract-freeze sprint; extended
 # (agent.progress.report) by the M3 I3 contract-freeze sprint; extended
 # (asset.*/workgraph.* families + product/technical/operations functional
-# grants) by the M4 J4 slice closing CR-1/DEC-2. Permission changes
-# require a contract change request through the integration session.
+# grants) by the M4 J4 slice closing CR-1/DEC-2; extended
+# (webhook.deadletter.replay, OPS-1 terminal state) by the M4 W5
+# contract-cleanup slice. Permission changes require a contract change
+# request through the integration session.
 version: "3.0"
 default_effect: deny
 resource_hiding:
@@ -189,6 +191,7 @@ functional_approvers:
       - asset.read
       - asset.approve
       - workgraph.read
+      - webhook.deadletter.replay
 service_identities:
   runner_device:
     allow:
