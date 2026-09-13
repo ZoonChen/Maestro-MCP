@@ -747,6 +747,19 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		slog.Warn("MAESTRO_WEBHOOK_PAYLOAD_KEY not set; the GitLab webhook receiver stays unexposed")
 	}
 
+	// W6-5 (S2C-A5): the domain-event sink settles every outbox channel
+	// without a dedicated subscriber — the W1 observation's 187-event
+	// idle retry loop. It rides whenever PostgreSQL is the store; the
+	// webhook envelope channel stays owned by the GitLab consumer.
+	options.DomainSink = &app.DomainSinkOptions{
+		Sink: &app.DomainEventSink{
+			Source:             pgStore.Outbox(),
+			ExcludedEventTypes: []string{webhook.EventTypeWebhookReceived},
+			BatchSize:          32,
+		},
+		Owner: fmt.Sprintf("domain-sink-%s-%d", hostname(), os.Getpid()),
+	}
+
 	// The shared projection syncer: webhook consumer, reconcile path
 	// and evidence ingestion all apply facts through it.
 	company, companyErr := evidence.CompanyPolicy()
@@ -785,7 +798,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		if cfg.SLO != nil {
 			var sloErr error
 			sloHandler, sloErr = handler.NewSLOSnapshotHandler(cfg.SLO, cfg.Backup,
-				pgStore.Observability(), pgStore.Reliability())
+				pgStore.Observability(), pgStore.Observability(), pgStore.Reliability())
 			if sloErr != nil {
 				return *options, fail(exitUsage, "CONFIG_INVALID", sloErr)
 			}
@@ -800,6 +813,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
 			Jira:          handler.NewJiraHandler(pgStore.Jira()),
 			WorkGraph:     handler.NewWorkGraphHandler(pgStore.WorkGraph(), pgStore.Assets()),
+			Workflow:      handler.NewWorkflowActionsHandler(pgStore, pgStore.Assets()),
 			Scope:         pgStore.Instances(),
 		}
 	}

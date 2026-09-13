@@ -2,17 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/mcp/tools-v3.json",
   "title": "Maestro MCP v3 Tool Catalog",
-  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.2 extended the frozen 3.1 catalog with the W4.5 work-graph and asset-ledger surfaces (worktree_graph_query, decomposition_propose, asset_register, asset_review, asset_approve, asset_query); version 3.3 re-maps those six tools onto the asset.*/workgraph.* permission families and the developer-level propose/register grants (M4 J4 slice, CR-1). Changes require a contract change request through the integration session.",
+  "description": "Authoritative catalog for the Maestro MCP tools. Principal and resource scope are derived from the authenticated server context. Version 3.2 extended the frozen 3.1 catalog with the W4.5 work-graph and asset-ledger surfaces (worktree_graph_query, decomposition_propose, asset_register, asset_review, asset_approve, asset_query); version 3.3 re-maps those six tools onto the asset.*/workgraph.* permission families and the developer-level propose/register grants (M4 J4 slice, CR-1). Version 3.4 (M4 W6 slice, S2C-A4) adds the optional `project` argument to every tool: on identity-bound transports a principal holding several project memberships names one of them to scope the call; the selection is constrained to the caller's own memberships and never grants scope. Changes require a contract change request through the integration session.",
   "type": "object",
-  "required": [
-    "version",
-    "work_item_states",
-    "tools"
-  ],
+  "required": ["version", "work_item_states", "tools"],
   "additionalProperties": false,
   "properties": {
     "version": {
-      "const": "3.3"
+      "const": "3.4"
     },
     "work_item_states": {
       "$ref": "#/$defs/workItemStates"
@@ -28,9 +24,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "list_work_items"
@@ -43,9 +37,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_work_item"
@@ -58,9 +50,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_task_context"
@@ -73,9 +63,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_next_task"
@@ -88,9 +76,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "heartbeat_task"
@@ -103,9 +89,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "submit_task_result"
@@ -118,9 +102,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "report_blocker"
@@ -133,9 +115,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_quality_status"
@@ -148,9 +128,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_gitlab_status"
@@ -163,9 +141,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "create_work_item"
@@ -178,9 +154,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "cancel_work_item"
@@ -193,9 +167,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "retry_work_item"
@@ -208,9 +180,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_verification_task"
@@ -223,9 +193,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "submit_verification"
@@ -238,9 +206,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "list_defects"
@@ -251,9 +217,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_defect"
@@ -264,9 +228,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_integration_run"
@@ -277,9 +239,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "get_agent_run"
@@ -290,9 +250,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "report_agent_progress"
@@ -303,9 +261,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "worktree_graph_query"
@@ -318,9 +274,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "decomposition_propose"
@@ -333,9 +287,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "asset_register"
@@ -348,9 +300,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "asset_review"
@@ -363,9 +313,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "asset_approve"
@@ -378,9 +326,7 @@
         {
           "contains": {
             "type": "object",
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "properties": {
               "name": {
                 "const": "asset_query"
@@ -482,11 +428,7 @@
     },
     "concurrency": {
       "type": "object",
-      "required": [
-        "strategy",
-        "token_field",
-        "conflict_error"
-      ],
+      "required": ["strategy", "token_field", "conflict_error"],
       "additionalProperties": false,
       "properties": {
         "strategy": {
@@ -512,9 +454,7 @@
       "allOf": [
         {
           "if": {
-            "required": [
-              "strategy"
-            ],
+            "required": ["strategy"],
             "properties": {
               "strategy": {
                 "const": "expected_absent"
@@ -531,9 +471,7 @@
         },
         {
           "if": {
-            "required": [
-              "strategy"
-            ],
+            "required": ["strategy"],
             "properties": {
               "strategy": {
                 "const": "expected_version"
@@ -550,9 +488,7 @@
         },
         {
           "if": {
-            "required": [
-              "strategy"
-            ],
+            "required": ["strategy"],
             "properties": {
               "strategy": {
                 "const": "lease_version"
@@ -569,9 +505,7 @@
         },
         {
           "if": {
-            "required": [
-              "strategy"
-            ],
+            "required": ["strategy"],
             "properties": {
               "strategy": {
                 "const": "queue_version"
@@ -720,6 +654,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 100
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": []
@@ -751,11 +690,14 @@
                   "work_item_id": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "work_item_id"
-                ]
+                "required": ["work_item_id"]
               }
             }
           }
@@ -784,11 +726,14 @@
                   "work_item_id": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "work_item_id"
-                ]
+                "required": ["work_item_id"]
               }
             }
           }
@@ -850,12 +795,14 @@
                   "queue_version": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "idempotency_key",
-                  "queue_version"
-                ]
+                "required": ["idempotency_key", "queue_version"]
               }
             },
             "output_schema": {
@@ -959,6 +906,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1047,6 +999,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1132,6 +1089,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1169,11 +1131,14 @@
                   "work_item_id": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "work_item_id"
-                ]
+                "required": ["work_item_id"]
               }
             }
           }
@@ -1202,11 +1167,14 @@
                   "work_item_id": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "work_item_id"
-                ]
+                "required": ["work_item_id"]
               }
             }
           }
@@ -1277,12 +1245,7 @@
                     ]
                   },
                   "priority": {
-                    "enum": [
-                      "low",
-                      "normal",
-                      "high",
-                      "critical"
-                    ]
+                    "enum": ["low", "normal", "high", "critical"]
                   },
                   "repository_id": {
                     "type": "string",
@@ -1309,6 +1272,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1383,6 +1351,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1452,6 +1425,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1521,12 +1499,14 @@
                   "queue_version": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "idempotency_key",
-                  "queue_version"
-                ]
+                "required": ["idempotency_key", "queue_version"]
               }
             },
             "output_schema": {
@@ -1628,11 +1608,7 @@
                     "minimum": 1
                   },
                   "decision": {
-                    "enum": [
-                      "approved",
-                      "rejected",
-                      "needs_human"
-                    ]
+                    "enum": ["approved", "rejected", "needs_human"]
                   },
                   "summary": {
                     "type": "string",
@@ -1653,6 +1629,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -1770,14 +1751,12 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "project"
-                ],
+                "required": ["project"],
                 "properties": {
                   "project": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   },
                   "states": {
                     "type": "array",
@@ -1803,13 +1782,7 @@
                     "uniqueItems": true,
                     "maxItems": 5,
                     "items": {
-                      "enum": [
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info"
-                      ]
+                      "enum": ["critical", "high", "medium", "low", "info"]
                     }
                   }
                 }
@@ -1840,15 +1813,12 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "project",
-                  "defect_id"
-                ],
+                "required": ["project", "defect_id"],
                 "properties": {
                   "project": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   },
                   "defect_id": {
                     "type": "string",
@@ -1882,15 +1852,12 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "project",
-                  "integration_run_id"
-                ],
+                "required": ["project", "integration_run_id"],
                 "properties": {
                   "project": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   },
                   "integration_run_id": {
                     "type": "string",
@@ -1924,15 +1891,12 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "project",
-                  "execution_id"
-                ],
+                "required": ["project", "execution_id"],
                 "properties": {
                   "project": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   },
                   "execution_id": {
                     "type": "string",
@@ -1977,8 +1941,8 @@
                 "properties": {
                   "project": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   },
                   "execution_id": {
                     "type": "string",
@@ -2075,11 +2039,14 @@
                   "plan_id": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "plan_id"
-                ]
+                "required": ["plan_id"]
               }
             }
           }
@@ -2122,10 +2089,7 @@
                         "minimum": 1
                       }
                     },
-                    "required": [
-                      "pattern_id",
-                      "version"
-                    ]
+                    "required": ["pattern_id", "version"]
                   },
                   "nodes": {
                     "type": "array",
@@ -2145,11 +2109,7 @@
                           "maxLength": 80
                         },
                         "node_type": {
-                          "enum": [
-                            "work_package",
-                            "work_item",
-                            "gate"
-                          ]
+                          "enum": ["work_package", "work_item", "gate"]
                         },
                         "slot_key": {
                           "type": "string",
@@ -2225,20 +2185,14 @@
                               "additionalProperties": false,
                               "properties": {
                                 "kind": {
-                                  "enum": [
-                                    "all",
-                                    "any",
-                                    "quorum"
-                                  ]
+                                  "enum": ["all", "any", "quorum"]
                                 },
                                 "k": {
                                   "type": "integer",
                                   "minimum": 1
                                 }
                               },
-                              "required": [
-                                "kind"
-                              ]
+                              "required": ["kind"]
                             },
                             "failure_policy": {
                               "enum": [
@@ -2255,9 +2209,7 @@
                               ]
                             }
                           },
-                          "required": [
-                            "title"
-                          ]
+                          "required": ["title"]
                         }
                       },
                       "required": [
@@ -2288,16 +2240,10 @@
                           "maxLength": 80
                         },
                         "requirement": {
-                          "enum": [
-                            "required",
-                            "optional"
-                          ]
+                          "enum": ["required", "optional"]
                         }
                       },
-                      "required": [
-                        "from",
-                        "to"
-                      ]
+                      "required": ["from", "to"]
                     }
                   },
                   "flows": {
@@ -2313,10 +2259,7 @@
                           "maxLength": 80
                         },
                         "direction": {
-                          "enum": [
-                            "consumes",
-                            "produces"
-                          ]
+                          "enum": ["consumes", "produces"]
                         },
                         "asset_ref": {
                           "type": "string",
@@ -2327,12 +2270,7 @@
                           "pattern": "^[a-z][a-z0-9.]{0,63}$"
                         }
                       },
-                      "required": [
-                        "node",
-                        "direction",
-                        "asset_ref",
-                        "port_key"
-                      ]
+                      "required": ["node", "direction", "asset_ref", "port_key"]
                     }
                   },
                   "expected_graph_version": {
@@ -2342,6 +2280,11 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -2425,11 +2368,7 @@
                     "maxLength": 200
                   },
                   "sensitivity": {
-                    "enum": [
-                      "public",
-                      "internal",
-                      "confidential"
-                    ]
+                    "enum": ["public", "internal", "confidential"]
                   },
                   "source_digest": {
                     "type": "string",
@@ -2477,6 +2416,11 @@
                       ]
                     },
                     "description": "Functional roles whose distinct signoffs release this version (W5-2 multi-sign gate). The release-note type always requires product_owner+technical_lead server-side; declaring roles can only add to that floor."
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": [
@@ -2543,13 +2487,14 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "asset_id",
-                  "version",
-                  "idempotency_key"
-                ]
+                "required": ["asset_id", "version", "idempotency_key"]
               }
             },
             "audit_event": {
@@ -2606,13 +2551,14 @@
                   "idempotency_key": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
-                "required": [
-                  "asset_id",
-                  "version",
-                  "idempotency_key"
-                ]
+                "required": ["asset_id", "version", "idempotency_key"]
               }
             },
             "audit_event": {
@@ -2682,19 +2628,15 @@
                     ]
                   },
                   "sensitivity": {
-                    "enum": [
-                      "public",
-                      "internal",
-                      "confidential"
-                    ]
+                    "enum": ["public", "internal", "confidential"]
                   },
                   "status": {
-                    "enum": [
-                      "draft",
-                      "reviewed",
-                      "approved",
-                      "superseded"
-                    ]
+                    "enum": ["draft", "reviewed", "approved", "superseded"]
+                  },
+                  "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
                   }
                 },
                 "required": []
@@ -2707,7 +2649,7 @@
   },
   "examples": [
     {
-      "version": "3.3",
+      "version": "3.4",
       "work_item_states": [
         "draft",
         "queued",
@@ -2763,6 +2705,11 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": []
@@ -2781,11 +2728,14 @@
               "work_item_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "work_item_id"
-            ]
+            "required": ["work_item_id"]
           }
         },
         {
@@ -2801,11 +2751,14 @@
               "work_item_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "work_item_id"
-            ]
+            "required": ["work_item_id"]
           }
         },
         {
@@ -2848,12 +2801,14 @@
               "queue_version": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "idempotency_key",
-              "queue_version"
-            ]
+            "required": ["idempotency_key", "queue_version"]
           },
           "output_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2936,6 +2891,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3005,6 +2965,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3071,6 +3036,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3095,11 +3065,14 @@
               "work_item_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "work_item_id"
-            ]
+            "required": ["work_item_id"]
           }
         },
         {
@@ -3115,11 +3088,14 @@
               "work_item_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "work_item_id"
-            ]
+            "required": ["work_item_id"]
           }
         },
         {
@@ -3171,12 +3147,7 @@
                 ]
               },
               "priority": {
-                "enum": [
-                  "low",
-                  "normal",
-                  "high",
-                  "critical"
-                ]
+                "enum": ["low", "normal", "high", "critical"]
               },
               "repository_id": {
                 "type": "string",
@@ -3203,6 +3174,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3258,6 +3234,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3308,6 +3289,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3358,12 +3344,14 @@
               "queue_version": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "idempotency_key",
-              "queue_version"
-            ]
+            "required": ["idempotency_key", "queue_version"]
           },
           "output_schema": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3444,11 +3432,7 @@
                 "minimum": 1
               },
               "decision": {
-                "enum": [
-                  "approved",
-                  "rejected",
-                  "needs_human"
-                ]
+                "enum": ["approved", "rejected", "needs_human"]
               },
               "summary": {
                 "type": "string",
@@ -3469,6 +3453,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -3491,14 +3480,12 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "project"
-            ],
+            "required": ["project"],
             "properties": {
               "project": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               },
               "states": {
                 "type": "array",
@@ -3524,13 +3511,7 @@
                 "uniqueItems": true,
                 "maxItems": 5,
                 "items": {
-                  "enum": [
-                    "critical",
-                    "high",
-                    "medium",
-                    "low",
-                    "info"
-                  ]
+                  "enum": ["critical", "high", "medium", "low", "info"]
                 }
               }
             }
@@ -3545,15 +3526,12 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "project",
-              "defect_id"
-            ],
+            "required": ["project", "defect_id"],
             "properties": {
               "project": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               },
               "defect_id": {
                 "type": "string",
@@ -3571,15 +3549,12 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "project",
-              "integration_run_id"
-            ],
+            "required": ["project", "integration_run_id"],
             "properties": {
               "project": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               },
               "integration_run_id": {
                 "type": "string",
@@ -3597,15 +3572,12 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "project",
-              "execution_id"
-            ],
+            "required": ["project", "execution_id"],
             "properties": {
               "project": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               },
               "execution_id": {
                 "type": "string",
@@ -3634,8 +3606,8 @@
             "properties": {
               "project": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               },
               "execution_id": {
                 "type": "string",
@@ -3713,11 +3685,14 @@
               "plan_id": {
                 "type": "string",
                 "format": "uuid"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "plan_id"
-            ]
+            "required": ["plan_id"]
           }
         },
         {
@@ -3747,10 +3722,7 @@
                     "minimum": 1
                   }
                 },
-                "required": [
-                  "pattern_id",
-                  "version"
-                ]
+                "required": ["pattern_id", "version"]
               },
               "nodes": {
                 "type": "array",
@@ -3770,11 +3742,7 @@
                       "maxLength": 80
                     },
                     "node_type": {
-                      "enum": [
-                        "work_package",
-                        "work_item",
-                        "gate"
-                      ]
+                      "enum": ["work_package", "work_item", "gate"]
                     },
                     "slot_key": {
                       "type": "string",
@@ -3850,27 +3818,17 @@
                           "additionalProperties": false,
                           "properties": {
                             "kind": {
-                              "enum": [
-                                "all",
-                                "any",
-                                "quorum"
-                              ]
+                              "enum": ["all", "any", "quorum"]
                             },
                             "k": {
                               "type": "integer",
                               "minimum": 1
                             }
                           },
-                          "required": [
-                            "kind"
-                          ]
+                          "required": ["kind"]
                         },
                         "failure_policy": {
-                          "enum": [
-                            "fail_fast",
-                            "collect_all",
-                            "needs_human"
-                          ]
+                          "enum": ["fail_fast", "collect_all", "needs_human"]
                         },
                         "cancel_policy": {
                           "enum": [
@@ -3880,9 +3838,7 @@
                           ]
                         }
                       },
-                      "required": [
-                        "title"
-                      ]
+                      "required": ["title"]
                     }
                   },
                   "required": [
@@ -3913,16 +3869,10 @@
                       "maxLength": 80
                     },
                     "requirement": {
-                      "enum": [
-                        "required",
-                        "optional"
-                      ]
+                      "enum": ["required", "optional"]
                     }
                   },
-                  "required": [
-                    "from",
-                    "to"
-                  ]
+                  "required": ["from", "to"]
                 }
               },
               "flows": {
@@ -3938,10 +3888,7 @@
                       "maxLength": 80
                     },
                     "direction": {
-                      "enum": [
-                        "consumes",
-                        "produces"
-                      ]
+                      "enum": ["consumes", "produces"]
                     },
                     "asset_ref": {
                       "type": "string",
@@ -3952,12 +3899,7 @@
                       "pattern": "^[a-z][a-z0-9.]{0,63}$"
                     }
                   },
-                  "required": [
-                    "node",
-                    "direction",
-                    "asset_ref",
-                    "port_key"
-                  ]
+                  "required": ["node", "direction", "asset_ref", "port_key"]
                 }
               },
               "expected_graph_version": {
@@ -3967,6 +3909,11 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -4031,11 +3978,7 @@
                 "maxLength": 200
               },
               "sensitivity": {
-                "enum": [
-                  "public",
-                  "internal",
-                  "confidential"
-                ]
+                "enum": ["public", "internal", "confidential"]
               },
               "source_digest": {
                 "type": "string",
@@ -4083,6 +4026,11 @@
                   ]
                 },
                 "description": "Functional roles whose distinct signoffs release this version (W5-2 multi-sign gate). The release-note type always requires product_owner+technical_lead server-side; declaring roles can only add to that floor."
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": [
@@ -4130,13 +4078,14 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "asset_id",
-              "version",
-              "idempotency_key"
-            ]
+            "required": ["asset_id", "version", "idempotency_key"]
           },
           "audit_event": "mcp.asset_review.recorded",
           "idempotency": {
@@ -4174,13 +4123,14 @@
               "idempotency_key": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$"
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
-            "required": [
-              "asset_id",
-              "version",
-              "idempotency_key"
-            ]
+            "required": ["asset_id", "version", "idempotency_key"]
           },
           "audit_event": "mcp.asset_approve.recorded",
           "idempotency": {
@@ -4231,19 +4181,15 @@
                 ]
               },
               "sensitivity": {
-                "enum": [
-                  "public",
-                  "internal",
-                  "confidential"
-                ]
+                "enum": ["public", "internal", "confidential"]
               },
               "status": {
-                "enum": [
-                  "draft",
-                  "reviewed",
-                  "approved",
-                  "superseded"
-                ]
+                "enum": ["draft", "reviewed", "approved", "superseded"]
+              },
+              "project": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Explicit project scope for callers holding several project memberships; must name one of the caller's own memberships. Ignored on delegated transports."
               }
             },
             "required": []

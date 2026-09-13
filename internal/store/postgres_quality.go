@@ -263,6 +263,14 @@ func (s pgQualityStore) ListGateSnapshots(ctx context.Context, projectID, workIt
 	return snapshots, rows.Err()
 }
 
+// MarkWorkItemReadyFromGates exposes the gate-driven state writer on
+// the quality surface the evaluation service holds (W6-1): the
+// implementation is the same guarded, atomically-audited transition
+// the GitLab sync store owns.
+func (s pgQualityStore) MarkWorkItemReadyFromGates(ctx context.Context, projectID, workItemID, actor, reason string) (bool, error) {
+	return pgGitlabStore(s).MarkWorkItemReadyFromGates(ctx, projectID, workItemID, actor, reason)
+}
+
 // CreateWaiver persists a validated waiver request row and returns the
 // minted waiver identity.
 func (s pgQualityStore) CreateWaiver(ctx context.Context, waiver *evidence.Waiver, projectID, workItemID string) (string, error) {

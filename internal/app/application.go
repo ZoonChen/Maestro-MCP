@@ -82,6 +82,10 @@ type Options struct {
 	// projection sync and the merged-fact done edge; nil leaves the
 	// consumer unstarted.
 	GitLabSync *GitLabSyncOptions
+	// DomainSink settles outbox channels without a dedicated subscriber
+	// (W6-5, S2C-A5); nil leaves the sink unstarted (domain events
+	// accumulate — the W1 shadow observation's 187-event spin).
+	DomainSink *DomainSinkOptions
 	// MCPGuard enforces the frozen tool permissions on MCP tool calls
 	// through the same policy as REST (M1 exit gate: one authorize for
 	// every surface); nil keeps the M0 delegated-context mode.
@@ -420,6 +424,22 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			consumer.Run(a.backgroundCtx, owner, interval)
 		}()
 	}
+	// Exactly one domain-event sink per process (W6-5): it settles the
+	// outbox channels no dedicated consumer owns, so the delivery ledger
+	// converges instead of spinning in retry.
+	if opts.DomainSink != nil {
+		interval := opts.DomainSink.Interval
+		if interval <= 0 {
+			interval = 2 * time.Second
+		}
+		sink := opts.DomainSink.Sink
+		owner := opts.DomainSink.Owner
+		a.backgroundWG.Add(1)
+		go func() {
+			defer a.backgroundWG.Done()
+			sink.Run(a.backgroundCtx, owner, interval)
+		}()
+	}
 	// Exactly one Jira sync worker per process (task brief J3): the
 	// cycle owns the anchor snapshot cadence and the escalation clock.
 	if opts.JiraSync != nil {
@@ -474,6 +494,13 @@ type WebhookDispatchOptions struct {
 // GitLabSyncOptions wires the outbox → projection sync consumer.
 type GitLabSyncOptions struct {
 	Consumer *gitlab.Consumer
+	Owner    string
+	Interval time.Duration
+}
+
+// DomainSinkOptions wires the domain-event sink (W6-5).
+type DomainSinkOptions struct {
+	Sink     *DomainEventSink
 	Owner    string
 	Interval time.Duration
 }

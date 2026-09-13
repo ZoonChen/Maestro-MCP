@@ -14,6 +14,15 @@ type EvalStore interface {
 	PersistVerdict(ctx context.Context, verdict *Verdict) error
 }
 
+// ReadyMarker is the optional gate-driven state writer (W6-1, S2C-A1):
+// when the store implements it, a Ready verdict moves a VALIDATING
+// work item to ready_for_human_merge — the state the merged fact's
+// done edge requires. Stores without the writer stay append-only
+// (verdicts persist; the state machine is untouched).
+type ReadyMarker interface {
+	MarkWorkItemReadyFromGates(ctx context.Context, projectID, workItemID, actor, reason string) (bool, error)
+}
+
 // Service is the evaluation trigger: whenever facts change for a work
 // item's exact SHA tuple (evidence appended, waiver approved, MR tuple
 // completed), the engine re-evaluates deterministically and persists
@@ -68,6 +77,19 @@ func (s *Service) EvaluateWorkItem(ctx context.Context, tup Tuple) (*Verdict, er
 	}
 	if err := s.Store.PersistVerdict(ctx, verdict); err != nil {
 		return nil, fmt.Errorf("evaluate service: persist: %w", err)
+	}
+	// W6-1: a Ready verdict on the exact tuple is the machine-legal
+	// signal that validation finished — drive validating →
+	// ready_for_human_merge so the human merge and its merged fact can
+	// complete the done chain. The guarded writer no-ops on any other
+	// state, so replays and out-of-order verdicts stay inert.
+	if verdict.Ready {
+		if marker, ok := s.Store.(ReadyMarker); ok {
+			reason := fmt.Sprintf("all required gates passed or waived (policy %s)", resolved.Policy.Version)
+			if _, err := marker.MarkWorkItemReadyFromGates(ctx, tup.ProjectID, tup.WorkItemID, "control-plane", reason); err != nil {
+				return verdict, fmt.Errorf("evaluate service: ready transition: %w", err)
+			}
+		}
 	}
 	return verdict, nil
 }

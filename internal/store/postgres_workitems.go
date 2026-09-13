@@ -30,6 +30,35 @@ type WorkItemClaim struct {
 	CommandProfileJSON string
 }
 
+// ProjectQueueVersion reads the project's queue CAS token (the claim
+// contract's expected version; the governance REST face reads it
+// server-side when the caller does not present one).
+func (s *PostgresStore) ProjectQueueVersion(ctx context.Context, projectID string) (int64, error) {
+	var version int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT version FROM projects WHERE id = $1`, projectID).Scan(&version); err != nil {
+		return 0, fmt.Errorf("claim: queue version read: %w", err)
+	}
+	return version, nil
+}
+
+// RunnerBoundToProject reports whether the runner carries a binding to
+// the project (the governance claim face refuses cross-scope claims
+// BEFORE any lease side effect).
+func (s *PostgresStore) RunnerBoundToProject(ctx context.Context, runnerID, projectID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM runner_bindings WHERE runner_id = $1 AND project_id = $2`,
+		runnerID, projectID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim: runner binding check: %w", err)
+	}
+	return true, nil
+}
+
 // ClaimNextWorkItem dispatches at most one queued work item to the runner.
 //
 // Guards (all inside one transaction):

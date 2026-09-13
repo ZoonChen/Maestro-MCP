@@ -202,6 +202,15 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 |---|---|---|---|
 | W6 | brief-W6-gray-prereqs.md | A1 done 链写者 / A2 MR 绑定解析 / A3 claim·签核 API 面（灰度三硬前提）+ A4 多会籍 / A5 outbox sink / A6 SLO 采样；验收含 **W1 周报复跑对比** | 与影子期观察并行，出口评估（09-26）前合入 |
 
+### W6 收口：A1–A6 全关，灰度三硬前提齐（2026-09-13，会话 W6）
+
+- **六项全关**（关闭声明+对比表=`deploy/gitlab/peixun/reports/W6-gray-prereqs-closure.md`）：A1 `MarkWorkItemReadyFromGates` 写者（verdict Ready 驱动，状态+审计+outbox 同事务）/A2 分支契约项目段权威解析（`ResolveBranchBinding`，跨治理域 MR 投影落位）/A3 /api/v3 四端点（claim·complete·approve·bind，全映射既有冻结串）/A4 MCP 目录 3.4 显式 `project` 作用域（INVALID_PARAMETER+明确 message）/A5 `DomainEventSink`（含孤儿 sending 租约 5 分钟回收）/A6 SLO 窗口聚合+stale 标记。
+- **W1 复现翻绿**（pre-s2b 备份还原重放，`TestW6PilotReplayComparison`）：validating 2→**0**、done **2**、evidence 0→**24**、治理域 MR 投影 **2**、outbox 172+9 孤儿→**0**。
+- **S2B 临时驱动器正式退役**（四操作 API 等价复现绿）。
+- **钉子变更**：OpenAPI 写 32→36、MCP 目录 3.3→3.4、slo-status +stale；RBAC 68 不变（claim 落 work_item.claim——任务书「work_item.create 域」的解读备注见关闭声明 §6）。
+- **事故登记**：live `maestro` 库**第三次被清空**（S2C 周报后、W6 会话发现；根因未明，未单方处置；最新可恢复点=pre-s2b dump）。常驻栈重建窗口需先恢复库再换 W6 镜像。
+- 门禁：brief-E 全套+全量 Go（PG -p 1）+lint（隔离缓存 0 issues）+docs 四检+e2e 33/33（本机需 `MAESTRO_E2E_BROWSER_CHANNEL=chrome`）。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。

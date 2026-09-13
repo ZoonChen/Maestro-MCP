@@ -64,8 +64,16 @@ func (c *Consumer) ProcessBatch(ctx context.Context, owner string) (int, error) 
 	applied := 0
 	for _, event := range events {
 		if event.EventType != webhook.EventTypeWebhookReceived {
-			// Not ours: hand it straight back to the stream.
-			if err := c.Outbox.MarkRetry(ctx, event.EventID, owner, event.Attempts, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			// Not ours: hand it back with the retry delay (W6-5). The
+			// instant re-arms of the pre-W6 loop kept foreign channels
+			// spinning forever; the domain sink now owns them and this
+			// path is only the between-tick safety net.
+			retryDelay := c.RetryDelay
+			if retryDelay <= 0 {
+				retryDelay = time.Minute
+			}
+			if err := c.Outbox.MarkRetry(ctx, event.EventID, owner, event.Attempts,
+				time.Now().UTC().Add(retryDelay).Format(time.RFC3339)); err != nil {
 				slog.ErrorContext(ctx, "gitlab consumer: requeue foreign event failed", "error", err.Error())
 			}
 			continue

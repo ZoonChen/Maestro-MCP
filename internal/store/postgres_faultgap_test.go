@@ -139,7 +139,7 @@ func TestQualityWebhookGitlabInstanceErrorBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Error(t, pg.GitLab().UpsertPipeline(ctx, gitlab.PipelineRecord{}))
 	require.Error(t, pg.GitLab().UpsertJob(ctx, gitlab.JobRecord{}))
-	_, _, _, _, err = pg.GitLab().BranchTuple(ctx, "p", "b")
+	_, _, _, _, _, err = pg.GitLab().BranchTuple(ctx, "p", "b")
 	require.Error(t, err)
 
 	_, err = pg.Instances().ListInstances(ctx)

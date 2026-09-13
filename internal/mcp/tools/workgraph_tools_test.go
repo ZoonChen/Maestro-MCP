@@ -596,40 +596,81 @@ func TestAssetRegisterCarriesRequiredApproverRoles(t *testing.T) {
 	assert.Contains(t, mcpResultText(result), `"required_approver_roles":["qa_owner","technical_lead"]`)
 }
 
-// W5-1: an identity-bound call with zero or several project memberships
-// fails closed — the MCP protocol carries no project selector, and
-// guessing one would silently retarget writes.
-func TestIdentityScopeFailsClosedWithoutExactlyOneMembership(t *testing.T) {
+// W5-1 × W6-4: an identity-bound call resolves its project scope from
+// the caller's memberships — a sole membership needs no parameter
+// (unchanged), several memberships require an explicit `project`
+// argument constrained to the caller's own memberships, and an
+// unresolvable scope rejects as INVALID_PARAMETER naming the fix.
+func TestIdentityScopeResolution(t *testing.T) {
 	services, projectID, _ := workGraphFixture(t)
+	const otherProject = "018f6200-0000-7000-8000-0000000000f1"
 
 	multi := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
 		PrincipalID: "user:multi", Type: model.PrincipalTypeHuman,
-		ProjectMemberships: map[string]string{projectID: "developer", "018f6200-0000-7000-8000-0000000000f1": "viewer"},
+		ProjectMemberships: map[string]string{projectID: "developer", otherProject: "viewer"},
 		FunctionalRoles:    []string{"technical_lead"},
 	})
-	_, err := services.callProject(multi)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exactly one active project membership")
 
-	none := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
-		PrincipalID: "user:none", Type: model.PrincipalTypeHuman,
-		ProjectMemberships: map[string]string{},
-		FunctionalRoles:    []string{"technical_lead"},
+	t.Run("several memberships without a selection reject as INVALID_PARAMETER", func(t *testing.T) {
+		_, err := resolveIdentityScope(multi, "")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errIdentityScopeRequired)
+		assert.Contains(t, err.Error(), "2 active project memberships")
+		_, err = services.callProject(multi)
+		require.Error(t, err, "callProject stays fail-closed without a guard-stashed scope")
 	})
-	_, err = services.callProject(none)
-	require.Error(t, err)
 
-	// The delegated context (no identity principal) keeps the binding
-	// scope; the identity helpers are inert there.
-	single := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
-		PrincipalID: "user:single", Type: model.PrincipalTypeHuman,
-		ProjectMemberships: map[string]string{projectID: "developer"},
-		FunctionalRoles:    []string{"technical_lead"},
+	t.Run("an explicit selection among the caller's memberships resolves", func(t *testing.T) {
+		scoped, err := resolveIdentityScope(multi, projectID)
+		require.NoError(t, err)
+		assert.Equal(t, projectID, scoped)
+		scoped, err = resolveIdentityScope(multi, otherProject)
+		require.NoError(t, err)
+		assert.Equal(t, otherProject, scoped)
 	})
-	scoped, err := services.callProject(single)
-	require.NoError(t, err)
-	assert.Equal(t, projectID, scoped)
-	actor, err := services.callActor(single)
-	require.NoError(t, err)
-	assert.Equal(t, "user:user:single", actor)
+
+	t.Run("a foreign selection never retargets", func(t *testing.T) {
+		_, err := resolveIdentityScope(multi, "018f6200-0000-7000-8000-00000000dead")
+		require.ErrorIs(t, err, errIdentityScopeRequired)
+		assert.Contains(t, err.Error(), "not among the caller's 2 memberships")
+	})
+
+	t.Run("a sole membership is parameter-free and rejects drift", func(t *testing.T) {
+		single := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
+			PrincipalID: "user:single", Type: model.PrincipalTypeHuman,
+			ProjectMemberships: map[string]string{projectID: "developer"},
+			FunctionalRoles:    []string{"technical_lead"},
+		})
+		scoped, err := resolveIdentityScope(single, "")
+		require.NoError(t, err)
+		assert.Equal(t, projectID, scoped)
+		_, err = resolveIdentityScope(single, otherProject)
+		require.ErrorIs(t, err, errIdentityScopeRequired, "a sole membership cannot be overridden")
+
+		scoped, err = services.callProject(single)
+		require.NoError(t, err)
+		assert.Equal(t, projectID, scoped)
+		actor, err := services.callActor(single)
+		require.NoError(t, err)
+		assert.Equal(t, "user:user:single", actor)
+	})
+
+	t.Run("zero memberships stays fail-closed", func(t *testing.T) {
+		none := identity.WithRequestPrincipal(context.Background(), &model.PrincipalContext{
+			PrincipalID: "user:none", Type: model.PrincipalTypeHuman,
+			ProjectMemberships: map[string]string{},
+			FunctionalRoles:    []string{"technical_lead"},
+		})
+		_, err := resolveIdentityScope(none, "")
+		require.ErrorIs(t, err, errIdentityScopeRequired)
+		assert.Contains(t, err.Error(), "no active project membership")
+		_, err = resolveIdentityScope(none, projectID)
+		require.ErrorIs(t, err, errIdentityScopeRequired, "a payload cannot conjure a membership")
+	})
+
+	t.Run("the delegated context keeps the binding scope", func(t *testing.T) {
+		scoped, err := resolveIdentityScope(context.Background(), projectID)
+		require.NoError(t, err)
+		assert.Empty(t, scoped, "no identity principal means the TransportBinding owns the scope")
+	})
 }

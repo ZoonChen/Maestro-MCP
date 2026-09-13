@@ -24,6 +24,38 @@ type MetricWindow struct {
 	P95 *float64
 }
 
+// AvailabilityTotals aggregates the availability counters across EVERY
+// window in the SLO lookback (W6-6, S2C-A6): the newest-window-only
+// read starved low-traffic projects — single-digit requests per window
+// meant one 5xx flipped the whole project breached. Summing the window
+// chain restores the declared window semantics (the availability SLI
+// is the window's ratio, not the newest bucket's).
+func (s pgObservabilityStore) AvailabilityTotals(ctx context.Context, projectID string, successMetric, totalMetric string, notBefore, notAfter time.Time) (success, total float64, err error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT metric, COALESCE(sum_value, 0) FROM telemetry_aggregates
+		WHERE project_id = $1 AND metric IN ($2, $3)
+			AND window_start >= $4 AND window_start < $5`,
+		projectID, successMetric, totalMetric, notBefore, notAfter)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var metric string
+		var value float64
+		if scanErr := rows.Scan(&metric, &value); scanErr != nil {
+			return 0, 0, scanErr
+		}
+		switch metric {
+		case successMetric:
+			success += value
+		case totalMetric:
+			total += value
+		}
+	}
+	return success, total, rows.Err()
+}
+
 // LatestMetricWindows returns at most one row per requested metric:
 // the newest window in range, chosen by window_start.
 func (s pgObservabilityStore) LatestMetricWindows(ctx context.Context, projectID string, metrics []string, notBefore, notAfter time.Time) ([]MetricWindow, error) {

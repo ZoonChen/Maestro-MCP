@@ -201,6 +201,13 @@ type Snapshot struct {
 	Objectives    []Objective  `json:"objectives"`
 	Degradation   *Degradation `json:"degradation,omitempty"`
 	GeneratedAt   string       `json:"generated_at"`
+	// Stale marks a snapshot served from the newest measurement OUTSIDE
+	// the declared window (W6-6, S2C-A6): the observer no longer gets a
+	// bare 503 UNMEASURED that itself pollutes the availability
+	// denominator — the last valid measurement answers with an honest
+	// staleness flag. Absent means the snapshot measured inside the
+	// window.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // Evaluate assembles one snapshot. It refuses to run without an

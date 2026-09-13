@@ -3,12 +3,13 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 )
 
-// Identity-bound call scope (W5-1). Two MCP transports exist:
+// Identity-bound call scope (W5-1, W6-4). Two MCP transports exist:
 //
 //   - the local stdio Runner's DELEGATED context: the host-injected
 //     single-project TransportBinding is the authorization (Guard nil),
@@ -19,13 +20,24 @@ import (
 //     project scope and the audit actor from THAT server-side
 //     principal, never from any tool payload.
 //
-// The project rule for identity-bound calls is deliberately narrow:
-// exactly ONE active project membership. A principal with zero or
-// several memberships fails closed — the MCP protocol carries no
-// project selector, and guessing one would silently retarget writes.
+// Scope selection (W6-4, S2C-A4): a principal with exactly ONE active
+// membership needs no parameter (the pre-W6 behavior, unchanged). A
+// principal with SEVERAL memberships must name one through the tool
+// call's `project` argument — the selection is constrained to the
+// caller's own memberships (the payload selects among pre-authorized
+// scopes, it never grants one), and a missing or foreign selection is
+// rejected as INVALID_PARAMETER with an explicit message. Zero
+// memberships stays fail-closed.
 
-var errIdentityScopeAmbiguous = errors.New(
-	"identity-bound MCP calls require exactly one active project membership; the MCP protocol carries no project selector")
+// identityScopeKey carries the guard-resolved project scope into the
+// tool handler context, so authorization and handler share one scope.
+type identityScopeKey struct{}
+
+// errIdentityScopeRequired reports a scope that could not be resolved
+// (missing selection on multi-membership, a foreign selection, or no
+// membership at all). The guard maps it to INVALID_PARAMETER.
+var errIdentityScopeRequired = errors.New(
+	"identity-bound MCP calls require an explicit project scope: pass the 'project' argument naming one of the caller's active project memberships")
 
 // identityPrincipal returns the request principal when the call rides
 // an identity-bound transport, nil for the delegated context.
@@ -33,21 +45,59 @@ func identityPrincipal(ctx context.Context) *model.PrincipalContext {
 	return identity.RequestPrincipalFrom(ctx)
 }
 
-// identityProject resolves the single-membership project scope for an
-// identity-bound call; empty string with nil error means the transport
-// is delegated (fall back to the TransportBinding).
-func identityProject(ctx context.Context) (string, error) {
+// resolveIdentityScope picks the call's project scope for an
+// identity-bound transport: the explicit `project` argument when the
+// principal holds several memberships (the argument must name one of
+// them), otherwise the sole membership. Empty string with nil error
+// means the transport is delegated (fall back to the TransportBinding).
+func resolveIdentityScope(ctx context.Context, requested string) (string, error) {
 	principal := identityPrincipal(ctx)
 	if principal == nil {
 		return "", nil
 	}
-	if len(principal.ProjectMemberships) != 1 {
-		return "", errIdentityScopeAmbiguous
+	switch len(principal.ProjectMemberships) {
+	case 1:
+		sole := ""
+		for projectID := range principal.ProjectMemberships {
+			sole = projectID
+		}
+		if requested != "" && requested != sole {
+			return "", fmt.Errorf("%w; the caller's only membership is a different project", errIdentityScopeRequired)
+		}
+		return sole, nil
+	case 0:
+		return "", fmt.Errorf("%w; the caller holds no active project membership", errIdentityScopeRequired)
+	default:
+		if requested == "" {
+			return "", fmt.Errorf("%w; the caller holds %d active project memberships",
+				errIdentityScopeRequired, len(principal.ProjectMemberships))
+		}
+		if _, ok := principal.ProjectMemberships[requested]; !ok {
+			return "", fmt.Errorf("%w; the requested project is not among the caller's %d memberships",
+				errIdentityScopeRequired, len(principal.ProjectMemberships))
+		}
+		return requested, nil
 	}
-	for projectID := range principal.ProjectMemberships {
-		return projectID, nil
+}
+
+// identityProject resolves the project scope for an identity-bound
+// call; empty string with nil error means the transport is delegated
+// (fall back to the TransportBinding). The guard-stashed scope (when
+// the call carried an explicit selection) wins.
+func identityProject(ctx context.Context) (string, error) {
+	if scoped, ok := ctx.Value(identityScopeKey{}).(string); ok && scoped != "" {
+		return scoped, nil
 	}
-	return "", errIdentityScopeAmbiguous
+	principal := identityPrincipal(ctx)
+	if principal == nil {
+		return "", nil
+	}
+	if len(principal.ProjectMemberships) == 1 {
+		for projectID := range principal.ProjectMemberships {
+			return projectID, nil
+		}
+	}
+	return "", errIdentityScopeRequired
 }
 
 // identityActor derives the audit actor for identity-bound writes: the
@@ -75,7 +125,7 @@ func identityFunctionalRoles(ctx context.Context) []string {
 }
 
 // callProject resolves the project scope for one tool call: the
-// identity principal's single membership on identity-bound transports,
+// identity principal's resolved scope on identity-bound transports,
 // otherwise the delegated TransportBinding.
 func (s *Services) callProject(ctx context.Context) (string, error) {
 	if projectID, err := identityProject(ctx); err != nil {

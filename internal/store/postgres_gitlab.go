@@ -14,6 +14,9 @@ import (
 // fact-bound ready_for_human_merge → done transition. The generic
 // status path stays fact-closed (task_store guard); this is the only
 // writer that may reach done, and only from the machine's own edge.
+// MarkWorkItemReadyFromGates (W6-1) is the gate-driven
+// validating → ready_for_human_merge writer: the machine's own edge,
+// guarded in the WHERE clause, fired by the evaluation verdict.
 
 type pgGitlabStore struct{ db *sql.DB }
 
@@ -33,6 +36,75 @@ func (s pgGitlabStore) MappingProject(ctx context.Context, instanceID string, gi
 		return "", fmt.Errorf("gitlab sync: mapping: %w", err)
 	}
 	return projectID, nil
+}
+
+// ResolveBranchBinding resolves the frozen branch naming contract's
+// project segment (W6-2, S2C-A2): maestro/<project-key>/<item> binds
+// against the project whose key matches — scoped to the mapping
+// project's team, falling back to a globally unique key when the repo
+// is unmapped. A key that resolves but does not contain the item, an
+// ambiguous key (several teams, no mapping scope) and an unresolvable
+// key all fall back to the LEGACY binding (the item directly under the
+// mapping project) so pre-contract branches keep working; when that
+// too finds nothing the projection stays unbound instead of tripping
+// the (project_id, work_item_id) composite foreign key with a stale
+// work-item guess.
+func (s pgGitlabStore) ResolveBranchBinding(ctx context.Context, mappingProject, projectKey, workItemID string) (string, bool, error) {
+	if projectKey == "" || workItemID == "" {
+		return "", false, nil
+	}
+	// Key resolution, team-scoped when the repo carries a mapping.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.id::text FROM projects p
+		WHERE p.key = $1
+		  AND ($2::text = '' OR p.team_id = (SELECT team_id FROM projects WHERE id = $2::uuid))`,
+		projectKey, mappingProject)
+	if err != nil {
+		return "", false, fmt.Errorf("gitlab sync: branch binding: key: %w", err)
+	}
+	defer rows.Close()
+	var candidates []string
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return "", false, fmt.Errorf("gitlab sync: branch binding: scan: %w", scanErr)
+		}
+		candidates = append(candidates, id)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return "", false, fmt.Errorf("gitlab sync: branch binding: rows: %w", rowsErr)
+	}
+	// The naming contract is authoritative only when unambiguous.
+	if len(candidates) == 1 {
+		if bound, err := s.workItemExists(ctx, candidates[0], workItemID); err != nil {
+			return "", false, err
+		} else if bound {
+			return candidates[0], true, nil
+		}
+	}
+	// Legacy fallback: branches raised before the contract carried a
+	// free-form marker; their items live in the mapping project.
+	if mappingProject != "" {
+		if bound, err := s.workItemExists(ctx, mappingProject, workItemID); err != nil {
+			return "", false, err
+		} else if bound {
+			return mappingProject, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (s pgGitlabStore) workItemExists(ctx context.Context, projectID, workItemID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM work_items WHERE project_id = $1 AND id = $2`, projectID, workItemID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("gitlab sync: branch binding: work item: %w", err)
+	}
+	return true, nil
 }
 
 func (s pgGitlabStore) UpsertMergeRequest(ctx context.Context, projectID string, rec gitlab.MergeRequestRecord, workItemID string) error {
@@ -65,6 +137,58 @@ func (s pgGitlabStore) UpsertMergeRequest(ctx context.Context, projectID string,
 		return fmt.Errorf("gitlab sync: merge-request upsert: %w", err)
 	}
 	return nil
+}
+
+// MarkWorkItemReadyFromGates applies the gate-driven transition
+// (W6-1, S2C-A1): a Ready verdict — every required gate passed or
+// waived on the exact SHA tuple — moves a VALIDATING work item to
+// ready_for_human_merge, which is the state the merged fact's done
+// edge requires. The machine's own edge, enforced in the WHERE clause:
+// items outside validating are a no-op (transitioned=false), so
+// replays and out-of-order verdicts never regress or duplicate. The
+// state change, its audit row and its outbox event commit atomically
+// (WGM-INV-012).
+func (s pgGitlabStore) MarkWorkItemReadyFromGates(ctx context.Context, projectID, workItemID, actor, reason string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("gitlab sync: ready begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE work_items
+		SET status = 'ready_for_human_merge', version = version + 1, updated_at = now()
+		WHERE project_id = $1 AND id = $2 AND status = 'validating'`,
+		projectID, workItemID)
+	if err != nil {
+		return false, fmt.Errorf("gitlab sync: ready update: %w", err)
+	}
+	transitioned, _ := result.RowsAffected()
+	if transitioned == 0 {
+		// Not validating (already ready, done, or elsewhere in the
+		// machine): the verdict stands on the gate snapshots; nothing
+		// to drive.
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("gitlab sync: ready commit: %w", err)
+		}
+		return false, nil
+	}
+	if err := recordGovernanceEvent(ctx, tx, governanceEvent{
+		ProjectID: projectID, Action: "work_item.ready",
+		ResourceType: "work_item", ResourceID: workItemID,
+		Actor: actor, Reason: reason,
+		OutboxType: "work_item.state.changed",
+		Payload: mustMarshal(map[string]any{
+			"work_item_id": workItemID, "from": "validating", "to": "ready_for_human_merge",
+			"reason": reason,
+		}),
+	}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("gitlab sync: ready commit: %w", err)
+	}
+	return true, nil
 }
 
 func (s pgGitlabStore) MarkWorkItemDoneFromMerge(ctx context.Context, projectID, workItemID, mergeCommitSHA, factID string) (bool, bool, error) {
@@ -114,25 +238,38 @@ func (s pgGitlabStore) MarkWorkItemDoneFromMerge(ctx context.Context, projectID,
 }
 
 // BranchTuple resolves the MR projection's work-item binding and SHA
-// tuple for a source branch (the evidence ingestor's resolver).
-func (s pgGitlabStore) BranchTuple(ctx context.Context, projectID, sourceBranch string) (string, string, string, bool, error) {
+// tuple for a source branch (the evidence ingestor's resolver). The
+// projection may live under the BRANCH-resolved project (W6-2), so the
+// branch marker is resolved first; branches without a resolvable marker
+// read under the mapping project as before. The resolved project is
+// returned so evidence and evaluation bind under the project the
+// naming contract names.
+func (s pgGitlabStore) BranchTuple(ctx context.Context, projectID, sourceBranch string) (string, string, string, string, bool, error) {
+	lookupProject := projectID
+	if key, item := gitlab.BranchMarker(sourceBranch); key != "" {
+		if resolved, bound, err := s.ResolveBranchBinding(ctx, projectID, key, item); err != nil {
+			return "", "", "", "", false, err
+		} else if bound {
+			lookupProject = resolved
+		}
+	}
 	var workItem sql.NullString
 	var sourceSHA, targetSHA sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT work_item_id, source_sha, target_sha FROM merge_requests
 		WHERE project_id = $1 AND source_branch = $2
-		ORDER BY observed_at DESC LIMIT 1`, projectID, sourceBranch).
+		ORDER BY observed_at DESC LIMIT 1`, lookupProject, sourceBranch).
 		Scan(&workItem, &sourceSHA, &targetSHA)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", false, nil
+		return lookupProject, "", "", "", false, nil
 	}
 	if err != nil {
-		return "", "", "", false, fmt.Errorf("gitlab sync: branch tuple: %w", err)
+		return "", "", "", "", false, fmt.Errorf("gitlab sync: branch tuple: %w", err)
 	}
 	if !workItem.Valid || !sourceSHA.Valid || !targetSHA.Valid {
-		return "", "", "", false, nil
+		return lookupProject, "", "", "", false, nil
 	}
-	return workItem.String, sourceSHA.String, targetSHA.String, true, nil
+	return lookupProject, workItem.String, sourceSHA.String, targetSHA.String, true, nil
 }
 
 func (s pgGitlabStore) UpsertPipeline(ctx context.Context, rec gitlab.PipelineRecord) error {

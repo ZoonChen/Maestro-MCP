@@ -501,6 +501,11 @@ type OutboxStore interface {
 	// dispatcher owner; competing dispatchers never claim the same row.
 	ClaimPending(ctx context.Context, batchSize int, owner, now string) ([]*model.OutboxEvent, error)
 
+	// ClaimPendingExcluding leases up to batchSize dispatchable events of
+	// every type EXCEPT the exclusion list (W6-5): the domain-event sink
+	// owns every channel without a dedicated subscriber.
+	ClaimPendingExcluding(ctx context.Context, batchSize int, owner string, excludedEventTypes []string) ([]*model.OutboxEvent, error)
+
 	// MarkDelivered finalizes a successful dispatch for the claiming owner.
 	MarkDelivered(ctx context.Context, eventID, owner string) error
 

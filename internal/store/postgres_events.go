@@ -159,6 +159,11 @@ func (s pgOutboxStore) ClaimPending(ctx context.Context, batchSize int, owner, _
 	if err != nil {
 		return nil, fmt.Errorf("outbox: claim pending: %w", err)
 	}
+	return scanClaimedOutbox(rows)
+}
+
+// scanClaimedOutbox materializes the frozen claim RETURNING shape.
+func scanClaimedOutbox(rows *sql.Rows) ([]*model.OutboxEvent, error) {
 	defer rows.Close()
 	events := []*model.OutboxEvent{}
 	for rows.Next() {
@@ -180,6 +185,45 @@ func (s pgOutboxStore) ClaimPending(ctx context.Context, batchSize int, owner, _
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+// ClaimPendingExcluding leases dispatchable events of every type EXCEPT
+// the named exclusion list to exactly one owner (W6-5, S2C-A5): the
+// domain-event sink owns every channel without a dedicated subscriber,
+// so unclaimed domain events stop spinning in retry. Same SKIP LOCKED
+// semantics as ClaimPending; an empty exclusion list claims everything.
+// Stale 'sending' leases (a consumer died holding the claim — the W1
+// observation's 300+-attempt orphans) are reclaimed after five minutes.
+func (s pgOutboxStore) ClaimPendingExcluding(ctx context.Context, batchSize int, owner string, excludedEventTypes []string) ([]*model.OutboxEvent, error) {
+	if batchSize < 1 {
+		return nil, errors.New("outbox: batch size must be positive")
+	}
+	if owner == "" {
+		return nil, errors.New("outbox: claim owner must not be empty")
+	}
+	rows, err := s.q.QueryContext(ctx, `
+		UPDATE outbox_events o SET
+			status = 'sending',
+			attempts = o.attempts + 1,
+			lease_owner = $1,
+			updated_at = now()
+		WHERE o.event_id IN (
+			SELECT event_id FROM outbox_events
+			WHERE ((status IN ('pending', 'retry_wait') AND available_at <= now())
+			    OR (status = 'sending' AND updated_at <= now() - interval '5 minutes'))
+			  AND ($3::text[] IS NULL OR event_type <> ALL($3::text[]))
+			ORDER BY available_at, event_id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING o.event_id, o.event_type, o.event_version, o.source, o.project_id, o.subject,
+			o.occurred_at, o.correlation_id, o.causation_id, o.payload_digest, o.sensitivity, o.payload,
+			o.status, o.attempts, o.available_at, o.lease_owner, o.created_at, o.updated_at`,
+		owner, batchSize, excludedEventTypes)
+	if err != nil {
+		return nil, fmt.Errorf("outbox: claim excluding: %w", err)
+	}
+	return scanClaimedOutbox(rows)
 }
 
 func (s pgOutboxStore) MarkDelivered(ctx context.Context, eventID, owner string) error {
