@@ -1,0 +1,101 @@
+{
+  "audit": {
+    "actions": {
+      "asset.approval.recorded": 1,
+      "asset.approved": 1,
+      "asset.gate.bound": 44,
+      "asset.registered": 1,
+      "asset.reviewed": 1,
+      "asset.superseded": 1,
+      "workgraph.node.status_changed": 61,
+      "workgraph.plan.created": 2,
+      "workgraph.plan.sealed": 1,
+      "workgraph.proposal.applied": 10
+    },
+    "chain_digest": "sha256:848cc399fc2436e3923411f9ece0820299abde0043c6dd83849c6eaf70d58dd6",
+    "entries": 123,
+    "verified": true
+  },
+  "baseline_seed": {
+    "baseline_sha": "2f94df38bb6208a84d14c5b6e9cb58bf6a1f95c7",
+    "claim_runner": "018fb5b2-0000-7000-8000-000000000002",
+    "key": "peixun",
+    "manifest_digest": "sha256:a410dd65de40784de082b0f228facee6c6293f9b120528be13c3966d868f84af",
+    "project": "018fb5b0-0000-7000-8000-000000000006",
+    "team": "018fb5b0-0000-7000-8000-000000000001",
+    "user": "01a09458-ada8-71ad-b5d2-fdebd7a3f8f1"
+  },
+  "bom_asset": {
+    "manifest_digest": "sha256:a410dd65de40784de082b0f228facee6c6293f9b120528be13c3966d868f84af",
+    "v1_walked_to": "approved",
+    "v2_source_digest": "sha256:7228d1aff882d6a34e38a19a6016a77634bf2222c9de66bd9207c25dbc882a91",
+    "v2_status": "draft（待 S2 拒绑探针后再 approve）",
+    "v2_version": 2
+  },
+  "bom_gate": {
+    "asset": "ART-bom-001@2",
+    "bindings": 44,
+    "bindings_fresh_this_run": 0,
+    "draft_bind_denied": "draft 态拒绑复现于首跑（2026-09-13，v2 注册后、走查前）",
+    "gate_id": "bom",
+    "p0_note": "37 条 P0 的详设 Gate 由 S2B 逐条补挂（本片只挂 BOM 锚）",
+    "superseded_bind_denied": true,
+    "superseded_denial_error": "locked gate asset not consumable (not approved, digest drift or stale binding)",
+    "v2_status": "approved"
+  },
+  "flat_items": {
+    "blocked_items": 61,
+    "claim": "blocked-claim 阻断复现于首跑（2026-09-13：61 条 blocked 独占队列时 ClaimNextWorkItem 返回 no_available_task）；重放时一期 44 已入队，探针让位真实领取（重放确认）",
+    "created_this_run": 0,
+    "queued_created_this_run": 0,
+    "queued_items": 44
+  },
+  "graph_queries": {
+    "m1": "traversable（root peixun.m1 可遍历，44 item + 21 package + 17 edges）",
+    "m23": "traversable（root peixun.m23 可遍历，61 blocked item）"
+  },
+  "jira": {
+    "anchors": 105,
+    "created_this_run": 0,
+    "decision": "维持蓝图回退：手工锚定（镜像 worker 不启动）",
+    "probe_target": "https://jira.yuandong.internal",
+    "reachable": false,
+    "reconcile": "empty（零未决）",
+    "series": "PXPEIXUN-101..144（一期 story）/ PXPEIXUN-201..261（二三期占位）"
+  },
+  "m1": {
+    "fresh_proposals": 0,
+    "graph": {
+      "edges": 17,
+      "flows": 44,
+      "items": 44,
+      "packages": 21
+    },
+    "plan": "MST-WP-00601",
+    "replay": true
+  },
+  "m23": {
+    "blocked_item_nodes": 61,
+    "flipped_this_run": 0,
+    "fresh_proposals": 0,
+    "note": "占位图不封板——各期启动时经重规划转正（详设先行）",
+    "packages": 31,
+    "plan": "MST-WP-00602",
+    "sealed": false
+  },
+  "plans": {
+    "m1": {
+      "budget": 246,
+      "human": "MST-WP-00601",
+      "plan": "01a09869-94d3-73d0-be7f-6d49265dcc08"
+    },
+    "m23": {
+      "human": "MST-WP-00602",
+      "plan": "01a09869-94db-7088-94a0-fab17f510e25"
+    },
+    "name": "peixun-m1-bom",
+    "pattern": "01a09869-94cf-7d42-90fd-f89d9fbe3fb9",
+    "version": 1
+  },
+  "scenario": "S2A BOM→WorkGraph 全量导入"
+}
