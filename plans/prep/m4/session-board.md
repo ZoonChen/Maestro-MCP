@@ -170,6 +170,24 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 
 S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登记（影子期核心数据）；切片接力顺序按 BOM P0 域序（A1→A2→A3/A5→B→C/D→E）。
 
+### S2C：周观察自动化 + 零干扰分类（2026-09-13，会话 S2C）
+
+- **S2C-1 ✅**：`scripts/pilot/shadow-report.sh`（只读四面采集→Markdown 周报；自动异常检出 + 口径勘误 E1–E5）；首份全自动周报=`deploy/gitlab/peixun/reports/shadow-report-W1-20260913.md`（四面真值 + 审计链指纹 verified=true）。
+- **S2C-2 ✅**：零干扰分类表=`deploy/gitlab/peixun/reports/S2C-zero-interference-W1.md`——S2B F1–F7 三桶分类（误伤 4/合理阻断 2+文档 1/环境 1）+ S2C 新发现 O-1/O-2/O-3。W1 结论如实：**未检出干扰，但团队自然 MR 样本=0（手册 9/12 刚合入），零干扰确认 W2 起才可裁决**。
+- **S2C-4 ✅**：`scripts/pilot/report-register`（bom-import 先例：本 checkout 构建 runner + stdio MCP asset_register；同 digest 幂等短路，异 digest 须显式 `--supersedes`）。W1 已入账 **ART-shadow-report-001@1**（retrospective/internal/draft，sha256:916270af…）。
+- **S2C-3 ⏸ 按任务书时机**：出口评估包骨架就位（`reports/exit-assessment-SKELETON.md`：出口三标准证据槽 + 灰度就绪判据）；正式评估待 ≥2 周周报（最早 2026-09-26）。
+- **S2C 新登记缺口**（S2B 摩擦经分类正式入库 + S2C 采集新发现；W5 裁决队列外）：
+
+| 编号 | 内容 | 归属建议 |
+|---|---|---|
+| S2C-A1（=F1 结构·高） | v3 `validating→ready_for_human_merge` 无生产写者，done 链断（W1 周报 done=0 直接证据） | **灰度硬前提**；v3 merge-gate 评估写者或 v1 映射 |
+| S2C-A2（=F2 结构·高） | MR→WorkItem 绑定忽略分支 project-key，治理域项目 FK 23503 defer 循环；MR 投影缺位 | **灰度硬前提**；syncer 按命名契约 key 解析；shadow-observation §1「evidence=0」口径随修勘误 |
+| S2C-A3（=F3 通路·中） | claim / gate 绑定 / 多签 approve 无 REST/MCP 面（store 面唯一通路） | 开发会话通路切片 |
+| S2C-A4（=F4 通路·中） | `/mcp` 多项目会籍 fail-closed 报 INTERNAL_ERROR（错误码 + 作用域解析双缺陷） | W5 系后续 |
+| S2C-A5（O-1） | outbox 域事件（asset.\*/workgraph.\*）无 sink，dispatcher 空转重试（W1 实测 187 条/最老 22.6h）；仅 webhook 事件有消费者 | 部署侧 sink 接线裁决 + 无消费者退避语义 |
+| S2C-A6（O-2） | SLO availability 样本饥饿：个位数请求下单次 5xx 即翻 breached；SLO 端点自身 503 UNMEASURED 疑计入分母（观察者效应，…002 实测 50% 伪 breached 后翻回） | SLO 面小切片（UNMEASURED 不计分母或最小样本门槛） |
+| 环境/试点侧（不修 Maestro） | F6 常驻 egress 并入 resident-server 配方；F5 verifier/viewer 账号开通（证据面读通路）；F7 asset_id 规则 `^ART-[a-z-]+-[0-9]{3,}$` 补进试点仓 MAESTRO-GUIDE；E4 reconcile 不在审计动作目录（契约观察） | 试点/运维待办 |
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
