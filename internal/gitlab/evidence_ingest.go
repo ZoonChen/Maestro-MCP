@@ -40,9 +40,12 @@ type EvidenceAppender interface {
 // BranchTupleResolver maps a task branch to its bound work item and
 // the MR projection's SHA tuple; complete=false while the projection
 // lacks either SHA (out-of-order job-before-MR events wait for the
-// tuple, mirroring the job-before-pipeline deferral).
+// tuple, mirroring the job-before-pipeline deferral). The returned
+// project is the BRANCH-resolved one (W6-2): evidence and evaluation
+// bind under the project the naming contract names, which may differ
+// from the repo's mapping project.
 type BranchTupleResolver interface {
-	BranchTuple(ctx context.Context, projectID, sourceBranch string) (workItemID, sourceSHA, targetSHA string, complete bool, err error)
+	BranchTuple(ctx context.Context, projectID, sourceBranch string) (resolvedProject, workItemID, sourceSHA, targetSHA string, complete bool, err error)
 }
 
 // terminalJobStatuses maps GitLab job states onto the frozen evidence
@@ -69,7 +72,7 @@ func (ing *EvidenceIngestor) IngestJob(ctx context.Context, projectID string, jo
 		// Unknown producers never become evidence.
 		return false, nil
 	}
-	workItemID, sourceSHA, targetSHA, complete, err := ing.Tuples.BranchTuple(ctx, projectID, jobBranch(job))
+	workItemProject, workItemID, sourceSHA, targetSHA, complete, err := ing.Tuples.BranchTuple(ctx, projectID, jobBranch(job))
 	if err != nil {
 		return false, err
 	}
@@ -84,8 +87,8 @@ func (ing *EvidenceIngestor) IngestJob(ctx context.Context, projectID string, jo
 
 	pipelineID, jobID := job.PipelineID, job.JobID
 	record := &evidence.Record{
-		EvidenceID:    stableEvidenceID(projectID, workItemID, job),
-		ProjectID:     projectID,
+		EvidenceID:    stableEvidenceID(workItemProject, workItemID, job),
+		ProjectID:     workItemProject,
 		WorkItemID:    workItemID,
 		Kind:          job.Name,
 		Authority:     evidence.AuthorityMergeGate,
@@ -104,7 +107,7 @@ func (ing *EvidenceIngestor) IngestJob(ctx context.Context, projectID string, jo
 
 	if ing.Eval != nil {
 		_, err := ing.Eval.EvaluateWorkItem(ctx, evidence.Tuple{
-			ProjectID: projectID, WorkItemID: workItemID,
+			ProjectID: workItemProject, WorkItemID: workItemID,
 			SourceSHA: sourceSHA, TargetSHA: targetSHA,
 		})
 		if err != nil {

@@ -23,6 +23,13 @@ type MetricWindowSource interface {
 	LatestMetricWindows(ctx context.Context, projectID string, metrics []string, notBefore, notAfter time.Time) ([]store.MetricWindow, error)
 }
 
+// AvailabilityTotalsSource aggregates the availability counters across
+// the whole lookback window (W6-6): the newest-window-only read
+// starved low-traffic projects into single-5xx breaches.
+type AvailabilityTotalsSource interface {
+	AvailabilityTotals(ctx context.Context, projectID, successMetric, totalMetric string, notBefore, notAfter time.Time) (success, total float64, err error)
+}
+
 // BackupStatusSource reads the backup ledger for the deployment
 // objectives (RPO anchor and run outcomes).
 type BackupStatusSource interface {
@@ -43,6 +50,7 @@ type SLOSnapshotHandler struct {
 	declared      []config.SLOObjectiveConfig
 	backup        config.BackupConfig
 	metrics       MetricWindowSource
+	avail         AvailabilityTotalsSource
 	backups       BackupStatusSource
 }
 
@@ -50,7 +58,7 @@ type SLOSnapshotHandler struct {
 // and appends the deployment objectives whenever the frozen backup
 // section carries targets (their at-risk line equals the target — the
 // frozen contract defines no softer zone for them).
-func NewSLOSnapshotHandler(cfg *config.SLOConfig, backup config.BackupConfig, metrics MetricWindowSource, backups BackupStatusSource) (*SLOSnapshotHandler, error) {
+func NewSLOSnapshotHandler(cfg *config.SLOConfig, backup config.BackupConfig, metrics MetricWindowSource, avail AvailabilityTotalsSource, backups BackupStatusSource) (*SLOSnapshotHandler, error) {
 	policy := slo.Policy{
 		Availability: slo.AvailabilityPolicy{
 			AtRiskErrorBudgetRemainingPercent: cfg.Availability.AtRiskErrorBudgetRemainingPercent,
@@ -80,7 +88,7 @@ func NewSLOSnapshotHandler(cfg *config.SLOConfig, backup config.BackupConfig, me
 		successMetric: cfg.Availability.SuccessMetric,
 		totalMetric:   cfg.Availability.TotalMetric,
 		declared:      cfg.Objectives, backup: backup,
-		metrics: metrics, backups: backups,
+		metrics: metrics, avail: avail, backups: backups,
 	}, nil
 }
 
@@ -113,14 +121,32 @@ func (h *SLOSnapshotHandler) GetSLOSnapshot(c *gin.Context) {
 		byMetric[window.Metric] = window
 	}
 
-	success, hasSuccess := byMetric[h.successMetric]
-	total, hasTotal := byMetric[h.totalMetric]
-	if !hasSuccess || !hasTotal || total.Sum <= 0 {
-		// The frozen snapshot has no no_data state for availability —
-		// refuse rather than fabricate 100%.
-		staticErrorReply(c, 503, "SLO_AVAILABILITY_UNMEASURED",
-			"No availability telemetry in the window; the snapshot refuses to invent a number")
+	// W6-6: availability aggregates every window in the lookback — the
+	// declared window's ratio, not the newest bucket's. A single 5xx in
+	// a quiet window no longer flips the whole project breached.
+	success, total, err := h.avail.AvailabilityTotals(ctx, projectID, h.successMetric, h.totalMetric, from, asOf)
+	if err != nil {
+		staticErrorReply(c, 500, "INTERNAL_ERROR", "Telemetry could not be read")
 		return
+	}
+	stale := false
+	if total <= 0 {
+		// No measurement inside the window. The pre-W6 answer was a
+		// bare 503 UNMEASURED — which itself entered the availability
+		// denominator (the observer effect, S2C-A6). Serve the newest
+		// valid measurement with an honest stale marker instead; only
+		// a project with no telemetry EVER still refuses.
+		fallback, fbErr := h.staleAvailability(ctx, projectID, from)
+		if fbErr != nil {
+			staticErrorReply(c, 500, "INTERNAL_ERROR", "Telemetry could not be read")
+			return
+		}
+		if fallback == nil {
+			staticErrorReply(c, 503, "SLO_AVAILABILITY_UNMEASURED",
+				"No availability telemetry exists for this project; the snapshot refuses to invent a number")
+			return
+		}
+		success, total, stale = fallback.success, fallback.total, true
 	}
 
 	var inputs []slo.ObjectiveInput
@@ -139,14 +165,34 @@ func (h *SLOSnapshotHandler) GetSLOSnapshot(c *gin.Context) {
 	}
 
 	snapshot, err := slo.Evaluate(h.policy,
-		slo.AvailabilityInput{Success: int64(success.Sum), Total: int64(total.Sum)},
+		slo.AvailabilityInput{Success: int64(success), Total: int64(total)},
 		inputs, slo.Window{Kind: h.windowKind, From: from.Format(time.RFC3339), To: asOf.Format(time.RFC3339)},
 		slo.DegradationInput{}, asOf.Format(time.RFC3339))
 	if err != nil {
 		staticErrorReply(c, 503, "SLO_AVAILABILITY_UNMEASURED", "The availability SLI failed validation")
 		return
 	}
+	snapshot.Stale = stale
 	c.JSON(200, snapshot)
+}
+
+// staleAvailability looks for the newest availability measurement
+// outside the window (bounded to ninety days back; anything older is
+// an archive, not a snapshot).
+func (h *SLOSnapshotHandler) staleAvailability(ctx context.Context, projectID string, from time.Time) (*staleAvailabilityMeasurement, error) {
+	deepFrom := from.Add(-90 * 24 * time.Hour)
+	success, total, err := h.avail.AvailabilityTotals(ctx, projectID, h.successMetric, h.totalMetric, deepFrom, from)
+	if err != nil {
+		return nil, err
+	}
+	if total <= 0 {
+		return nil, nil
+	}
+	return &staleAvailabilityMeasurement{success: success, total: total}, nil
+}
+
+type staleAvailabilityMeasurement struct {
+	success, total float64
 }
 
 // appendDeploymentInputs measures the ledger-backed objectives: RPO

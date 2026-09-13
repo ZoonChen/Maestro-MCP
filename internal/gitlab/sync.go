@@ -61,6 +61,14 @@ type SyncStore interface {
 	// numeric GitLab project ("" when unmapped).
 	MappingProject(ctx context.Context, instanceID string, gitlabProjectID int64) (string, error)
 
+	// ResolveBranchBinding resolves the branch naming contract's project
+	// segment (W6-2): maestro/<project-key>/<item> binds against the
+	// project whose key matches, scoped to the mapping project's team so
+	// shared keys across teams stay unambiguous. bound=false leaves the
+	// projection unbound (reconciliation territory) — the composite FK
+	// on (project_id, work_item_id) then never rejects the projection.
+	ResolveBranchBinding(ctx context.Context, mappingProject, projectKey, workItemID string) (bindProject string, bound bool, err error)
+
 	// UpsertMergeRequest inserts or refreshes the merge-request
 	// projection, binding work_item_id through the frozen task-branch
 	// naming when the branch resolves to a work item in the project.
@@ -77,8 +85,9 @@ type SyncStore interface {
 	UpsertJob(ctx context.Context, rec JobRecord) error
 
 	// BranchTuple resolves the MR projection's binding and SHA tuple
-	// for a source branch (evidence ingestion).
-	BranchTuple(ctx context.Context, projectID, sourceBranch string) (workItemID, sourceSHA, targetSHA string, complete bool, err error)
+	// for a source branch (evidence ingestion). The first return is the
+	// BRANCH-resolved project the projection lives under (W6-2).
+	BranchTuple(ctx context.Context, projectID, sourceBranch string) (resolvedProject, workItemID, sourceSHA, targetSHA string, complete bool, err error)
 }
 
 // Syncer applies one verified raw webhook body to the projections.
@@ -199,22 +208,40 @@ func (s *Syncer) applyMergeRequest(ctx context.Context, instanceID string, body 
 // ApplyMergeRequestRecord applies one MR fact (webhook-shaped or
 // provider-pulled) through the single truth path: bind by branch
 // marker, upsert the projection, drive the done edge on merged facts.
+//
+// The projection lands under the BRANCH-resolved project when the
+// naming contract's key resolves (W6-2): maestro/<project-key>/<item>
+// is authoritative for the (project, work item) binding, so a merged
+// MR raised from a repo mapped to another project (the pilot's
+// cross-governance-domain flow) still binds and never trips the
+// composite foreign key. Unresolvable markers leave the projection
+// under the mapping project, unbound.
 func (s *Syncer) ApplyMergeRequestRecord(ctx context.Context, projectID string, rec MergeRequestRecord, factID string) (ApplyOutcome, error) {
-	workItemID := WorkItemIDFromBranch(rec.SourceBranch)
-	if err := s.Store.UpsertMergeRequest(ctx, projectID, rec, workItemID); err != nil {
+	workItemID := ""
+	bindProject := projectID
+	if key, item := BranchMarker(rec.SourceBranch); key != "" {
+		resolved, bound, err := s.Store.ResolveBranchBinding(ctx, projectID, key, item)
+		if err != nil {
+			return ApplyOutcome{}, err
+		}
+		if bound {
+			bindProject, workItemID = resolved, item
+		}
+	}
+	if err := s.Store.UpsertMergeRequest(ctx, bindProject, rec, workItemID); err != nil {
 		return ApplyOutcome{}, err
 	}
 	// Tuple completion re-evaluates: evidence may already be waiting
 	// from jobs that ran before the MR projection carried both SHAs.
 	if s.Ingest != nil && workItemID != "" && rec.SourceSHA != "" && rec.TargetSHA != "" {
-		if err := s.Ingest.OnTupleComplete(ctx, TupleFor(projectID, workItemID, rec)); err != nil {
+		if err := s.Ingest.OnTupleComplete(ctx, TupleFor(bindProject, workItemID, rec)); err != nil {
 			return ApplyOutcome{}, err
 		}
 	}
-	if rec.State != "merged" || rec.MergeCommit == "" || projectID == "" || workItemID == "" {
+	if rec.State != "merged" || rec.MergeCommit == "" || bindProject == "" || workItemID == "" {
 		return ApplyOutcome{Kind: "merge_request"}, nil
 	}
-	transitioned, withheld, err := s.Store.MarkWorkItemDoneFromMerge(ctx, projectID, workItemID, rec.MergeCommit, factID)
+	transitioned, withheld, err := s.Store.MarkWorkItemDoneFromMerge(ctx, bindProject, workItemID, rec.MergeCommit, factID)
 	if err != nil {
 		return ApplyOutcome{}, err
 	}
@@ -300,15 +327,24 @@ func TupleFor(projectID, workItemID string, rec MergeRequestRecord) evidence.Tup
 // branch naming maestro/<project-key>/<task-id>. Anything else (target
 // branches, manual branches) has no marker and returns "".
 func WorkItemIDFromBranch(branch string) string {
+	_, taskID := BranchMarker(branch)
+	return taskID
+}
+
+// BranchMarker splits the frozen task branch naming into its project
+// key and work item segments (W6-2): the KEY segment names the project
+// the branch's work item belongs to, which is what the binding resolves
+// against — not the repository mapping. Empty key means no marker.
+func BranchMarker(branch string) (projectKey, workItemID string) {
 	prefix, rest, found := strings.Cut(branch, "/")
 	if !found || prefix != "maestro" {
-		return ""
+		return "", ""
 	}
-	marker, taskID, found := strings.Cut(rest, "/")
-	if !found || marker == "" {
-		return ""
+	key, taskID, found := strings.Cut(rest, "/")
+	if !found || key == "" || taskID == "" {
+		return "", ""
 	}
-	return taskID
+	return key, taskID
 }
 
 // mergeFactID is the durable lineage recorded on the work item: the

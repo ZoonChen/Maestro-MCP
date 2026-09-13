@@ -946,6 +946,183 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422': {$ref: '#/components/responses/Unprocessable'}
+  /projects/{project_id}/work-items/claim:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    post:
+      tags: [WorkItems]
+      operationId: claimNextWorkItem
+      summary: Dispatch the next queued work item to a bound runner (W6-3)
+      description: >
+        The governance claim face (S2C-A3): an authenticated principal
+        holding work_item.claim dispatches at most one queued work item
+        to a runner that is approved and bound to the route's project.
+        The runner identity and connection generation ride the body
+        (the lease-fencing contract); the queue CAS token is read
+        server-side unless the caller presents one from a prior claim.
+        locked-gate consumption is enforced fail-closed inside the
+        claim transaction (WGM-INV-015).
+      x-maestro-permission: work_item.claim
+      x-maestro-audit-event: work_item.claimed
+      x-maestro-idempotency: queue-cas-token
+      x-maestro-concurrency: queue-cas-token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkflowClaimRequest'}
+      responses:
+        '200':
+          description: One lease dispatched, or no work available
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkflowClaimResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /projects/{project_id}/executions/{execution_id}/complete:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: execution_id
+        in: path
+        required: true
+        description: Execution identifier returned by the claim
+        schema: {type: string, format: uuid}
+    post:
+      tags: [WorkItems]
+      operationId: completeExecution
+      summary: Record the terminal execution outcome (W6-3)
+      description: >
+        The governance completion face: outcome completed requires the
+        commit SHA and moves the work item to validating — the gate
+        verdict (W6-1) owns everything after that; blocked/failed map
+        to failed, cancelled to cancelled. The lease generation fences
+        stale completions.
+      x-maestro-permission: work_item.submit
+      x-maestro-audit-event: work_item.execution.completed
+      x-maestro-idempotency: terminal-state-collapse
+      x-maestro-concurrency: lease-generation-fencing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkflowCompleteRequest'}
+      responses:
+        '202':
+          description: Terminal outcome recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [execution_id, outcome]
+                properties:
+                  execution_id: {type: string, format: uuid}
+                  outcome: {type: string, enum: [completed, blocked, failed, cancelled]}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+  /projects/{project_id}/assets/{asset_id}/versions/{version}/approve:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: asset_id
+        in: path
+        required: true
+        description: Ledger asset identifier
+        schema: {type: string, pattern: '^ART-[a-z-]+-[0-9]{3,}$'}
+      - name: version
+        in: path
+        required: true
+        description: Asset version
+        schema: {type: integer, minimum: 1}
+    post:
+      tags: [Assets]
+      operationId: approveAssetVersion
+      summary: Functional signoff on a reviewed asset version (W6-3)
+      description: >
+        The W5-2 multi-sign signoff over REST: the caller's ACTIVE
+        functional roles ride from the server-side principal (never a
+        payload field); a version carrying a multi-sign floor stays
+        reviewed until every required role has a distinct signoff. The
+        route's project must own the asset.
+      x-maestro-permission: asset.approve
+      x-maestro-audit-event: asset.approved
+      x-maestro-idempotency: signoff-ledger-key
+      x-maestro-concurrency: asset-version-guard
+      responses:
+        '200':
+          description: The signoff landed (approved, or reviewed with the partial ledger on a multi-sign floor)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [asset_id, version, status]
+                properties:
+                  asset_id: {type: string}
+                  version: {type: integer, minimum: 1}
+                  status: {type: string, enum: [reviewed, approved]}
+                  required_approver_roles:
+                    type: array
+                    items: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /projects/{project_id}/work-items/{work_item_id}/gate-bindings:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: work_item_id
+        in: path
+        required: true
+        description: Work item identifier
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Assets]
+      operationId: bindAssetGate
+      summary: Pin a work item gate to an approved asset version (W6-3)
+      description: >
+        The locked-gate binding face (WGM-INV-015): the gate consumes
+        the named asset version fail-closed — binding refuses unless
+        the version is approved, and a later supersede stales the
+        binding and blocks re-claim until re-bound.
+      x-maestro-permission: workgraph.propose
+      x-maestro-audit-event: asset.gate.bound
+      x-maestro-idempotency: binding-natural-key
+      x-maestro-concurrency: binding-state-guard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkflowGateBindingRequest'}
+      responses:
+        '201':
+          description: The binding landed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [binding_id, work_item_id, asset, gate, status]
+                properties:
+                  binding_id: {type: string, format: uuid}
+                  work_item_id: {type: string, format: uuid}
+                  asset: {type: string, description: 'asset_id@version'}
+                  gate: {type: string}
+                  status: {type: string, enum: [bound]}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /projects/{project_id}/assets:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -2192,6 +2369,46 @@ components:
             spec_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
             sealed_at: {type: string}
         replay: {type: boolean, description: 'true when the revision was already sealed (idempotent collapse)'}
+    WorkflowClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [runner_id, connection_generation]
+      properties:
+        runner_id: {type: string, format: uuid, description: 'Approved runner bound to the route project'}
+        connection_generation: {type: string, minLength: 1, maxLength: 64, description: 'Lease-fencing generation'}
+        queue_version: {type: integer, format: int64, minimum: 1, description: 'Queue CAS token; server-read when absent'}
+        lease_ttl_seconds: {type: integer, minimum: 1, maximum: 86400, description: 'Lease budget; capped at 24h, default 1800'}
+    WorkflowClaimResult:
+      type: object
+      additionalProperties: false
+      required: [available]
+      properties:
+        available: {type: boolean}
+        lease_id: {type: string, format: uuid}
+        lease_version: {type: integer, format: int64}
+        execution_id: {type: string, format: uuid}
+        work_item_id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        queue_version: {type: integer, format: int64}
+        expires_at: {type: string}
+    WorkflowCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [runner_id, connection_generation, outcome]
+      properties:
+        runner_id: {type: string, format: uuid}
+        connection_generation: {type: string, minLength: 1, maxLength: 64}
+        outcome: {type: string, enum: [completed, blocked, failed, cancelled]}
+        commit_sha: {type: string, description: 'Required when outcome is completed'}
+        summary: {type: string, maxLength: 4000}
+    WorkflowGateBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_id, asset_version, gate_id]
+      properties:
+        asset_id: {type: string, pattern: '^ART-[a-z-]+-[0-9]{3,}$'}
+        asset_version: {type: integer, minimum: 1}
+        gate_id: {type: string, minLength: 1, maxLength: 64}
     AssetList:
       type: object
       additionalProperties: false
@@ -2492,6 +2709,11 @@ components:
           schema: {$ref: '#/components/schemas/Error'}
     Conflict:
       description: State, idempotency hash or uniqueness conflict (`STATE_CONFLICT`)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Gone:
+      description: The execution or its lease no longer exists (`LEASE_EXPIRED`)
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Error'}

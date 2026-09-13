@@ -106,7 +106,7 @@ func TestSLOSnapshotEndpoint(t *testing.T) {
 	backupConfig := config.BackupConfig{
 		FullBackupIntervalHours: 24, WALArchive: true, RPOMinutes: 15, RTOMinutes: 240,
 	}
-	sloHandler, err := NewSLOSnapshotHandler(sloConfig, backupConfig, pg.Observability(), pg.Reliability())
+	sloHandler, err := NewSLOSnapshotHandler(sloConfig, backupConfig, pg.Observability(), pg.Observability(), pg.Reliability())
 	require.NoError(t, err)
 
 	policy, err := identity.EmbeddedPolicy()

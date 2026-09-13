@@ -103,6 +103,22 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/waivers/:wid/revoke": {
 		http.MethodPost: "waiver.revoke",
 	},
+	// W6-3 governance execution surface (S2C-A3): the frozen strings the
+	// v1 tree already maps these semantics onto — claim and submit are
+	// the developer-plane work_item.* strings, approve is the W5-2
+	// multi-sign plane, bind rides the developer-level propose grant.
+	"/api/v3/projects/:pid/work-items/claim": {
+		http.MethodPost: "work_item.claim",
+	},
+	"/api/v3/projects/:pid/executions/:execId/complete": {
+		http.MethodPost: "work_item.submit",
+	},
+	"/api/v3/projects/:pid/assets/:assetId/versions/:version/approve": {
+		http.MethodPost: "asset.approve",
+	},
+	"/api/v3/projects/:pid/work-items/:wid/gate-bindings": {
+		http.MethodPost: "workgraph.propose",
+	},
 }
 
 // ControlPlaneOptions wires the human /api/v3 control-plane group.
@@ -116,6 +132,7 @@ type ControlPlaneOptions struct {
 	Pilot         *PilotHandler
 	Jira          *JiraHandler
 	WorkGraph     *WorkGraphHandler
+	Workflow      *WorkflowActionsHandler
 	Scope         ScopeGuard
 }
 
@@ -181,6 +198,12 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 		group.GET("/projects/:pid/work-graph/plans/:planId", options.WorkGraph.GetWorkGraphPlan)
 		group.POST("/projects/:pid/work-graph/plans/:planId/seal", options.WorkGraph.SealPlan)
 		group.GET("/projects/:pid/assets", options.WorkGraph.ListAssets)
+	}
+	if options.Workflow != nil {
+		group.POST("/projects/:pid/work-items/claim", options.Workflow.Claim)
+		group.POST("/projects/:pid/executions/:execId/complete", options.Workflow.Complete)
+		group.POST("/projects/:pid/assets/:assetId/versions/:version/approve", options.Workflow.ApproveAsset)
+		group.POST("/projects/:pid/work-items/:wid/gate-bindings", options.Workflow.BindGate)
 	}
 }
 

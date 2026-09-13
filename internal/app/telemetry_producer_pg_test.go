@@ -167,7 +167,7 @@ func TestTelemetryProducerEndToEndPostgres(t *testing.T) {
 				LowerIsBetter: true, RunbookRef: "runbooks/webhook-pipeline-failure",
 			}},
 		},
-		config.BackupConfig{}, pg.Observability(), pg.Reliability())
+		config.BackupConfig{}, pg.Observability(), pg.Observability(), pg.Reliability())
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)

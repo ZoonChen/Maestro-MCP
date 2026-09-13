@@ -80,6 +80,10 @@
         "since": {"type": "string", "format": "date-time"}
       }
     },
-    "generated_at": {"type": "string", "format": "date-time"}
+    "generated_at": {"type": "string", "format": "date-time"},
+    "stale": {
+      "type": "boolean",
+      "description": "True when the snapshot serves the newest availability measurement found OUTSIDE the declared window (no in-window telemetry); absent means the snapshot measured inside the window. Added by the M4 W6 slice (S2C-A6): a bare 503 UNMEASURED fed the availability denominator it was measuring (observer effect), so a project with any historical telemetry gets its last valid measurement with this honest flag instead."
+    }
   }
 }

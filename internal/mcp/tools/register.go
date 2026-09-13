@@ -56,10 +56,17 @@ func (s *Services) guardTool(name string, handler mcpserver.ToolHandlerFunc) mcp
 			return handler(ctx, req)
 		}
 		if principal := identityPrincipal(ctx); principal != nil {
-			projectID, scopeErr := identityProject(ctx)
+			// W6-4: an explicit `project` argument selects among the
+			// caller's OWN memberships when several are held; the
+			// selection never widens scope. Unresolvable scopes reject
+			// as INVALID_PARAMETER with an explicit message (the
+			// pre-W6 opaque INTERNAL_ERROR never named the fix).
+			requested, _ := req.GetArguments()["project"].(string)
+			projectID, scopeErr := resolveIdentityScope(ctx, requested)
 			if scopeErr != nil {
-				return errorResult(scopeErr), nil
+				return maestroToolError(MaestroError{Code: "INVALID_PARAMETER", Message: scopeErr.Error()}), nil //nolint:nilerr // scope rejection is a caller fix, not an open error
 			}
+			ctx = context.WithValue(ctx, identityScopeKey{}, projectID)
 			decision, authErr := s.Guard.Authorize(ctx, name, principal, projectID)
 			if authErr != nil {
 				// Unknown tool names deny: the catalog is the only surface.
