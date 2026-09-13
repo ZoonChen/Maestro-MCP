@@ -153,6 +153,13 @@ J1（#100 职能角色）/ J2a（#101 ADR-009 批准+模型+资产台账）/ J2b
 - **行动项落地**：ART-incident-002 行动项①（库隔离）部分落地——同 PG 实例新建 `maestro_test` 库供门禁测试（`DROP SCHEMA` 不再触试点库）；**建议后续会话统一改用 `postgres://…:5434/maestro_test`**。
 - **S2 新登记缺口（W5 裁决队列外）**：①MCP 目录 25 vs 实现 20（五件缺陷/Agent 域工具）；②config.schema.json 目标段（server/security/gitlab/observability）运行时不收（KnownFields 拒绝，resident-config 按 Go 形状编写）；③控制台浏览器登录通路（IdP 未发布宿主端口+无 hosts）待运维裁决；④证据面 quality.read 无 project_admin 持有者（冻结矩阵正确行为，verifier/viewer 账号未开）。
 
+### W5 + S2 收口：影子期正式运行（2026-09-12，会话 I）
+
+- **W5（#116）合入，九项全关**：职能审批 MCP 通路（真组合根协议测试，三负例）/资产多签 Gate（0021 双签台账，单签不翻）/proposal 幂等键项目命名空间/summary 400/locked_gate 等待面（API+控制台）/OPS-1 终态（`webhook.deadletter.replay`，RBAC 68）/outbox 23 事件登记 events.yaml/P5b 回归适配。灰度期前的契约欠账清零。
+- **S2（#115）合入，影子期开工**：常驻 8080=maestro-main:local（变更窗口+pg_dump 纪律执行，8081 退役）；**flags=shadow 置位**（双项目 PUT 201，审计 #50/#51）；**webhook 全链首演**（真实 MR：18/18 processed、DLQ 0、投影含 merge_commit、对账 202）；观察面 `shadow-observation.md`（度量清单+周报骨架+首周基线）；团队手册 ART-opsrunbook-001。
+- **PLAYBOOK 阶段 2 运行中**：周观察节奏启动（S2 交接物含采集命令）；出口=零干扰确认+四面数据完整。集成会话注意事项：常驻栈已带 webhook 双密钥+bot PAT+telemetry/SLO 配置（pilot-stack/ 密钥 0600 不入库）。
+- 工程备注：本机 lint 缓存投毒再现（主 checkout 31 条假阳性，隔离缓存 0）——凡本地 lint 异常先换 GOLANGCI_LINT_CACHE 隔离重跑再信。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
