@@ -17,7 +17,7 @@ go run ./scripts/pilot/bom-import
 
 ## 重放底册与台账锚定
 
-`data/bom-manifest-20260909.json` 是唯一重放源（105 条、含 BOM 说明列全文），其 sha256 与 xlsx 原件 sha256 一并登记进 `ART-bom-001@2` 的 summary——台账是权威锚，底册是机器可重放投影。改 BOM 后的再导入 = 重新生成底册 + 新版本登记（supersede 链）+ 新提案重放（图的既有结构不可变，需重规划路径，另行任务书）。
+`data/bom-manifest-20260909.json` 是唯一重放源（105 条、含 BOM 说明列全文），其 sha256 与 xlsx 原件 sha256 一并登记进 `ART-bom-001@2` 的 summary——台账是权威锚，底册是机器可重放投影。**注意：该文件是 `git add -f` 强制入库的**（根 .gitignore 的 `data/` 规则覆盖运行时数据目录，与本底册的受治理资产身份不同）；它一旦改动，台账 summary 里的 manifest_sha256 即失配——再导入 = 重新生成底册 + 新版本登记（supersede 链）+ 新提案重放（图的既有结构不可变，需重规划路径，另行任务书）。
 
 ## 执行步骤 ↔ brief 切片
 
