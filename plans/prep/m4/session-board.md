@@ -188,6 +188,14 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 | S2C-A6（O-2） | SLO availability 样本饥饿：个位数请求下单次 5xx 即翻 breached；SLO 端点自身 503 UNMEASURED 疑计入分母（观察者效应，…002 实测 50% 伪 breached 后翻回） | SLO 面小切片（UNMEASURED 不计分母或最小样本门槛） |
 | 环境/试点侧（不修 Maestro） | F6 常驻 egress 并入 resident-server 配方；F5 verifier/viewer 账号开通（证据面读通路）；F7 asset_id 规则 `^ART-[a-z-]+-[0-9]{3,}$` 补进试点仓 MAESTRO-GUIDE；E4 reconcile 不在审计动作目录（契约观察） | 试点/运维待办 |
 
+### S2A/S2B/S2C 收口：影子期骨架就位、首切片执行、周观察启动（2026-09-13，会话 I）
+
+- **S2A（#119）合入**：BOM 105 条治理对象（一期 44 sealed + 二三期 61 占位）、17 域内依赖边、44 locked_gate→ART-bom-001@2（xlsx 真 digest 重登记）、105 Jira 手工锚、审计链 123 条导出验证。CI 修复一例（.gitignore 吞 manifest）。幂等导入脚本入库 `scripts/pilot/bom-import`。
+- **S2B 首切片执行**（沙箱 GitLab/常驻栈，无 GitHub PR——按设计）：领取 5 条（A1-1/A1-2 等：completed×2 / running×2 / cancelled×1），done=0——被 F1 结构缺口卡住（validating→ready 无写者）。**摩擦登记 F1–F7 是影子期第一批核心数据**。
+- **S2C（#120）合入**：周报自动化（`scripts/pilot/shadow-report.sh`，首份 W1 产出并入账 ART-shadow-report-001@1 digest 验证）；零干扰三桶分类（**治理面误伤 4**：F1 done 链断裂/F2 MR 绑定 FK 冲突/F3 claim·签核无 API 面/F4 多会籍 fail-closed；合理阻断 2+文档 1；环境 1）；新发现 O-1（outbox 域事件无 sink）/O-2（SLO 样本饥饿+观察者效应）/O-3（遥测断点=incident-003 候选）；出口评估骨架（最早 2026-09-26 可裁决）。**W1 结论：未检出干扰，但团队自然 MR 样本=0（手册 9/12 刚入），零干扰确认 W2 起方可下达**。
+- **灰度硬前提队列**（调度板 §7 S2C 段）：S2C-A1（F1 done 链写者）/A2（F2 MR 绑定跨项目解析）/A3（F3 claim·approve REST/MCP 面）——三项齐才能进阶段 3；另有 A4（F4 错误码+多会籍）/A5（O-1 outbox sink）/A6（O-2 SLO 采样）与试点侧待办（F5 viewer 账号/F6 egress 配方入库/F7 手册增补）。
+- 交接备注：S2B 切片驱动器（store 面临时驱动，自述不入库）已保全至 `~/Works/yuandong/projects/peixun-s2b/tools/`；S2C-A3 落地后退役。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
