@@ -105,6 +105,20 @@ MAESTRO_AUTH_TOKEN='replace-with-a-local-random-token' \
 make compose-up
 ```
 
+### PostgreSQL 端口纪律（共享栈保护）
+
+本机两条 PostgreSQL 通道**物理隔离**（brief-P3 三道防线，起因是三次 live 库被测试夹具清空）：
+
+| 端口 | 容器 | 用途 | 纪律 |
+| --- | --- | --- | --- |
+| 5434 | `maestro-resident-postgres` | 常驻控制面/试点主库（live 数据） | **任何测试 DSN 禁止指向 5434**；`maestro` 角色无 CREATEDB/SUPERUSER（DROP DATABASE 被 PG 拒绝） |
+| 5435 | `maestro-test-postgres` | 一次性测试库 | 可随意 DROP/CREATE；`make test`/`test-race`/`coverage` 自动起停 |
+
+- `MAESTRO_TEST_POSTGRES_DSN` 默认指向 `postgres://maestro-test:<密码>@127.0.0.1:5435/maestro?sslmode=disable`（`make` 未检测到外部设置时自动起停 5435 容器并注入该 DSN；CI 的 service container 与自备实例不受影响）。
+- **不要**把 `MAESTRO_TEST_POSTGRES_DSN` 指向 5434：部分测试夹具会用 DSN 原文连接并 `DROP DATABASE` ——该操作在 5434 上已被权限层拒绝，但正确做法是让测试跑在 5435。
+- 试点运维工具（`scripts/pilot/report-register` 等需要写 live 库的脚本）通过 `MAESTRO_PILOT_POSTGRES_DSN`（或显式设置的 DSN）指向 5434，与测试变量严格区分。
+- 主库定时备份：`scripts/pilot/pg-backup.sh`（crontab 每 4 小时，dump 保留 72h）。
+
 ### 前端开发调试
 
 后端启动后，可以单独运行 Vite 进行热更新。开发代理只接受 loopback 后端，并在代理进程中添加与后端相同的 Bearer Token；Token 不会进入浏览器 bundle、localStorage 或 URL。禁止使用 `VITE_*` 变量传递 Secret。

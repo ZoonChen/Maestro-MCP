@@ -44,14 +44,18 @@ jobs:
           POSTGRES_PASSWORD: maestro-ci
           POSTGRES_DB: maestro_test
         ports:
-          - 5432:5432
+          # 5435 mirrors the local test-PG port discipline (brief-P3:
+          # 5434 is the resident/live database and must never appear in
+          # a test DSN; CI keeps the same convention on its disposable
+          # service container).
+          - 5435:5432
         options: >-
           --health-cmd "pg_isready -U maestro -d maestro_test"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 12
     env:
-      MAESTRO_TEST_POSTGRES_DSN: postgres://maestro:maestro-ci@localhost:5432/maestro_test?sslmode=disable
+      MAESTRO_TEST_POSTGRES_DSN: postgres://maestro:maestro-ci@localhost:5435/maestro_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -67,12 +71,12 @@ jobs:
         run: |
           set -euo pipefail
           for _ in $(seq 1 30); do
-            if pg_isready -h localhost -p 5432 -U maestro -d maestro_test; then
+            if pg_isready -h localhost -p 5435 -U maestro -d maestro_test; then
               break
             fi
             sleep 2
           done
-          pg_isready -h localhost -p 5432 -U maestro -d maestro_test
+          pg_isready -h localhost -p 5435 -U maestro -d maestro_test
 
       - name: Unit and integration tests with PostgreSQL service
         run: |

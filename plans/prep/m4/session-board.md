@@ -225,6 +225,14 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 
 **排查结论**（2026-09-13 集成会话取证）：根因=测试 DSN 指向主库（`...@5434/maestro`），测试夹具的 `DROP DATABASE <DSN库名>` 语句误伤主库。三次事故机制相同，时间戳证据：主库 21 条迁移在 2026-09-13T12:14:24-25 UTC 同秒重放（W6 最后一轮门禁触发）。仓库代码本身无 DROP 主库逻辑——是 DSN 配置与共享栈的组合问题。
 
+### P3 收口：三道防线落地 + 主库恢复完成（2026-09-13，会话 P3）
+
+- **防线一（物理隔离）**：`maestro-test-postgres`（5435 独立实例/卷/凭据）+ `make test`/`test-race`/`coverage` 经 `WITH_TEST_PG` 宏自动起停；DSN 约定全链同步（README/example/CI 5435）。
+- **防线二（逻辑防线）**：bootstrap 用户 RENAME `maestro-dba`（强随机密码）+ 新建普通 `maestro` 应用角色——**任务书原设想的单条 NOCREATEDB 不成立**（PG16 禁止剥夺 bootstrap SUPERUSER，且 superuser 绕过 CREATEDB 检查），角色对调方案所有现存 DSN 零变更；`DROP/CREATE DATABASE`（as maestro）双拒 Evidence 在案；DDL 审计（`log_statement=ddl`+collector）落卷内日志，已捕获本次恢复自身 DDL。
+- **防线三（恢复底线）**：`scripts/pilot/pg-backup.sh`（容器内 pg_dump -Fc、72h 保留、原子锁）+ 部署副本 + crontab `0 */4 * * *` 已装。
+- **主库恢复**：pre-s2b dump → psql 恢复（110 项/21 迁移）→ `TestW6PilotReplayComparison` 重放 S2B+W6 done 链（validating 2→0/done 2/evidence 24/投影 2/outbox 172→0）→ `report-register` 重放 ART-shadow-report-001@1 → 审计链导出 126 entries + `verify:true`。**常驻栈镜像随窗口换至 main-46e9f8e**（旧 8c8d82e 对 21 迁移库 fail-closed，正是调度板预告场景）。
+- 恢复缺口如实登记（遥测断点后移/S2B gate_snapshots 空/审计 179 条为 pre-s2b 基线+重放，口径见报告 §2）。收口报告=`deploy/gitlab/peixun/reports/P3-shared-stack-guard-closure.md`；**ART-incident-003 行动项关闭**（三道防线互相独立成立）。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。

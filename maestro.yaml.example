@@ -1,6 +1,17 @@
 # Maestro MCP Configuration
 # Copy this file to maestro.yaml and edit as needed.
 # All values can be overridden via environment variables (see below).
+#
+# PostgreSQL port discipline (brief-P3 shared-stack guard — see README
+# "PostgreSQL 端口纪律"):
+#   5434 = maestro-resident-postgres, the LIVE control-plane database.
+#          MAESTRO_DATABASE_DSN below points here in the compose/pilot
+#          topologies; never point a test DSN at it (the `maestro` role
+#          there cannot DROP/CREATE databases, but tests belong on 5435).
+#   5435 = maestro-test-postgres, the disposable test instance.
+#          MAESTRO_TEST_POSTGRES_DSN defaults to
+#          postgres://maestro-test:<pw>@127.0.0.1:5435/maestro?sslmode=disable
+#          and `make test` starts/stops the container automatically.
 
 # Database path (SQLite). Use ":memory:" for testing.
 db_path: "data/maestro.db"

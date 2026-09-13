@@ -15,7 +15,11 @@
 //
 // Env:
 //
-//	MAESTRO_TEST_POSTGRES_DSN  live pilot PG DSN (the maestro database)
+//	MAESTRO_PILOT_POSTGRES_DSN  live pilot PG DSN — the resident maestro
+//	                              database on 5434 (brief-P3 discipline;
+//	                              MAESTRO_TEST_POSTGRES_DSN still works as a
+//	                              legacy fallback but must NOT carry a 5435
+//	                              test DSN)
 //
 // Run:
 //
@@ -93,10 +97,17 @@ func main() {
 		return
 	}
 
-	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
-		fatal("MAESTRO_TEST_POSTGRES_DSN must point at the LIVE pilot maestro database")
+	// Brief-P3 port discipline: scripts that write the LIVE pilot database
+	// read MAESTRO_PILOT_POSTGRES_DSN (5434 resident); MAESTRO_TEST_POSTGRES_DSN
+	// (5435) is for tests only. The old name stays as a fallback so existing
+	// runbooks keep working, but new invocations should use the pilot name.
+	dsn := os.Getenv("MAESTRO_PILOT_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	}
-	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		fatal("MAESTRO_PILOT_POSTGRES_DSN must point at the LIVE pilot maestro database (5434 resident; never the 5435 test DSN)")
+	}
 
 	// Replay short-circuit (read-only store check, the bom-import read
 	// posture): the asset_register contract has no key replay — same
@@ -305,8 +316,14 @@ func startRunner(projectID string) (*stdioRunner, error) {
 	}
 
 	child := reg.maestroCommand("runner", "--config", configPath, "--runner-id", runnerID, "--project", projectID)
+	// Same DSN resolution as main(): pilot name first, legacy test name
+	// as fallback (brief-P3 port discipline).
+	runnerDSN := os.Getenv("MAESTRO_PILOT_POSTGRES_DSN")
+	if runnerDSN == "" {
+		runnerDSN = os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	}
 	child.Env = append(os.Environ(),
-		"MAESTRO_DATABASE_DSN="+os.Getenv("MAESTRO_TEST_POSTGRES_DSN"),
+		"MAESTRO_DATABASE_DSN="+runnerDSN,
 		"MAESTRO_REMOTE_WRITE=false",
 	)
 	stdin, err := child.StdinPipe()
