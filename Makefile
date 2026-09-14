@@ -54,26 +54,50 @@ build: web-build
 	SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) $(GO) build $(LDFLAGS) -trimpath -o bin/$(BINARY) ./cmd/maestro
 
 test: web-build test-hygiene
-	$(GO) test ./...
+	$(WITH_TEST_PG) $(GO) test ./...
+
+# Shared-stack guard (brief P3-1): the test PG is a disposable container
+# on 5435 (`maestro-test-postgres`, profile test-pg), physically separate
+# from the resident 5434 database. When MAESTRO_TEST_POSTGRES_DSN is
+# already set in the environment (CI service container, or a
+# developer-provided instance) it is used as-is and no container is
+# touched. The managed path starts the service, waits for healthy, runs
+# the command, then stops+removes the container on exit (volume kept for
+# fast reuse) — never leaving an orphan behind.
+MAESTRO_TEST_POSTGRES_PORT ?= 5435
+MAESTRO_TEST_POSTGRES_PASSWORD ?= maestro-test-local-dev
+MANAGED_TEST_PG_DSN = postgres://maestro-test:$(MAESTRO_TEST_POSTGRES_PASSWORD)@127.0.0.1:$(MAESTRO_TEST_POSTGRES_PORT)/maestro?sslmode=disable
+COMPOSE_TEST_PG = docker compose -f docker-compose.yaml --profile test-pg
+
+ifeq ($(origin MAESTRO_TEST_POSTGRES_DSN),undefined)
+define WITH_TEST_PG
+set -e; \
+$(COMPOSE_TEST_PG) up -d --wait maestro-test-postgres; \
+trap '$(COMPOSE_TEST_PG) rm -sf maestro-test-postgres > /dev/null 2>&1 || true' EXIT; \
+MAESTRO_TEST_POSTGRES_DSN='$(MANAGED_TEST_PG_DSN)'
+endef
+else
+define WITH_TEST_PG
+set -e; MAESTRO_TEST_POSTGRES_DSN='$(MAESTRO_TEST_POSTGRES_DSN)'
+endef
+endif
 
 test-hygiene:
 	ruby scripts/test-hygiene-check.rb
 
 # The M0 threshold applies to the authoritative state registry and the full
 # zero-trust validation pipeline, not to a diluted repository-wide average.
-# PG-gated suites (identity resolver, v3 runner endpoints, store
-# contracts, importer drills) only execute when MAESTRO_TEST_POSTGRES_DSN
-# is exported — the same contract the m1-runtime CI job provides.
+# PG-gated suites run against the 5435 test PG via WITH_TEST_PG; the -p 1
+# leg serializes package binaries because the PG-gated suites share the
+# test database and parallel schema resets deadlock each other. The
+# gitlab/m2drill/webhook suites exercise the PG projection, registry and
+# inbox stores end to end — without them the profile is blind to exactly
+# the code it is meant to measure.
 coverage:
 	mkdir -p $(COVERAGE_DIR)
-	$(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/state.out ./internal/model
-	$(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/validation.out ./internal/service
-	$(GO) test -covermode=atomic -coverpkg=./internal/identity,./internal/handler -coverprofile=$(COVERAGE_DIR)/identity.out ./internal/identity ./internal/handler
-	# -p 1 serializes package binaries: the PG-gated suites share the
-	# compose database and parallel schema resets deadlock each other.
-	# The gitlab/m2drill/webhook suites exercise the PG projection,
-	# registry and inbox stores end to end — without them the profile is
-	# blind to exactly the code it is meant to measure.
+	$(WITH_TEST_PG) $(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/state.out ./internal/model && \
+	$(GO) test -covermode=atomic -coverprofile=$(COVERAGE_DIR)/validation.out ./internal/service && \
+	$(GO) test -covermode=atomic -coverpkg=./internal/identity,./internal/handler -coverprofile=$(COVERAGE_DIR)/identity.out ./internal/identity ./internal/handler && \
 	$(GO) test -p 1 -count=1 -covermode=atomic -coverpkg=./internal/store -coverprofile=$(COVERAGE_DIR)/store.out \
 		./internal/store ./internal/handler ./internal/identity ./internal/gitlab ./internal/jira ./internal/m2drill ./internal/m4drill ./internal/webhook
 	ruby scripts/core-coverage-check.rb \
@@ -81,7 +105,7 @@ coverage:
 		$(COVERAGE_DIR)/identity.out $(COVERAGE_DIR)/store.out
 
 test-race: web-build
-	$(GO) test -race ./...
+	$(WITH_TEST_PG) $(GO) test -race ./...
 
 vet: web-build
 	$(GO) vet ./...

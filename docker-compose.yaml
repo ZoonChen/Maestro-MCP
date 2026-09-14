@@ -2,7 +2,15 @@
 # to `make compose-up`.
 #
 # M1 local-first topology (plans/stages/m1-control-plane.md P2):
-#   docker compose --profile m1 up          # + maestro-postgres + keycloak
+#   docker compose --profile m1 up      # + maestro-resident-postgres + keycloak
+# Test topology (shared-stack guard, brief P3-1):
+#   make test                           # auto starts/stops maestro-test-postgres
+#
+# PostgreSQL port discipline (brief-P3 shared-stack guard): the resident
+# control-plane database and the test database are PHYSICALLY SEPARATE
+# containers — 5434 (resident, never a test target) vs 5435 (disposable).
+# Three live-wipe incidents (ART-incident-002/003) traced to test DSNs
+# pointing at 5434; do not reconnect them.
 # GitLab CE lives in its own stack under deploy/gitlab/ (intranet-aligned
 # 19.3.1 + docker-executor runner) so its lifecycle never touches these
 # volumes; for the services above the m1-gitlab profile equals m1.
@@ -47,21 +55,50 @@ services:
       retries: 12
       start_period: 10s
 
-  maestro-postgres:
+  # Resident control-plane PostgreSQL (renamed from `maestro-postgres`,
+  # brief P3-3): this instance is the live pilot database. It is NOT a
+  # test target — tests run against maestro-test-postgres on 5435, and
+  # the `maestro` role is stripped of CREATEDB/SUPERUSER after restore
+  # (P3-4) so an accidental DROP DATABASE fails closed. The fixed
+  # `name:` binding preserves the original volume across the service
+  # rename; `log_statement=ddl` + `logging_collector` (P3-5) leave a
+  # forensic trail of any DDL attempt in $PGDATA/log/ (inside the named
+  # volume, survives restarts).
+  maestro-resident-postgres:
     image: postgres:16-alpine
+    container_name: maestro-resident-postgres
     profiles: ["m1", "m1-gitlab"]
+    command:
+      - postgres
+      - -c
+      - log_statement=ddl
+      - -c
+      - logging_collector=on
+      - -c
+      - log_directory=log
     environment:
       # Local development credentials only; production uses secret refs and
       # network isolation per docs/technical/deployment.md.
       POSTGRES_USER: maestro
       POSTGRES_PASSWORD: ${MAESTRO_POSTGRES_PASSWORD:-maestro-local-dev}
       POSTGRES_DB: maestro
+      # Break-glass superuser for the fresh-volume path (P3-4): when set,
+      # the initdb script creates a `postgres` superuser with this
+      # password before stripping the application role. Leave unset for a
+      # plain throwaway topology; set it for any volume that will hold
+      # data you care about.
+      MAESTRO_DBA_PASSWORD: ${MAESTRO_DBA_PASSWORD:-}
     ports:
-      # Loopback-only publish so local drills and tests can reach the
-      # control-plane database without exposing it beyond the host.
-      - "127.0.0.1:${MAESTRO_POSTGRES_PORT:-5433}:5432"
+      # Loopback-only publish so local drills can reach the control-plane
+      # database without exposing it beyond the host. Default 5434: the
+      # historical 5433 default is taken by another local stack and the
+      # resident pilot server already pins 5434.
+      - "127.0.0.1:${MAESTRO_POSTGRES_PORT:-5434}:5432"
     volumes:
-      - maestro-postgres-data:/var/lib/postgresql/data
+      - maestro-resident-postgres-data:/var/lib/postgresql/data
+      # P3-4 hardening at first init (fresh PGDATA only; existing volumes
+      # keep their in-place ALTER ROLE).
+      - ./scripts/pilot/resident-initdb/01-harden-maestro-role.sh:/docker-entrypoint-initdb.d/01-harden-maestro-role.sh:ro
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -69,6 +106,35 @@ services:
       - maestro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # Disposable test PostgreSQL (brief P3-1, physical isolation): started
+  # and stopped by `make test`/`test-race`/`coverage` via the `test-pg`
+  # profile. Own instance, own volume, own credentials — a DSN that
+  # reaches this container can drop any database it likes and nothing of
+  # value is lost. MAESTRO_TEST_POSTGRES_DSN defaults to this port.
+  maestro-test-postgres:
+    image: postgres:16-alpine
+    container_name: maestro-test-postgres
+    profiles: ["test-pg"]
+    environment:
+      POSTGRES_USER: maestro-test
+      POSTGRES_PASSWORD: ${MAESTRO_TEST_POSTGRES_PASSWORD:-maestro-test-local-dev}
+      POSTGRES_DB: maestro
+    ports:
+      - "127.0.0.1:${MAESTRO_TEST_POSTGRES_PORT:-5435}:5432"
+    volumes:
+      - maestro-test-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - maestro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro-test -d maestro"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -87,10 +153,10 @@ services:
     profiles: ["m1", "m1-gitlab"]
     environment:
       MAESTRO_DB_DRIVER: postgres
-      MAESTRO_DATABASE_DSN: postgres://maestro:${MAESTRO_POSTGRES_PASSWORD:-maestro-local-dev}@maestro-postgres:5432/maestro?sslmode=disable
+      MAESTRO_DATABASE_DSN: postgres://maestro:${MAESTRO_POSTGRES_PASSWORD:-maestro-local-dev}@maestro-resident-postgres:5432/maestro?sslmode=disable
     command: ["migrate", "up"]
     depends_on:
-      maestro-postgres:
+      maestro-resident-postgres:
         condition: service_healthy
     restart: "no"
     read_only: true
@@ -133,7 +199,12 @@ services:
 
 volumes:
   maestro-data:
-  maestro-postgres-data:
+  # The `name:` binding carries the pre-rename volume forward (P3-3:
+  # rename in place, data preserved). Compose keys are project-local, so
+  # without this binding the rename would silently start an empty volume.
+  maestro-resident-postgres-data:
+    name: maestro-mcp_maestro-postgres-data
+  maestro-test-data:
   keycloak-data:
 
 networks:
