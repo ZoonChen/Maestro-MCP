@@ -43,7 +43,7 @@ migrate)
     "$IMAGE" migrate up
   ;;
 up)
-  for f in webhook-payload-key gitlab-webhook-token gitlab-bot-pat client-secret; do
+  for f in webhook-payload-key gitlab-webhook-token gitlab-bot-pat client-secret jira-pat; do
     [ -s "$PILOT_STACK_DIR/$f" ] || { echo "missing $PILOT_STACK_DIR/$f" >&2; exit 66; }
   done
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -59,6 +59,7 @@ up)
     -e MAESTRO_WEBHOOK_PAYLOAD_KEY="$(cat "$PILOT_STACK_DIR/webhook-payload-key")" \
     -e MAESTRO_PILOT_WEBHOOK_KEY="$(cat "$PILOT_STACK_DIR/gitlab-webhook-token")" \
     -e MAESTRO_PILOT_GITLAB_PAT="$(cat "$PILOT_STACK_DIR/gitlab-bot-pat")" \
+    -e MAESTRO_PILOT_JIRA_PAT="$(cat "$PILOT_STACK_DIR/jira-pat")" \
     -e SSL_CERT_FILE=/certs/ca.pem \
     -v "$PILOT_STACK_DIR/certs/ca.pem:/certs/ca.pem:ro" \
     -v "$(dirname "$0")/resident-config.yaml:/config/maestro.yaml:ro" \
