@@ -52,3 +52,15 @@ slo:
       unit: s
       lower_is_better: true
       runbook_ref: docs/operations/runbooks/webhook-pipeline-failure.md
+
+# Jira connector (P5a-6 复测绿后首演, WIN-20260914-J1-01). The company
+# instance is reachable from this host only on the intranet; cycles
+# fail closed (logged, never dirty) while off-net. The PAT resolves at
+# worker start from the pilot-stack secret file injected by
+# resident-server.sh (jira-pat, 0600). Anchors live in jira_anchors
+# (migration 0018); this section only starts the mirror+reconcile
+# worker. 600s keeps off-net log noise at 6 errors/hour.
+jira:
+  base_url: https://jira10.fe-iu.com
+  pat_secret_ref: env:MAESTRO_PILOT_JIRA_PAT
+  sync_interval_seconds: 600
