@@ -12,7 +12,7 @@
 | P5a-3 | Maestro onboarding（projects/mappings/flags） | ◐ 注册✓ / flag 写入被卡 | projects `df983417…`（backend）/`1ea22bdf…`（web）+ team `peixun-pilot` + instance `fdf396ff…`（https://gitlab-pilot:8443）+ mappings（GitLab #3/#4 → main）已入库；认证读 200（OIDC 真 principal）；**pilot flag PUT shadow → 403**（CR-P5a-1，见 §5） |
 | P5a-4 | 一期 Command Profiles + 网络白名单实测 | ✅ | 三 profile 真实执行全绿：maven-build@backend 96.14s / npm-build@web 6.86s / playwright-e2e@web 6.56s（junit 产物逐一断言）；白名单过滤有 CI 级测试（`internal/sandbox/egress_test.go`：允许域 200、拒绝域断网）；见 §3 |
 | P5a-5 | 存量资产摄取 | ✅ | `assets` 台账：ART-research-001@1（internal/file，原文入仓 `assets/`）/ ART-bom-001@1（internal/digest，8 Sheet 摘要行）/ ART-legacy-intake-001@1（confidential/pointer，正文不入库）；`audit_events` 三条 `asset.registered` |
-| P5a-6 | Jira 连通性实测 | ✅（实测=不可达，按蓝图回退） | ART-incident-001@1：DNS 解析正常（172.16.0.114）、HTTPS/ICMP 全超时（本机无内网通路）、mcp-atlassian 调用 30s 超时；回退=手工锚定，镜像 worker 不阻塞；VPN 接入后复测为 P5b 前置项 |
+| P5a-6 | Jira 连通性实测 | ✅（**09-14 内网复测全通**） | 首测（09-11，ART-incident-001@1）：DNS 正常（172.16.0.114）、HTTPS/ICMP 全超时→回退手工锚定。**复测（09-14，内网）**：`https://jira10.fe-iu.com` HTTP 200（0.24s）；mcp-atlassian 直连公司实例（Server/DC 版，凭据 rd03）：读面全通（可见项目 AI/YD-AI-AGENTS + EXAMPLE），写面全通（EXAMPLE-1 创建+删除探测，已回收）。落点：AI-14 "Maestro-MCP" Epic 已在位（09-02 建）。实操口径：reporter 必填（`additional_fields: {"reporter":{"name":"rd03"}}`）；issue 类型按项目 create screen 有效集传中文名（EXAMPLE 实测"故事"可用，"任务/故障"无效）。J3 连接器对账腿接入随下一窗口调度 |
 
 ## 2. P5a-2/3 环境指针（沙箱 GitLab CE 19.3.1）
 
