@@ -233,6 +233,25 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **主库恢复**：pre-s2b dump → psql 恢复（110 项/21 迁移）→ `TestW6PilotReplayComparison` 重放 S2B+W6 done 链（validating 2→0/done 2/evidence 24/投影 2/outbox 172→0）→ `report-register` 重放 ART-shadow-report-001@1 → 审计链导出 126 entries + `verify:true`。**常驻栈镜像随窗口换至 main-46e9f8e**（旧 8c8d82e 对 21 迁移库 fail-closed，正是调度板预告场景）。
 - 恢复缺口如实登记（遥测断点后移/S2B gate_snapshots 空/审计 179 条为 pre-s2b 基线+重放，口径见报告 §2）。收口报告=`deploy/gitlab/peixun/reports/P3-shared-stack-guard-closure.md`；**ART-incident-003 行动项关闭**（三道防线互相独立成立）。
 
+### P3 + Jira 收口：影子期全速运行（2026-09-14，会话 I）
+
+- **P3（#126）合入**：三道防线落地——物理隔离（测试 PG 5435 独立容器 + `make test` 自动起停 + compose 服务改名 `maestro-resident-postgres`）；逻辑防线（**角色对调**：bootstrap→`maestro-dba` 强随机密码，新建普通 `maestro` 用户 `NOCREATEDB`——PG16 不可剥夺 SUPERUSER 的务实解）；恢复底线（pg-backup.sh 每 4h + 72h 保留，crontab 已装）。**主库已恢复**（110 项/180 审计/14 资产，审计链 126 条 verify:true）。ART-incident-003 关闭。
+- **Jira 双回（#127/#128）合入**：内网复测翻绿（HTTP 200 + 读写全通 + AI-14 Epic 发现）；锚定 MVP 三腿全绿（推送/快照/对账全生命周期含漂移→escalate→裁决→clean）。**治理缺口登记**：rd03 为系统管理员，V4 前换专用受限账号。
+- **影子期 W1 周报已产出**；W2 周报待自动生成。出口评估最早 **2026-09-26**（S2C 骨架已备）。
+- worktree/分支全清。
+
+### V4 收敛仪式欠账清单（出口评估前需逐项关闭）
+
+| # | 项 | 状态 | 负责 |
+|---|---|---|---|
+| V4-1 | 蓝图五块评审（REVIEW-REQUEST.md） | ⬜ 待 owner/security/operations 逐块批注 | owner |
+| V4-2 | D1 选型结论入 BOM（P5b 建议：路线 B 主线+PlayEdu 对照） | ⬜ 待 owner 决策 | owner |
+| V4-3 | Jira 专用受限账号（rd03 系统管理员→换专用） | ⬜ V4 前必须 | owner + IT |
+| V4-4 | 影子期出口评估（≥2 周周报数据） | 🔶 09-26 可裁决 | S2C |
+| V4-5 | 矩阵翻转（M4 六行 + W4.5 新增行 + 试点行） | ⬜ 出口评估后 | 集成会话（仪式） |
+| V4-6 | DOC-INDEX M4 行 + v4 复盘 | ⬜ 同一收口 PR | 集成会话（仪式） |
+| V4-7 | 职能角色授权书（R4 蓝图§4.2——影子期已在用，正式化） | ⬜ 随 V4-1 评审 | owner |
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
