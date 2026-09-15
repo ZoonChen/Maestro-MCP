@@ -29,6 +29,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	"github.com/ZoonChen/Maestro-MCP/internal/jira"
 	maestrotools "github.com/ZoonChen/Maestro-MCP/internal/mcp/tools"
+	"github.com/ZoonChen/Maestro-MCP/internal/runner"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/ZoonChen/Maestro-MCP/internal/webhook"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -759,6 +760,24 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		},
 		Owner: fmt.Sprintf("domain-sink-%s-%d", hostname(), os.Getpid()),
 	}
+
+	// S2B2-F12: the offline-monitor recovery pass owns TTL-elapsed
+	// lease expiry and the guarded redispatch, so an expired claim
+	// never strands its work item in executing. It rides whenever
+	// PostgreSQL is the store (the engine is inert on SQLite).
+	sweepEmergency, sweepEmergencyErr := runner.NewEmergencyController(pgStore)
+	if sweepEmergencyErr != nil {
+		return *options, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", sweepEmergencyErr)
+	}
+	sweepOps, sweepOpsErr := runner.NewOps(pgStore, sweepEmergency)
+	if sweepOpsErr != nil {
+		return *options, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", sweepOpsErr)
+	}
+	sweepMonitor, sweepMonitorErr := runner.NewOfflineMonitor(sweepOps, 0)
+	if sweepMonitorErr != nil {
+		return *options, fail(exitDependency, "DEPENDENCY_UNAVAILABLE", sweepMonitorErr)
+	}
+	options.LeaseSweep = &app.LeaseSweepOptions{Monitor: sweepMonitor}
 
 	// The shared projection syncer: webhook consumer, reconcile path
 	// and evidence ingestion all apply facts through it.
