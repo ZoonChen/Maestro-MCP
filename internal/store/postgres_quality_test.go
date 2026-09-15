@@ -61,6 +61,10 @@ func qualityOverlay(id string, mutate func(*evidence.Policy)) *evidence.Policy {
 	overlay.Scope = "project"
 	extends := "company-baseline"
 	overlay.Extends = &extends
+	// The capability catalog is company-owned; a project overlay inherits
+	// it at resolution and must not carry a copy.
+	overlay.CapabilityGates = nil
+	overlay.Capabilities = nil
 	if mutate != nil {
 		mutate(&overlay)
 	}
@@ -179,7 +183,7 @@ func TestQualityVerdictPersistsAndStales(t *testing.T) {
 
 	snapshots, err := store.ListGateSnapshots(ctx, projectID, workItemID)
 	require.NoError(t, err)
-	require.Len(t, snapshots, 12)
+	require.Len(t, snapshots, len(resolved.Policy.RequiredGates))
 	for _, snapshot := range snapshots {
 		assert.Equal(t, evidence.GatePassed, snapshot.Status)
 	}
@@ -188,7 +192,7 @@ func TestQualityVerdictPersistsAndStales(t *testing.T) {
 	require.NoError(t, store.PersistVerdict(ctx, verdict))
 	snapshots, err = store.ListGateSnapshots(ctx, projectID, workItemID)
 	require.NoError(t, err)
-	assert.Len(t, snapshots, 12)
+	assert.Len(t, snapshots, len(resolved.Policy.RequiredGates))
 
 	// A SHA drift stales every old snapshot in the same transaction.
 	drifted := tup
@@ -201,14 +205,14 @@ func TestQualityVerdictPersistsAndStales(t *testing.T) {
 
 	snapshots, err = store.ListGateSnapshots(ctx, projectID, workItemID)
 	require.NoError(t, err)
-	assert.Len(t, snapshots, 24, "old and new tuple snapshots coexist")
+	assert.Len(t, snapshots, 2*len(resolved.Policy.RequiredGates), "old and new tuple snapshots coexist")
 	stale := 0
 	for _, snapshot := range snapshots {
 		if snapshot.Status == evidence.GateStale {
 			stale++
 		}
 	}
-	assert.Equal(t, 12, stale, "every old-tuple snapshot went stale")
+	assert.Equal(t, len(resolved.Policy.RequiredGates), stale, "every old-tuple snapshot went stale")
 }
 
 func TestQualityWaiverLifecycle(t *testing.T) {

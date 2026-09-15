@@ -47,11 +47,89 @@ var gateKinds = map[string]struct{}{
 	GateDependency: {}, GateImage: {}, GateLicense: {},
 }
 
-// mandatoryGates must appear in every policy (the frozen allOf block).
-var mandatoryGates = []string{
-	GateBaselineFreshness, GateBoundary, GatePolicyIntegrity, GateBuild,
-	GateUnit, GateLintTypecheck, GateCoverage, GateSecretScan, GateSAST,
-	GateDependency, GateImage, GateLicense,
+// coreGates are the unconditionally required gates (the frozen allOf
+// block): every one has a guaranteed producer — CI pipeline jobs for
+// build/unit/secret_scan and the D1 control-plane self-attestation for
+// the three engine-oracle gates.
+var coreGates = []string{
+	GateBuild, GateUnit, GateSecretScan,
+	GatePolicyIntegrity, GateBaselineFreshness, GateBoundary,
+}
+
+// producerKindPipelineJob / producerKindControlPlane are the two frozen
+// producer kinds (quality-policy.schema.json $defs.producer_kind).
+const (
+	producerKindPipelineJob  = "pipeline_job"
+	producerKindControlPlane = "control_plane"
+)
+
+// CapabilityGate is one catalog entry of the two-tier baseline (D2): a
+// gate that is required ONLY for projects declaring the capability, and
+// whose promised producer kind is declared up front. The catalog is the
+// frozen contract "声明能力 = 声明生产者" — a capability gate can never
+// become an unconditional requirement without a producer behind it.
+type CapabilityGate struct {
+	GateID        string `json:"gate_id"`
+	CapabilityKey string `json:"capability_key"`
+	ProducerKind  string `json:"producer_kind"`
+}
+
+// CapabilityProducer anchors a declaration to the concrete CI producer
+// that will satisfy the gate: the repository and the gate-named job. A
+// declaration without this anchor is rejected — a capability promise
+// with nobody producing it is exactly the F14 disease.
+type CapabilityProducer struct {
+	Repo string `json:"repo"`
+	Job  string `json:"job"`
+}
+
+// CapabilityDeclaration is a project overlay's opt-in to one capability
+// gate: the capability key plus the mandatory producer anchor.
+type CapabilityDeclaration struct {
+	Capability string             `json:"capability"`
+	Producer   CapabilityProducer `json:"producer"`
+}
+
+// capabilityCatalog is the frozen gate↔capability mapping of the
+// company baseline 3.1.0 (quality-policy.schema.json
+// $defs.capability_gate_catalog). integration and contract are folded
+// into the same mechanism — no more document-level special cases.
+var capabilityCatalog = []CapabilityGate{
+	{GateID: GateCoverage, CapabilityKey: "quality.coverage", ProducerKind: producerKindPipelineJob},
+	{GateID: GateLintTypecheck, CapabilityKey: "quality.lint", ProducerKind: producerKindPipelineJob},
+	{GateID: GateLicense, CapabilityKey: "supply-chain.license", ProducerKind: producerKindPipelineJob},
+	{GateID: GateSAST, CapabilityKey: "security.sast", ProducerKind: producerKindPipelineJob},
+	{GateID: GateDependency, CapabilityKey: "supply-chain.dependency", ProducerKind: producerKindPipelineJob},
+	{GateID: GateImage, CapabilityKey: "supply-chain.image", ProducerKind: producerKindPipelineJob},
+	{GateID: GateIntegration, CapabilityKey: "integration.enabled", ProducerKind: producerKindPipelineJob},
+	{GateID: GateContract, CapabilityKey: "contract.openapi", ProducerKind: producerKindPipelineJob},
+}
+
+var (
+	capabilityKeyByGate = map[string]string{}
+	gateByCapabilityKey = map[string]string{}
+)
+
+func init() {
+	for _, entry := range capabilityCatalog {
+		capabilityKeyByGate[entry.GateID] = entry.CapabilityKey
+		gateByCapabilityKey[entry.CapabilityKey] = entry.GateID
+	}
+}
+
+// producerKindAllowed mirrors the frozen gate→producer-kinds assignment
+// ($defs.gate_producer_kinds): every gate accepts pipeline_job
+// producers; only the three engine-oracle gates also accept
+// control_plane.
+func producerKindAllowed(gate, kind string) bool {
+	switch kind {
+	case producerKindPipelineJob:
+		return true
+	case producerKindControlPlane:
+		return IsControlPlaneGate(gate)
+	default:
+		return false
+	}
 }
 
 // nonWaivablePrinciples are the frozen QG-RULE-005 set: they are
@@ -70,15 +148,17 @@ var (
 // Policy mirrors quality-policy.schema.json. Field order is frozen for
 // the canonical marshaling the digest is computed over.
 type Policy struct {
-	ID              string         `json:"id"`
-	Version         string         `json:"version"`
-	Scope           string         `json:"scope"`
-	Extends         *string        `json:"extends,omitempty"`
-	RequiredGates   []string       `json:"required_gates"`
-	Coverage        CoveragePolicy `json:"coverage"`
-	Security        SecurityPolicy `json:"security"`
-	FlakyRetryCount int            `json:"flaky_retry_count"`
-	Waiver          WaiverPolicy   `json:"waiver"`
+	ID              string                  `json:"id"`
+	Version         string                  `json:"version"`
+	Scope           string                  `json:"scope"`
+	Extends         *string                 `json:"extends,omitempty"`
+	RequiredGates   []string                `json:"required_gates"`
+	CapabilityGates []CapabilityGate        `json:"capability_gates,omitempty"`
+	Capabilities    []CapabilityDeclaration `json:"capabilities,omitempty"`
+	Coverage        CoveragePolicy          `json:"coverage"`
+	Security        SecurityPolicy          `json:"security"`
+	FlakyRetryCount int                     `json:"flaky_retry_count"`
+	Waiver          WaiverPolicy            `json:"waiver"`
 }
 
 type CoveragePolicy struct {
@@ -114,8 +194,8 @@ func (p *Policy) Validate() error {
 	if p.Extends != nil && !policyIDPattern.MatchString(*p.Extends) {
 		return fmt.Errorf("policy %s: extends %q is malformed", p.ID, *p.Extends)
 	}
-	if len(p.RequiredGates) < len(mandatoryGates) {
-		return fmt.Errorf("policy %s: required_gates has %d entries, minimum is %d", p.ID, len(p.RequiredGates), len(mandatoryGates))
+	if len(p.RequiredGates) < len(coreGates) {
+		return fmt.Errorf("policy %s: required_gates has %d entries, minimum is %d", p.ID, len(p.RequiredGates), len(coreGates))
 	}
 	seen := map[string]int{}
 	for _, gate := range p.RequiredGates {
@@ -127,10 +207,13 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("policy %s: required gate %q appears twice", p.ID, gate)
 		}
 	}
-	for _, gate := range mandatoryGates {
+	for _, gate := range coreGates {
 		if seen[gate] == 0 {
-			return fmt.Errorf("policy %s: mandatory gate %q is missing", p.ID, gate)
+			return fmt.Errorf("policy %s: core gate %q is missing", p.ID, gate)
 		}
+	}
+	if err := p.validateCapabilityTiers(); err != nil {
+		return err
 	}
 	if p.Coverage.ChangedLinesMinPercent < 80 || p.Coverage.ChangedLinesMinPercent > 100 {
 		return fmt.Errorf("policy %s: changed_lines_min_percent %v outside [80,100]", p.ID, p.Coverage.ChangedLinesMinPercent)
@@ -169,6 +252,92 @@ func (p *Policy) Validate() error {
 }
 
 // Digest returns the QG-RULE-002 policy digest: sha256 over the
+// validateCapabilityTiers enforces the D2 two-tier rules:
+//
+//   - the company scope owns the frozen capability catalog and carries
+//     no declarations; a project/task overlay inherits the catalog at
+//     resolution and must not repeat it
+//   - every declaration names a cataloged capability and MUST carry the
+//     producer anchor (repo + job) — the anti-F14 rule "声明能力 =
+//     声明生产者"
+//   - within one document, a capability gate listed in required_gates
+//     and its declaration are inseparable in BOTH directions: an
+//     undeclared capability gate is the forbidden "required gate with no
+//     producer", a declaration without the gate listed is drift
+func (p *Policy) validateCapabilityTiers() error {
+	if p.Scope == "company" {
+		if len(p.Capabilities) > 0 {
+			return fmt.Errorf("policy %s: the company baseline carries capability declarations; only a project overlay may declare capabilities", p.ID)
+		}
+		for _, entry := range p.CapabilityGates {
+			if _, known := gateKinds[entry.GateID]; !known {
+				return fmt.Errorf("policy %s: capability gate %q is outside the frozen enum", p.ID, entry.GateID)
+			}
+			if !producerKindAllowed(entry.GateID, entry.ProducerKind) {
+				return fmt.Errorf("policy %s: producer kind %q is not allowed for gate %q", p.ID, entry.ProducerKind, entry.GateID)
+			}
+		}
+		if !capabilityCatalogEqual(p.CapabilityGates) {
+			return fmt.Errorf("policy %s: company capability_gates must be exactly the frozen %d-entry catalog", p.ID, len(capabilityCatalog))
+		}
+		return nil
+	}
+	if len(p.CapabilityGates) > 0 {
+		return fmt.Errorf("policy %s: capability_gates belongs to the company baseline; a %s overlay inherits the catalog at resolution", p.ID, p.Scope)
+	}
+
+	declared := map[string]bool{}
+	for _, declaration := range p.Capabilities {
+		gate, known := gateByCapabilityKey[declaration.Capability]
+		if !known {
+			return fmt.Errorf("policy %s: capability %q is outside the frozen catalog", p.ID, declaration.Capability)
+		}
+		if declaration.Producer.Repo == "" || declaration.Producer.Job == "" {
+			return fmt.Errorf("policy %s: capability %q must anchor its producer (repo and job) — declaring a capability means declaring its producer", p.ID, declaration.Capability)
+		}
+		if declared[declaration.Capability] {
+			return fmt.Errorf("policy %s: capability %q is declared twice", p.ID, declaration.Capability)
+		}
+		declared[declaration.Capability] = true
+		if !slices.Contains(p.RequiredGates, gate) {
+			return fmt.Errorf("policy %s: capability %q is declared but its gate %q is not in required_gates", p.ID, declaration.Capability, gate)
+		}
+	}
+	for _, gate := range p.RequiredGates {
+		key, cataloged := capabilityKeyByGate[gate]
+		if cataloged && !declared[key] {
+			return fmt.Errorf("policy %s: capability gate %q is required without declaring capability %q — an undeclared capability gate has no guaranteed producer", p.ID, gate, key)
+		}
+	}
+	return nil
+}
+
+// capabilityCatalogEqual compares a capability_gates list against the
+// frozen catalog as a SET (document order only affects the digest, not
+// validity).
+func capabilityCatalogEqual(entries []CapabilityGate) bool {
+	if len(entries) != len(capabilityCatalog) {
+		return false
+	}
+	remaining := make([]CapabilityGate, len(capabilityCatalog))
+	copy(remaining, capabilityCatalog)
+	for _, entry := range entries {
+		match := -1
+		for index, candidate := range remaining {
+			if candidate == entry {
+				match = index
+				break
+			}
+		}
+		if match < 0 {
+			return false
+		}
+		remaining = append(remaining[:match], remaining[match+1:]...)
+	}
+	return true
+}
+
+// Digest returns the QG-RULE-002 policy digest: sha256 over the
 // canonical JSON encoding. Struct field order is frozen, gates keep
 // their document order, and lists are validated unique beforehand, so
 // identical inputs always produce identical bytes.
@@ -197,7 +366,8 @@ func ParsePolicy(raw []byte) (*Policy, error) {
 	}
 	known := map[string]bool{
 		"id": true, "version": true, "scope": true, "extends": true,
-		"required_gates": true, "coverage": true, "security": true,
+		"required_gates": true, "capability_gates": true, "capabilities": true,
+		"coverage": true, "security": true,
 		"flaky_retry_count": true, "waiver": true,
 	}
 	for field := range probe {

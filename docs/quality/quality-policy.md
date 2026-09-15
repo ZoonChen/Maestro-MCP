@@ -63,7 +63,14 @@ Policy：`draft → review → active → superseded/revoked`；Gate：`pending 
 
 ## 7. 字段、配置和格式校验
 
-策略必须符合 `quality-policy.schema.json`。公司默认 Required Gate 为 `baseline_freshness/boundary/policy_integrity/build/unit/lint_typecheck/coverage/secret_scan/sast/dependency/image/license`；涉及服务集成时增加 `integration`，接口变更增加 `contract`。changed-lines coverage 最低 80%，总覆盖率最多下降 0.5 个百分点。默认阻断 critical/high 安全发现；项目可增加 medium/low。License denylist 由公司策略维护。
+策略必须符合 `quality-policy.schema.json`。公司基线（3.1.0 起）为**两档制**：
+
+- **core 必达门（无条件）**：`build/unit/secret_scan/policy_integrity/baseline_freshness/boundary`——每门都有有保证的生产者（前三门为 CI pipeline job，后三门为评估引擎控制面自证，见 QUAL-GATES-EVIDENCE §3.1）。
+- **capability_gates（声明才必达）**：`coverage→quality.coverage`、`lint_typecheck→quality.lint`、`license→supply-chain.license`、`sast→security.sast`、`dependency→supply-chain.dependency`、`image→supply-chain.image`、`integration→integration.enabled`、`contract→contract.openapi`。`integration/contract` 自本档起收编进统一机制，不再作文档特例。
+
+项目 overlay 通过 `capabilities` 数组声明能力：**声明能力 = 声明生产者**——每条声明必带 producer 锚（`repo` + gate 同名 `job`），只写键名被 schema 拒绝。effective 必达集 = core ∪ 已声明能力对应门；未声明的 capability 门不进 gate_snapshots（不再产生无生产者的永久 pending）。core 不可被 overlay 移除（QG-RULE-001 棘轮不变）；能力声明只增不减。
+
+changed-lines coverage 最低 80%，总覆盖率最多下降 0.5 个百分点。默认阻断 critical/high 安全发现；项目可增加 medium/low。License denylist 由公司策略维护。
 
 ## 8. 并发、幂等和一致性
 

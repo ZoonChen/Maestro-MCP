@@ -41,6 +41,15 @@ Pipeline/job webhook、周期对账、Artifact 完成、source/target/policy 变
 - **无执行记录不铸证**：工作项不存在任何 executions 记录时，boundary 不产出自证 Evidence（该门交由 CI producer 或保持 pending）；存在执行记录但 runner 未注册或无批准 Profile 时 fail-closed 并在理由中点名缺口。
 - **历史元组重演**：携带非空 policy version 的元组按该版本重演评估（重放钉），`baseline_freshness` 判定钉住版本与 active 版本的一致性——漂移 fail-closed，而不是静默重定基线。
 
+### 3.2 capability 门与声明锚（D2）
+
+公司基线 3.1.0 起，Required Gate 分两档（映射冻结于 `quality-policy.schema.json` `$defs.capability_key` 与 `capability_gates` 目录）：
+
+- **core 门（无条件必达）**：`build/unit/secret_scan`（CI pipeline job 生产）+ 三门引擎 oracle（§3.1 控制面自证生产）。core 不可被 overlay 移除（QG-RULE-001）。
+- **capability 门（声明才必达）**：`coverage/lint_typecheck/license/sast/dependency/image/integration/contract` 八门。项目 overlay 在 `capabilities` 数组中声明对应 `capability_key` 后才进入 effective 必达集；**每条声明必带 producer 锚（repo + gate 同名 job）——声明能力 = 声明生产者**，无锚声明被 schema 与引擎双重拒绝。这是对"无生产者必达门"（F14 病根）的制度性防御。
+- **未声明即不评估**：effective = core ∪ 已声明能力门。未声明的 capability 门不进 gate_snapshots——同名的 CI 证据即使被摄取也只是未被评估的记录，不再形成永不消解的 pending 噪音。
+- **声明与门列表一致**：overlay 的 `required_gates` 出现 capability 门 ⇔ 同文档声明对应能力（双向强制）；目录本身（gate↔capability↔producer 种类配对）为公司层冻结契约，overlay 不得携带副本。
+
 ## 4. 正常交互及时序图
 
 ```mermaid
@@ -89,7 +98,7 @@ Artifact 使用服务端下载和短期授权链接，禁止把 GitLab Token 下
 
 ## 10. 质量门禁、证据与 fail-closed 规则
 
-Baseline、boundary、policy integrity、build、unit、lint/typecheck、coverage 与策略要求的 integration/contract/security Gate 必须各有权威 Evidence。Job 允许失败、条件规则未创建 Job、Pipeline 来源不符合 MR 规则、状态发布到错误 SHA 或 status API 冲突未解决均阻断。External Status Check 若启用，只作为同一 Evidence 的附加执行点，不形成第二事实源。
+core 门（baseline、boundary、policy integrity、build、unit、secret_scan）与项目已声明能力对应的 capability 门（§3.2；含 lint/typecheck、coverage、integration/contract/security 扫描族）必须各有权威 Evidence。未声明能力的门不参与评估，也不得以其他门的 Evidence 顶替。Job 允许失败、条件规则未创建 Job、Pipeline 来源不符合 MR 规则、状态发布到错误 SHA 或 status API 冲突未解决均阻断。External Status Check 若启用，只作为同一 Evidence 的附加执行点，不形成第二事实源。
 
 ## 11. 指标、SLO、告警和运维动作
 

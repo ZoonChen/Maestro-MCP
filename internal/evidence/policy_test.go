@@ -17,17 +17,30 @@ func testCompanyPolicy() *Policy {
 	return policy
 }
 
-// projectOverlay clones the company baseline as a valid project overlay.
+// projectOverlay clones the company baseline as a valid project overlay:
+// the capability catalog stays company-owned, so the clone drops it.
 func projectOverlay(id string, mutate func(*Policy)) *Policy {
 	overlay := *testCompanyPolicy()
 	overlay.ID = id
 	overlay.Scope = "project"
 	extends := "company-baseline"
 	overlay.Extends = &extends
+	overlay.CapabilityGates = nil
+	overlay.Capabilities = nil
 	if mutate != nil {
 		mutate(&overlay)
 	}
 	return &overlay
+}
+
+// declaredCapability is the canonical way a test overlay opts into a
+// capability gate: the declaration (with producer anchor) AND the gate
+// listed in required_gates — the two are inseparable.
+func declaredCapability(p *Policy, key, gate, repo, job string) {
+	p.Capabilities = append(p.Capabilities, CapabilityDeclaration{
+		Capability: key, Producer: CapabilityProducer{Repo: repo, Job: job},
+	})
+	p.RequiredGates = append(p.RequiredGates, gate)
 }
 
 // sha builds a distinct 40-char hex-only pseudo-SHA per seed (decimal
@@ -40,10 +53,91 @@ func TestCompanyPolicyLoadsAndValidates(t *testing.T) {
 	policy := testCompanyPolicy()
 	require.NoError(t, policy.Validate())
 	assert.Equal(t, "company", policy.Scope)
-	assert.Len(t, policy.RequiredGates, 12)
+	assert.Equal(t, "3.1.0", policy.Version)
+	assert.Equal(t, []string{
+		GateBuild, GateUnit, GateSecretScan,
+		GatePolicyIntegrity, GateBaselineFreshness, GateBoundary,
+	}, policy.RequiredGates)
+	require.Len(t, policy.CapabilityGates, len(capabilityCatalog))
+	for _, entry := range policy.CapabilityGates {
+		assert.Equal(t, producerKindPipelineJob, entry.ProducerKind, entry.GateID)
+	}
+	assert.Empty(t, policy.Capabilities, "the company baseline declares no capabilities")
 	assert.Equal(t, 80.0, policy.Coverage.ChangedLinesMinPercent)
 	assert.Equal(t, 0.5, policy.Coverage.MaxTotalDropPoints)
 	assert.Equal(t, []string{"critical", "high"}, policy.Security.BlockSeverities)
+}
+
+func TestPolicyValidateRejectsCapabilityTierDrift(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Policy)
+	}{
+		{"company drops the capability catalog", func(p *Policy) { p.CapabilityGates = nil }},
+		{"company shrinks the catalog", func(p *Policy) { p.CapabilityGates = p.CapabilityGates[:7] }},
+		{"company re-pairs a catalog entry", func(p *Policy) {
+			p.CapabilityGates[0].CapabilityKey = "security.sast"
+		}},
+		{"company declares a capability", func(p *Policy) {
+			p.Capabilities = []CapabilityDeclaration{{
+				Capability: "quality.coverage", Producer: CapabilityProducer{Repo: "acme/backend", Job: "coverage"},
+			}}
+		}},
+		{"overlay repeats the catalog", func(p *Policy) {
+			p.Scope = "project"
+			p.CapabilityGates = testCompanyPolicy().CapabilityGates
+		}},
+		{"overlay requires a capability gate without declaring it", func(p *Policy) {
+			p.Scope = "project"
+			p.RequiredGates = append(p.RequiredGates, GateCoverage)
+		}},
+		{"overlay declares an unknown capability", func(p *Policy) {
+			p.Scope = "project"
+			p.Capabilities = []CapabilityDeclaration{{
+				Capability: "quality.fuzz", Producer: CapabilityProducer{Repo: "acme/backend", Job: "coverage"},
+			}}
+			p.RequiredGates = append(p.RequiredGates, GateCoverage)
+		}},
+		{"overlay declaration lacks the producer anchor", func(p *Policy) {
+			p.Scope = "project"
+			p.Capabilities = []CapabilityDeclaration{{Capability: "quality.coverage"}}
+			p.RequiredGates = append(p.RequiredGates, GateCoverage)
+		}},
+		{"overlay declaration names no job", func(p *Policy) {
+			p.Scope = "project"
+			p.Capabilities = []CapabilityDeclaration{{
+				Capability: "quality.coverage", Producer: CapabilityProducer{Repo: "acme/backend"},
+			}}
+			p.RequiredGates = append(p.RequiredGates, GateCoverage)
+		}},
+		{"overlay declares a capability without listing its gate", func(p *Policy) {
+			p.Scope = "project"
+			p.Capabilities = []CapabilityDeclaration{{
+				Capability: "quality.coverage", Producer: CapabilityProducer{Repo: "acme/backend", Job: "coverage"},
+			}}
+		}},
+		{"overlay declares the same capability twice", func(p *Policy) {
+			p.Scope = "project"
+			declaredCapability(p, "quality.coverage", GateCoverage, "acme/backend", "coverage")
+			p.Capabilities = append(p.Capabilities, p.Capabilities[0])
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := testCompanyPolicy()
+			tc.mutate(policy)
+			assert.Error(t, policy.Validate())
+		})
+	}
+}
+
+func TestPolicyValidateAcceptsConsistentOverlay(t *testing.T) {
+	overlay := projectOverlay("acme-capable", func(p *Policy) {
+		declaredCapability(p, "quality.coverage", GateCoverage, "acme/backend", "coverage")
+		declaredCapability(p, "contract.openapi", GateContract, "acme/contracts", "contract")
+	})
+	assert.NoError(t, overlay.Validate())
+	assert.Len(t, overlay.RequiredGates, len(coreGates)+2)
 }
 
 func TestPolicyValidateRejectsDrift(t *testing.T) {

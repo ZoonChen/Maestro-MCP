@@ -19,9 +19,59 @@ func TestResolveEffectiveWithoutOverlay(t *testing.T) {
 	assert.Equal(t, resolved.PolicyDigest, again.PolicyDigest, "no-overlay resolution is deterministic")
 }
 
+func TestResolveEffectiveCoreOnlyForUndeclaredCapabilities(t *testing.T) {
+	// D2-4 shape: a pilot with zero declarations gets exactly the core
+	// six — undeclared capability gates are not required and never
+	// surface as pending snapshots.
+	resolved, err := ResolveEffective(testCompanyPolicy(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		GateBuild, GateUnit, GateSecretScan,
+		GatePolicyIntegrity, GateBaselineFreshness, GateBoundary,
+	}, resolved.Policy.RequiredGates)
+
+	// An overlay that declares nothing resolves to the same six.
+	empty := projectOverlay("acme-plain", nil)
+	overlayResolved, err := ResolveEffective(testCompanyPolicy(), empty)
+	require.NoError(t, err)
+	assert.Equal(t, resolved.Policy.RequiredGates, overlayResolved.Policy.RequiredGates)
+	for _, gate := range overlayResolved.Policy.RequiredGates {
+		assert.NotContains(t, []string{
+			GateCoverage, GateLintTypecheck, GateLicense, GateSAST,
+			GateDependency, GateImage, GateIntegration, GateContract,
+		}, gate)
+	}
+}
+
+func TestResolveEffectiveCapabilityDeclarationsAddGates(t *testing.T) {
+	overlay := projectOverlay("acme-capable", func(p *Policy) {
+		declaredCapability(p, "quality.coverage", GateCoverage, "acme/backend", "coverage")
+		declaredCapability(p, "security.sast", GateSAST, "acme/backend", "sast")
+		p.Coverage.ChangedLinesMinPercent = 85
+	})
+	resolved, err := ResolveEffective(testCompanyPolicy(), overlay)
+	require.NoError(t, err)
+
+	// required = core ∪ declared: the two declared capability gates join
+	// after the frozen core order, sorted.
+	require.Len(t, resolved.Policy.RequiredGates, len(coreGates)+2)
+	assert.Equal(t, []string{GateCoverage, GateSAST}, resolved.Policy.RequiredGates[len(coreGates):])
+	assert.Equal(t, 85.0, resolved.Policy.Coverage.ChangedLinesMinPercent)
+
+	// The declarations ride on the effective document (digest covers
+	// them); the catalog stays company-owned.
+	require.Len(t, resolved.Policy.Capabilities, 2)
+	assert.Empty(t, resolved.Policy.CapabilityGates)
+
+	// Determinism across runs.
+	again, err := ResolveEffective(testCompanyPolicy(), overlay)
+	require.NoError(t, err)
+	assert.Equal(t, resolved.PolicyDigest, again.PolicyDigest)
+}
+
 func TestResolveEffectiveStrengthensMonotonically(t *testing.T) {
 	overlay := projectOverlay("acme-strict", func(p *Policy) {
-		p.RequiredGates = append(p.RequiredGates, GateIntegration)
+		declaredCapability(p, "integration.enabled", GateIntegration, "acme/integration", "integration")
 		p.Coverage.ChangedLinesMinPercent = 85
 		p.Coverage.MaxTotalDropPoints = 0.3
 		p.Security.BlockSeverities = []string{"critical", "high", "medium"}
@@ -44,13 +94,14 @@ func TestResolveEffectiveStrengthensMonotonically(t *testing.T) {
 
 	// Gate additions land after the frozen company order, sorted.
 	withTwo := projectOverlay("acme-strict", func(p *Policy) {
-		p.RequiredGates = append(p.RequiredGates, GateIntegration, GateContract)
+		declaredCapability(p, "integration.enabled", GateIntegration, "acme/integration", "integration")
+		declaredCapability(p, "contract.openapi", GateContract, "acme/contracts", "contract")
 	})
 	twoResolved, err := ResolveEffective(testCompanyPolicy(), withTwo)
 	require.NoError(t, err)
 	assert.Equal(t,
 		[]string{GateContract, GateIntegration},
-		twoResolved.Policy.RequiredGates[12:])
+		twoResolved.Policy.RequiredGates[len(coreGates):])
 }
 
 func TestResolveEffectiveRejectsWeakening(t *testing.T) {
@@ -61,7 +112,7 @@ func TestResolveEffectiveRejectsWeakening(t *testing.T) {
 	}{
 		{
 			name:          "drops a required gate",
-			overlayMutate: func(p *Policy) { p.RequiredGates = p.RequiredGates[:11] },
+			overlayMutate: func(p *Policy) { p.RequiredGates = p.RequiredGates[:len(p.RequiredGates)-1] },
 		},
 		{
 			name: "lowers the changed-lines floor",
