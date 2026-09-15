@@ -298,7 +298,8 @@ func TestJobEvidenceDrivesGateEvaluation(t *testing.T) {
 		states[snapshot.Check] = snapshot.Status
 	}
 	assert.Equal(t, "passed", states["unit"], "the gate-named job produced passing evidence")
-	assert.Equal(t, "pending", states["lint_typecheck"], "waiting evidence has not re-arrived yet")
+	assert.Equal(t, "pending", states["build"], "waiting evidence has not re-arrived yet")
+	assert.NotContains(t, states, "lint_typecheck", "undeclared capability gates never surface (3.1.0)")
 	assert.NotContains(t, states, "deploy-unknown", "unknown job names never map to a gate")
 	assert.NotContains(t, states, "deploy", "no fabricated gate for unknown producers")
 

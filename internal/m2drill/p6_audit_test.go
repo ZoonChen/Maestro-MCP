@@ -72,7 +72,8 @@ func newAuditFixture(t *testing.T) *drillFixture {
 	}
 
 	// Verified merge_gate evidence for unit, plus a diagnostic record
-	// for sast that must never satisfy its gate.
+	// for secret_scan that must never satisfy its gate (a core CI gate
+	// under the 3.1.0 two-tier baseline).
 	applied, err := ingest.IngestJob(ctx, auditProject, gitlab.JobRecord{
 		InstanceID: drillInstance, GitlabProject: 9500, PipelineID: 700, JobID: 7001,
 		Name: "unit", Status: "success", Ref: auditBranch,
@@ -81,7 +82,7 @@ func newAuditFixture(t *testing.T) *drillFixture {
 	require.True(t, applied, "the verified unit job must produce evidence")
 	require.NoError(t, fixture.pg.Quality().AppendEvidence(ctx, &evidence.Record{
 		EvidenceID: "018f7a00-0000-7000-8000-0000000000cc", ProjectID: auditProject,
-		WorkItemID: auditWork, Kind: evidence.GateSAST, Authority: evidence.AuthorityDiagnostic,
+		WorkItemID: auditWork, Kind: evidence.GateSecretScan, Authority: evidence.AuthorityDiagnostic,
 		Status: evidence.EvidencePassed, SourceSHA: auditSource, TargetSHA: auditTarget,
 		PolicyVersion: company.Version, Attempt: 1,
 		Producer: evidence.Producer{Type: "runner_profile", ID: "local", Version: "1"},
@@ -96,8 +97,8 @@ func newAuditFixture(t *testing.T) *drillFixture {
 	tuple := evidence.Tuple{ProjectID: auditProject, WorkItemID: auditWork,
 		SourceSHA: auditSource, TargetSHA: auditTarget, PolicyVersion: resolved.Policy.Version}
 	waiver, err := evidence.NewWaiver(resolved, evidence.WaiverRequestInput{
-		GateID: evidence.StableGateID(tuple, evidence.GateLintTypecheck),
-		Check:  evidence.GateLintTypecheck, SourceSHA: auditSource,
+		GateID: evidence.StableGateID(tuple, evidence.GateBuild),
+		Check:  evidence.GateBuild, SourceSHA: auditSource,
 		MergeRequestIID: 60, Requester: "audit-requester",
 		Reason:    "audit fixture waiver, ticket-000",
 		ExpiresAt: time.Now().Add(48 * time.Hour),
@@ -140,11 +141,11 @@ func TestAuditEvidenceAuthority(t *testing.T) {
 		  AND (gitlab_pipeline_id IS NOT NULL OR gitlab_job_id IS NOT NULL)`).Scan(&leak))
 	assert.Zero(t, leak, "diagnostic rows carry no provider lineage")
 
-	// Behavioral: the diagnostic PASS on sast leaves the gate pending.
+	// Behavioral: the diagnostic PASS on secret_scan leaves the gate pending.
 	snapshots, err := f.pg.Quality().ListGateSnapshots(ctx, auditProject, auditWork)
 	require.NoError(t, err)
 	for _, snapshot := range snapshots {
-		if snapshot.Check == evidence.GateSAST && snapshot.SourceSHA == auditSource {
+		if snapshot.Check == evidence.GateSecretScan && snapshot.SourceSHA == auditSource {
 			assert.Equal(t, "pending", snapshot.Status,
 				"diagnostic evidence never satisfies a required gate")
 		}
@@ -199,7 +200,7 @@ func TestAuditWaiverProcess(t *testing.T) {
 	snapshots, err := f.pg.Quality().ListGateSnapshots(ctx, auditProject, auditWork)
 	require.NoError(t, err)
 	for _, snapshot := range snapshots {
-		if snapshot.Check == evidence.GateLintTypecheck && snapshot.SourceSHA == auditSource {
+		if snapshot.Check == evidence.GateBuild && snapshot.SourceSHA == auditSource {
 			assert.Equal(t, "waived", snapshot.Status, "the validly approved waiver applies")
 		}
 	}

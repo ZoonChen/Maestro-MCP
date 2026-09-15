@@ -144,20 +144,27 @@ func strengtheningOverlayJSON(id, semver string, strengthen bool) string {
 	severities := `["critical","high"]`
 	floor := 80.0
 	denylist := `["AGPL-3.0-only"]` // subset of the company denylist: weakening
+	// The 3.1.0 overlay: core six, plus (strengthening only) the coverage
+	// capability declared WITH its producer anchor — the only legal way to
+	// add a gate.
+	gates := `["build","unit","secret_scan","policy_integrity","baseline_freshness","boundary"]`
+	capabilities := ""
 	if strengthen {
 		severities = `["critical","high","medium"]`
 		floor = 85
 		denylist = `["AGPL-3.0-only","AGPL-3.0-or-later"]`
+		gates = `["build","unit","secret_scan","policy_integrity","baseline_freshness","boundary","coverage"]`
+		capabilities = `,"capabilities": [{"capability": "quality.coverage", "producer": {"repo": "acme/backend", "job": "coverage"}}]`
 	}
 	return fmt.Sprintf(`{
 		"id": %q, "version": %q, "scope": "project", "extends": "company-baseline",
-		"required_gates": ["baseline_freshness","boundary","policy_integrity","build","unit","lint_typecheck","coverage","secret_scan","sast","dependency","image","license"],
+		"required_gates": %s%s,
 		"coverage": {"changed_lines_min_percent": %v, "max_total_drop_points": 0.5},
 		"security": {"block_severities": %s, "license_denylist": %s},
 		"flaky_retry_count": 1,
 		"waiver": {"max_days": 7, "requires_distinct_approver": true,
 			"non_waivable_gates": ["identity_isolation","sha_integrity","policy_integrity","webhook_authenticity"]}
-	}`, id, semver, floor, severities, denylist)
+	}`, id, semver, gates, capabilities, floor, severities, denylist)
 }
 
 func TestQualityPolicyEndpoints(t *testing.T) {
@@ -260,7 +267,7 @@ func seedVerdictWithGate(t *testing.T, f *qualityFixture) evidence.StoredSnapsho
 
 	snapshots, err := f.pg.Quality().ListGateSnapshots(context.Background(), qProjectID, qWorkItemID)
 	require.NoError(t, err)
-	require.Len(t, snapshots, 12)
+	require.Len(t, snapshots, len(resolved.Policy.RequiredGates))
 	for _, snapshot := range snapshots {
 		if snapshot.Check == evidence.GateUnit {
 			return snapshot
@@ -278,7 +285,9 @@ func TestQualityGatesAndEvidenceReads(t *testing.T) {
 		"/api/v3/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/gates", nil, "")
 	require.Equal(t, http.StatusOK, gates.Code)
 	assert.Contains(t, gates.Body.String(), `"passed"`)
-	assert.Contains(t, gates.Body.String(), `"lint_typecheck"`)
+	assert.Contains(t, gates.Body.String(), `"secret_scan"`)
+	assert.NotContains(t, gates.Body.String(), `"lint_typecheck"`,
+		"undeclared capability gates do not surface as snapshots (3.1.0 two-tier)")
 
 	evidenceList := f.request(t, f.devTK, http.MethodGet,
 		"/api/v3/projects/"+qProjectID+"/work-items/"+qWorkItemID+"/evidence", nil, "")

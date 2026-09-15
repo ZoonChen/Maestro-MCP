@@ -16,7 +16,7 @@ func evalTuple() Tuple {
 		WorkItemID:    "018f7000-0000-7000-8000-000000000002",
 		SourceSHA:     sha(40),
 		TargetSHA:     sha(41)[:40],
-		PolicyVersion: "3.0.0",
+		PolicyVersion: testCompanyPolicy().Version,
 	}
 }
 
@@ -71,7 +71,7 @@ func TestEvaluateAllPassedIsReady(t *testing.T) {
 	verdict, err := Evaluate(evalTuple(), resolved, nil, fullPassSet(), nil, evalNow)
 	require.NoError(t, err)
 	assert.True(t, verdict.Ready)
-	require.Len(t, verdict.Gates, 12)
+	require.Len(t, verdict.Gates, len(coreGates))
 	for _, gate := range verdict.Gates {
 		assert.Equal(t, GatePassed, gate.State, gate.Check)
 		assert.Empty(t, gate.Reason, gate.Check)
@@ -82,7 +82,7 @@ func TestEvaluateMissingEvidenceBlocks(t *testing.T) {
 	resolved, _ := ResolveEffective(testCompanyPolicy(), nil)
 	records := []Record{}
 	for index, check := range testCompanyPolicy().RequiredGates {
-		if check == GateSAST {
+		if check == GateBuild {
 			continue
 		}
 		records = append(records, gateRecord("ev-"+string(rune('a'+index))+"-1", check, AuthorityMergeGate, EvidencePassed, 1))
@@ -91,28 +91,28 @@ func TestEvaluateMissingEvidenceBlocks(t *testing.T) {
 	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready)
-	sast := gateState(t, verdict, GateSAST)
-	assert.Equal(t, GatePending, sast.State)
-	assert.Equal(t, "missing", sast.Reason)
+	build := gateState(t, verdict, GateBuild)
+	assert.Equal(t, GatePending, build.State)
+	assert.Equal(t, "missing", build.Reason)
 }
 
 func TestEvaluateDiagnosticNeverSatisfies(t *testing.T) {
 	resolved, _ := ResolveEffective(testCompanyPolicy(), nil)
 	records := []Record{}
 	for index, check := range testCompanyPolicy().RequiredGates {
-		if check == GateSAST {
+		if check == GateBuild {
 			continue
 		}
 		records = append(records, gateRecord("ev-"+string(rune('a'+index))+"-1", check, AuthorityMergeGate, EvidencePassed, 1))
 	}
-	records = append(records, gateRecord("ev-diag-1", GateSAST, AuthorityDiagnostic, EvidencePassed, 1))
+	records = append(records, gateRecord("ev-diag-1", GateBuild, AuthorityDiagnostic, EvidencePassed, 1))
 
 	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready, "diagnostic evidence must not satisfy a required gate")
-	sast := gateState(t, verdict, GateSAST)
-	assert.Equal(t, GatePending, sast.State)
-	assert.Equal(t, "missing merge_gate authority (diagnostic evidence present)", sast.Reason)
+	build := gateState(t, verdict, GateBuild)
+	assert.Equal(t, GatePending, build.State)
+	assert.Equal(t, "missing merge_gate authority (diagnostic evidence present)", build.Reason)
 }
 
 func TestEvaluateFailureDominatesAndStatusesMap(t *testing.T) {
@@ -144,17 +144,17 @@ func TestEvaluateFailureDominatesAndStatusesMap(t *testing.T) {
 func TestEvaluateMultiProducerAllMustPass(t *testing.T) {
 	resolved, _ := ResolveEffective(testCompanyPolicy(), nil)
 	records := fullPassSet()
-	pass := gateRecord("ev-sast-a", GateSAST, AuthorityMergeGate, EvidencePassed, 1)
+	pass := gateRecord("ev-unit-a", GateUnit, AuthorityMergeGate, EvidencePassed, 1)
 	pass.Producer.ID = "scanner-a"
-	fail := gateRecord("ev-sast-b", GateSAST, AuthorityMergeGate, EvidenceFailed, 1)
+	fail := gateRecord("ev-unit-b", GateUnit, AuthorityMergeGate, EvidenceFailed, 1)
 	fail.Producer.ID = "scanner-b"
 	records = append(records, pass, fail)
 
 	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready, "a standing failure cannot be covered by another producer's success")
-	sast := gateState(t, verdict, GateSAST)
-	assert.Equal(t, GateFailed, sast.State)
+	unit := gateState(t, verdict, GateUnit)
+	assert.Equal(t, GateFailed, unit.State)
 }
 
 func TestEvaluateNewestAttemptWinsPerProducer(t *testing.T) {
@@ -264,7 +264,7 @@ func TestStableGateIDDriftsOnTupleChange(t *testing.T) {
 	assert.NotEqual(t, base, StableGateID(changedSHA, GateUnit), "SHA drift mints a new identity")
 
 	changedPolicy := tup
-	changedPolicy.PolicyVersion = "3.1.0"
+	changedPolicy.PolicyVersion = "9.9.9"
 	assert.NotEqual(t, base, StableGateID(changedPolicy, GateUnit), "policy drift mints a new identity")
 
 	assert.Equal(t, base, StableGateID(tup, GateUnit), "stable for the same tuple")

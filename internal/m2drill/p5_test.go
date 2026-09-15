@@ -307,14 +307,16 @@ func TestP5ConvergencePlaybook(t *testing.T) {
 	})
 
 	t.Run("gate evidence converges and a missing gate blocks ready", func(t *testing.T) {
-		// A second pipeline run re-reports every gate EXCEPT sast: the
-		// out-of-order gates land, sast stays missing.
+		// A second pipeline run re-reports every gate EXCEPT secret_scan:
+		// the out-of-order gates land, secret_scan stays missing. (A core
+		// CI gate — the 3.1.0 baseline's capability gates like sast are
+		// not required for an undeclared project.)
 		require.Equal(t, http.StatusAccepted, f.deliver(t, "evt-pipe-501", "pipeline",
 			fmt.Sprintf(`{"object_kind": "pipeline", "project": {"id": 9500},
 				"object_attributes": {"id": 501, "sha": %q, "ref": %q, "status": "success", "source": "merge_request_event"}}`, sourceA, drillBranch)).Code)
 		company := testCompany(t)
 		for seq, check := range company.RequiredGates {
-			if check == "sast" {
+			if check == "secret_scan" {
 				continue // the webhook loss the playbook asks about
 			}
 			require.Equal(t, http.StatusAccepted, f.deliver(t, "evt-job2-"+check, "job", jobEvent(501, seq, check, "success")).Code)
@@ -324,7 +326,7 @@ func TestP5ConvergencePlaybook(t *testing.T) {
 		states := f.gateStates(t)
 		for _, check := range company.RequiredGates {
 			expected := "passed"
-			if check == "sast" {
+			if check == "secret_scan" {
 				expected = "pending"
 			}
 			assert.Equal(t, expected, states[check+"/"+shortSHA(sourceA)], check)
@@ -340,7 +342,8 @@ func TestP5ConvergencePlaybook(t *testing.T) {
 		var stale int
 		require.NoError(t, f.db.QueryRow(`
 			SELECT count(*) FROM gate_snapshots WHERE status = 'stale'`).Scan(&stale))
-		assert.GreaterOrEqual(t, stale, 12, "every old-tuple snapshot went stale")
+		driftCompany := testCompany(t)
+		assert.GreaterOrEqual(t, stale, len(driftCompany.RequiredGates), "every old-tuple snapshot went stale")
 
 		states := f.gateStates(t)
 		assert.Equal(t, "pending", states["unit/"+shortSHA(newSource)],

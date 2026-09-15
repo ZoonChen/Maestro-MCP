@@ -296,5 +296,9 @@ func qualityOverlayFor(id string) *evidence.Policy {
 	overlay.Scope = "project"
 	extends := "company-baseline"
 	overlay.Extends = &extends
+	// The capability catalog is company-owned; overlays inherit it at
+	// resolution and must not carry a copy.
+	overlay.CapabilityGates = nil
+	overlay.Capabilities = nil
 	return &overlay
 }

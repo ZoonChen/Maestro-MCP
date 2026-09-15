@@ -32,9 +32,18 @@ func (e *ErrPolicyWeakened) Error() string {
 
 // ResolveEffective merges the company baseline with an optional project
 // overlay (task overlays are a future scope; the merge rules are the
-// same). The overlay may only ADD gates, RAISE the changed-lines floor,
+// same). The effective required set is the two-tier formula (D2):
+//
+//	required = core ∪ {g ∈ capability_gates : g.capability ∈ project.capabilities}
+//
+// The overlay may only ADD gates (via capability declarations — every
+// addition carries its producer anchor), RAISE the changed-lines floor,
 // TIGHTEN the total-drop ceiling, and EXPAND blocking severities and the
-// license denylist. Anything else fails closed.
+// license denylist. Anything else fails closed. Core gates can never be
+// removed by an overlay (the ratchet is unchanged); capability
+// declarations only ever add gates. Undeclared capability gates are not
+// required — and therefore never appear as gate snapshots, ending the
+// permanent-pending noise of producerless gates.
 func ResolveEffective(company *Policy, project *Policy) (*EffectivePolicy, error) {
 	if err := company.Validate(); err != nil {
 		return nil, fmt.Errorf("company baseline: %w", err)
@@ -74,8 +83,11 @@ func ResolveEffective(company *Policy, project *Policy) (*EffectivePolicy, error
 		return nil, err
 	}
 
-	// QG-RULE-001 monotonic strengthening. Gate additions only: removing
-	// or reordering away a company gate is weakening.
+	// QG-RULE-001 monotonic strengthening. The company core is the
+	// floor: removing or reordering away a core gate is weakening. Gate
+	// additions arrive only through capability declarations (each already
+	// validated to carry its producer anchor), so the union below is
+	// exactly core ∪ declared-capability gates.
 	for _, gate := range company.RequiredGates {
 		if !slices.Contains(project.RequiredGates, gate) {
 			return nil, &ErrPolicyWeakened{Reason: fmt.Sprintf("project %s drops required gate %q", project.ID, gate)}
@@ -114,6 +126,11 @@ func ResolveEffective(company *Policy, project *Policy) (*EffectivePolicy, error
 		BlockSeverities: append([]string(nil), project.Security.BlockSeverities...),
 		LicenseDenylist: append([]string(nil), project.Security.LicenseDenylist...),
 	}
+	// Declarations ride along so the digest (and policy_integrity) sees
+	// them; the capability CATALOG stays company-owned — a project-scoped
+	// document must not carry one.
+	effective.Capabilities = append([]CapabilityDeclaration(nil), project.Capabilities...)
+	effective.CapabilityGates = nil
 	// The merged document is project-scoped: it is the policy in force
 	// for this project, provenance records both contributing layers.
 	effective.Scope = "project"

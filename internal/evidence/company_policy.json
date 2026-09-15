@@ -1,20 +1,24 @@
 {
   "id": "company-baseline",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "scope": "company",
   "required_gates": [
-    "baseline_freshness",
-    "boundary",
-    "policy_integrity",
     "build",
     "unit",
-    "lint_typecheck",
-    "coverage",
     "secret_scan",
-    "sast",
-    "dependency",
-    "image",
-    "license"
+    "policy_integrity",
+    "baseline_freshness",
+    "boundary"
+  ],
+  "capability_gates": [
+    {"gate_id": "coverage", "capability_key": "quality.coverage", "producer_kind": "pipeline_job"},
+    {"gate_id": "lint_typecheck", "capability_key": "quality.lint", "producer_kind": "pipeline_job"},
+    {"gate_id": "license", "capability_key": "supply-chain.license", "producer_kind": "pipeline_job"},
+    {"gate_id": "sast", "capability_key": "security.sast", "producer_kind": "pipeline_job"},
+    {"gate_id": "dependency", "capability_key": "supply-chain.dependency", "producer_kind": "pipeline_job"},
+    {"gate_id": "image", "capability_key": "supply-chain.image", "producer_kind": "pipeline_job"},
+    {"gate_id": "integration", "capability_key": "integration.enabled", "producer_kind": "pipeline_job"},
+    {"gate_id": "contract", "capability_key": "contract.openapi", "producer_kind": "pipeline_job"}
   ],
   "coverage": {
     "changed_lines_min_percent": 80,

@@ -151,8 +151,8 @@ func TestVerdictReEvaluationUpsertsAndStales(t *testing.T) {
 			passed++
 		}
 	}
-	assert.Equal(t, 12, stale, "the drifted evaluation stales the old tuple")
-	assert.Equal(t, 12, passed, "the new tuple starts pending")
+	assert.Equal(t, len(resolved.Policy.RequiredGates), stale, "the drifted evaluation stales the old tuple")
+	assert.Equal(t, len(resolved.Policy.RequiredGates), passed, "the new tuple starts pending")
 }
 
 func TestMigrationValidationDrift(t *testing.T) {

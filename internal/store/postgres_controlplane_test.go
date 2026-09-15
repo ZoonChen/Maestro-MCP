@@ -110,7 +110,7 @@ func TestControlPlaneSelfAttestationThroughService(t *testing.T) {
 	}
 	assert.Equal(t, evidence.GatePassed, gateStatus(t, pg, projectID, workItemID, verdict.Tuple, evidence.GateBuild))
 	assert.False(t, verdict.Ready, "CI gates without producers still block")
-	assert.Equal(t, "3.0.0", verdict.Tuple.PolicyVersion, "the live path binds the active version")
+	assert.Equal(t, "3.1.0", verdict.Tuple.PolicyVersion, "the live path binds the active version")
 
 	// The self-attestation landed as append-only evidence rows.
 	var controlPlaneRows int
@@ -251,6 +251,87 @@ func TestControlPlaneA14TupleReplay(t *testing.T) {
 	for _, check := range []string{evidence.GatePolicyIntegrity, evidence.GateBaselineFreshness, evidence.GateBoundary} {
 		assert.Equal(t, evidence.GatePassed, gateStatus(t, pg, projectID, workItemID, verdict.Tuple, check), check)
 	}
+}
+
+// TestCapabilityBaselinePilotShape is the D2-4 acceptance: a
+// zero-declaration project (the peixun pilot shape) resolves to exactly
+// the six core gates, all six go green from three CI producers plus the
+// three control-plane self-attestations, and the Ready verdict drives
+// validating → ready_for_human_merge. Declaring a capability widens the
+// snapshot set to exactly core ∪ declared — the noise-free contrast the
+// two-tier baseline exists for.
+func TestCapabilityBaselinePilotShape(t *testing.T) {
+	pg, projectID, workItemID := newControlPlaneFixture(t)
+	ctx := context.Background()
+	seedRunnerExecution(t, pg, projectID, workItemID, "approved",
+		"maven-build@1.0.0@sha256:"+strings.Repeat("ab", 32))
+
+	company, err := evidence.CompanyPolicy()
+	require.NoError(t, err)
+	service := &evidence.Service{Company: company, Store: pg.Quality()}
+
+	// Zero declarations: effective = core six.
+	resolved, err := evidence.ResolveEffective(company, nil)
+	require.NoError(t, err)
+	require.Len(t, resolved.Policy.RequiredGates, 6)
+
+	// The pilot reality: CI evidence for the three CI core gates; the
+	// three engine-oracle gates self-attest from the execution facts.
+	tup := controlPlaneTuple(projectID, workItemID)
+	ciEvidence(t, pg, tup, evidence.GateBuild, 1)
+	ciEvidence(t, pg, tup, evidence.GateUnit, 2)
+	ciEvidence(t, pg, tup, evidence.GateSecretScan, 3)
+
+	verdict, err := service.EvaluateWorkItem(ctx, tup)
+	require.NoError(t, err)
+	require.True(t, verdict.Ready, "six core gates green: 3 CI + 3 self-attested")
+
+	snapshots, err := pg.Quality().ListGateSnapshots(ctx, projectID, workItemID)
+	require.NoError(t, err)
+	require.Len(t, snapshots, 6, "undeclared capability gates never become snapshots")
+	seen := map[string]string{}
+	for _, snapshot := range snapshots {
+		seen[snapshot.Check] = snapshot.Status
+	}
+	assert.Equal(t, map[string]string{
+		evidence.GateBuild:             evidence.GatePassed,
+		evidence.GateUnit:              evidence.GatePassed,
+		evidence.GateSecretScan:        evidence.GatePassed,
+		evidence.GatePolicyIntegrity:   evidence.GatePassed,
+		evidence.GateBaselineFreshness: evidence.GatePassed,
+		evidence.GateBoundary:          evidence.GatePassed,
+	}, seen)
+
+	var status string
+	require.NoError(t, pg.DB().QueryRowContext(ctx,
+		`SELECT status FROM work_items WHERE project_id = $1 AND id = $2`, projectID, workItemID).Scan(&status))
+	assert.Equal(t, "ready_for_human_merge", status, "A1-4 shape: the ready writer completed the done-chain precondition")
+
+	// Contrast: a project that declares quality.coverage (with its
+	// producer anchor) adds exactly one gate — nothing else changes.
+	declared := qualityOverlay("d2-capable", func(p *evidence.Policy) {
+		p.Capabilities = []evidence.CapabilityDeclaration{{
+			Capability: "quality.coverage",
+			Producer:   evidence.CapabilityProducer{Repo: "peixun/backend", Job: "coverage"},
+		}}
+		p.RequiredGates = append(p.RequiredGates, evidence.GateCoverage)
+	})
+	_, err = pg.Quality().PutProjectPolicy(ctx, projectID, declared, 0)
+	require.NoError(t, err)
+
+	declaredVerdict, err := service.EvaluateWorkItem(ctx, tup)
+	require.NoError(t, err)
+	require.Len(t, declaredVerdict.Gates, 7, "core six plus the declared capability gate")
+	assert.False(t, declaredVerdict.Ready, "the declared coverage gate honestly blocks until its producer reports")
+	coverage := func() string {
+		for _, gate := range declaredVerdict.Gates {
+			if gate.Check == evidence.GateCoverage {
+				return gate.State
+			}
+		}
+		return ""
+	}()
+	assert.Equal(t, evidence.GatePending, coverage)
 }
 
 func TestControlPlaneFactsStoreSurface(t *testing.T) {

@@ -48,6 +48,32 @@
         "image": {"const": ["pipeline_job"]},
         "license": {"const": ["pipeline_job"]}
       }
+    },
+    "capability_key": {
+      "title": "Capability key",
+      "description": "The frozen namespace.key identifiers of the capability catalog (D2). A project opts into a capability gate by declaring its key — always together with the producer anchor.",
+      "type": "string",
+      "enum": [
+        "quality.coverage",
+        "quality.lint",
+        "supply-chain.license",
+        "security.sast",
+        "supply-chain.dependency",
+        "supply-chain.image",
+        "integration.enabled",
+        "contract.openapi"
+      ]
+    },
+    "capability_producer": {
+      "title": "Capability producer anchor",
+      "description": "Declaring a capability means declaring its producer (the F14 structural rule): every declaration MUST anchor the concrete CI producer — the repository and the gate-named job. A key-only declaration is rejected.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "job"],
+      "properties": {
+        "repo": {"type": "string", "minLength": 1, "maxLength": 512},
+        "job": {"type": "string", "minLength": 1, "maxLength": 255}
+      }
     }
   },
   "type": "object",
@@ -59,9 +85,11 @@
     "scope": {"enum": ["company", "project", "task"]},
     "extends": {"type": ["string", "null"]},
     "required_gates": {
+      "title": "Core gates (tier 1 — unconditional)",
+      "description": "The six core gates every policy must require: each has a guaranteed producer (CI pipeline jobs for build/unit/secret_scan; the D1 control-plane self-attestation for the three engine-oracle gates). Capability-catalog gates may appear here only when the same document declares the capability.",
       "type": "array",
       "uniqueItems": true,
-      "minItems": 12,
+      "minItems": 6,
       "items": {
         "enum": [
           "baseline_freshness",
@@ -81,19 +109,58 @@
         ]
       },
       "allOf": [
-        {"contains": {"const": "baseline_freshness"}},
-        {"contains": {"const": "boundary"}},
-        {"contains": {"const": "policy_integrity"}},
         {"contains": {"const": "build"}},
         {"contains": {"const": "unit"}},
-        {"contains": {"const": "lint_typecheck"}},
-        {"contains": {"const": "coverage"}},
         {"contains": {"const": "secret_scan"}},
-        {"contains": {"const": "sast"}},
-        {"contains": {"const": "dependency"}},
-        {"contains": {"const": "image"}},
-        {"contains": {"const": "license"}}
+        {"contains": {"const": "policy_integrity"}},
+        {"contains": {"const": "baseline_freshness"}},
+        {"contains": {"const": "boundary"}}
       ]
+    },
+    "capability_gates": {
+      "title": "Capability gates (tier 2 — declaration-gated catalog)",
+      "description": "The frozen company catalog: a gate here is required ONLY for projects that declare its capability_key (with a producer anchor). Entries and their gate↔capability↔producer-kind pairing are const — integration and contract are folded into this mechanism, ending the document-level special cases.",
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate_id", "capability_key", "producer_kind"],
+        "properties": {
+          "gate_id": {
+            "enum": ["coverage", "lint_typecheck", "license", "sast", "dependency", "image", "integration", "contract"]
+          },
+          "capability_key": {"$ref": "#/$defs/capability_key"},
+          "producer_kind": {"$ref": "#/$defs/producer_kind"}
+        }
+      },
+      "allOf": [
+        {"contains": {"const": {"gate_id": "coverage", "capability_key": "quality.coverage", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "lint_typecheck", "capability_key": "quality.lint", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "license", "capability_key": "supply-chain.license", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "sast", "capability_key": "security.sast", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "dependency", "capability_key": "supply-chain.dependency", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "image", "capability_key": "supply-chain.image", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "integration", "capability_key": "integration.enabled", "producer_kind": "pipeline_job"}}},
+        {"contains": {"const": {"gate_id": "contract", "capability_key": "contract.openapi", "producer_kind": "pipeline_job"}}}
+      ]
+    },
+    "capabilities": {
+      "title": "Declared capabilities (project overlay opt-ins)",
+      "description": "A project overlay's capability declarations: each names a cataloged key and MUST carry the producer anchor. Declaring the capability opts the project into the matching capability gate; the declaration and the gate listing are inseparable in both directions.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "producer"],
+        "properties": {
+          "capability": {"$ref": "#/$defs/capability_key"},
+          "producer": {"$ref": "#/$defs/capability_producer"}
+        }
+      }
     },
     "coverage": {
       "type": "object",
@@ -157,27 +224,95 @@
       }
     }
   },
+  "allOf": [
+    {
+      "title": "Company scope owns the catalog, carries no declarations",
+      "if": {"properties": {"scope": {"const": "company"}}, "required": ["scope"]},
+      "then": {
+        "required": ["capability_gates"],
+        "properties": {
+          "required_gates": {"maxItems": 6},
+          "capabilities": false
+        }
+      }
+    },
+    {
+      "title": "A project/task overlay inherits the catalog at resolution",
+      "if": {"properties": {"scope": {"enum": ["project", "task"]}}, "required": ["scope"]},
+      "then": {
+        "properties": {"capability_gates": false}
+      }
+    },
+    {
+      "title": "A capability gate in required_gates implies its declaration (anti-F14, forward)",
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "coverage"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "quality.coverage"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "lint_typecheck"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "quality.lint"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "license"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "supply-chain.license"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "sast"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "security.sast"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "dependency"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "supply-chain.dependency"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "image"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "supply-chain.image"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "integration"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "integration.enabled"}}, "required": ["capability"]}}}}
+    },
+    {
+      "if": {"required": ["required_gates"], "properties": {"required_gates": {"contains": {"const": "contract"}}}},
+      "then": {"required": ["capabilities"], "properties": {"capabilities": {"contains": {"properties": {"capability": {"const": "contract.openapi"}}, "required": ["capability"]}}}}
+    }
+  ],
   "examples": [
     {
-      "id": "company-strict",
-      "version": "3.0.0",
+      "id": "company-baseline",
+      "version": "3.1.0",
       "scope": "company",
-      "required_gates": [
-        "baseline_freshness",
-        "boundary",
-        "policy_integrity",
-        "build",
-        "unit",
-        "lint_typecheck",
-        "coverage",
-        "secret_scan",
-        "sast",
-        "dependency",
-        "image",
-        "license"
+      "required_gates": ["build", "unit", "secret_scan", "policy_integrity", "baseline_freshness", "boundary"],
+      "capability_gates": [
+        {"gate_id": "coverage", "capability_key": "quality.coverage", "producer_kind": "pipeline_job"},
+        {"gate_id": "lint_typecheck", "capability_key": "quality.lint", "producer_kind": "pipeline_job"},
+        {"gate_id": "license", "capability_key": "supply-chain.license", "producer_kind": "pipeline_job"},
+        {"gate_id": "sast", "capability_key": "security.sast", "producer_kind": "pipeline_job"},
+        {"gate_id": "dependency", "capability_key": "supply-chain.dependency", "producer_kind": "pipeline_job"},
+        {"gate_id": "image", "capability_key": "supply-chain.image", "producer_kind": "pipeline_job"},
+        {"gate_id": "integration", "capability_key": "integration.enabled", "producer_kind": "pipeline_job"},
+        {"gate_id": "contract", "capability_key": "contract.openapi", "producer_kind": "pipeline_job"}
       ],
       "coverage": {"changed_lines_min_percent": 80, "max_total_drop_points": 0.5},
       "security": {"block_severities": ["critical", "high"], "license_denylist": ["AGPL-3.0-only"]},
+      "flaky_retry_count": 1,
+      "waiver": {
+        "max_days": 7,
+        "requires_distinct_approver": true,
+        "non_waivable_gates": ["identity_isolation", "sha_integrity", "policy_integrity", "webhook_authenticity"]
+      }
+    },
+    {
+      "id": "acme-overlay",
+      "version": "1.0.0",
+      "scope": "project",
+      "extends": "company-baseline",
+      "required_gates": ["build", "unit", "secret_scan", "policy_integrity", "baseline_freshness", "boundary", "coverage"],
+      "capabilities": [
+        {"capability": "quality.coverage", "producer": {"repo": "acme/backend", "job": "coverage"}}
+      ],
+      "coverage": {"changed_lines_min_percent": 85, "max_total_drop_points": 0.3},
+      "security": {"block_severities": ["critical", "high", "medium"], "license_denylist": ["AGPL-3.0-only"]},
       "flaky_retry_count": 1,
       "waiver": {
         "max_days": 7,
