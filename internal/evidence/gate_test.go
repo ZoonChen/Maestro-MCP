@@ -68,7 +68,7 @@ func TestEvaluateAllPassedIsReady(t *testing.T) {
 	resolved, err := ResolveEffective(testCompanyPolicy(), nil)
 	require.NoError(t, err)
 
-	verdict, err := Evaluate(evalTuple(), resolved, fullPassSet(), nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, fullPassSet(), nil, evalNow)
 	require.NoError(t, err)
 	assert.True(t, verdict.Ready)
 	require.Len(t, verdict.Gates, 12)
@@ -88,7 +88,7 @@ func TestEvaluateMissingEvidenceBlocks(t *testing.T) {
 		records = append(records, gateRecord("ev-"+string(rune('a'+index))+"-1", check, AuthorityMergeGate, EvidencePassed, 1))
 	}
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready)
 	sast := gateState(t, verdict, GateSAST)
@@ -107,7 +107,7 @@ func TestEvaluateDiagnosticNeverSatisfies(t *testing.T) {
 	}
 	records = append(records, gateRecord("ev-diag-1", GateSAST, AuthorityDiagnostic, EvidencePassed, 1))
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready, "diagnostic evidence must not satisfy a required gate")
 	sast := gateState(t, verdict, GateSAST)
@@ -131,7 +131,7 @@ func TestEvaluateFailureDominatesAndStatusesMap(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			records := fullPassSet()
 			records = append(records, gateRecord("ev-fail-1", GateUnit, AuthorityMergeGate, tc.status, 2))
-			verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+			verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 			require.NoError(t, err)
 			assert.False(t, verdict.Ready)
 			unit := gateState(t, verdict, GateUnit)
@@ -150,7 +150,7 @@ func TestEvaluateMultiProducerAllMustPass(t *testing.T) {
 	fail.Producer.ID = "scanner-b"
 	records = append(records, pass, fail)
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	assert.False(t, verdict.Ready, "a standing failure cannot be covered by another producer's success")
 	sast := gateState(t, verdict, GateSAST)
@@ -165,7 +165,7 @@ func TestEvaluateNewestAttemptWinsPerProducer(t *testing.T) {
 		gateRecord("ev-unit-p2", GateUnit, AuthorityMergeGate, EvidencePassed, 2),
 	)
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	unit := gateState(t, verdict, GateUnit)
 	assert.Equal(t, GatePassed, unit.State, "the one allowed retry converges on the newest attempt")
@@ -181,7 +181,7 @@ func TestEvaluateSupersedesChainReplaces(t *testing.T) {
 	correction.Supersedes = "ev-build-f1"
 	records = append(records, failed, correction)
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	build := gateState(t, verdict, GateBuild)
 	assert.Equal(t, GatePassed, build.State, "corrections flow through the supersedes chain")
@@ -195,7 +195,7 @@ func TestEvaluateIgnoresOtherTuples(t *testing.T) {
 	drifted.SourceSHA = sha(42)
 	records = append(records, drifted)
 
-	verdict, err := Evaluate(evalTuple(), resolved, records, nil, evalNow)
+	verdict, err := Evaluate(evalTuple(), resolved, nil, records, nil, evalNow)
 	require.NoError(t, err)
 	unit := gateState(t, verdict, GateUnit)
 	assert.Equal(t, GatePassed, unit.State)
@@ -214,7 +214,7 @@ func TestEvaluateWaiverWaivesAndInvalidations(t *testing.T) {
 			SourceSHA: tup.SourceSHA, State: WaiverApproved,
 			Requester: "req-1", Approver: "app-1", ExpiresAt: evalNow.Add(time.Hour),
 		}}
-		verdict, err := Evaluate(tup, resolved, records, waivers, evalNow)
+		verdict, err := Evaluate(tup, resolved, nil, records, waivers, evalNow)
 		require.NoError(t, err)
 		unit := gateState(t, verdict, GateUnit)
 		assert.Equal(t, GateWaived, unit.State)
@@ -226,7 +226,7 @@ func TestEvaluateWaiverWaivesAndInvalidations(t *testing.T) {
 			SourceSHA: tup.SourceSHA, State: WaiverApproved,
 			ExpiresAt: evalNow.Add(-time.Minute),
 		}}
-		verdict, err := Evaluate(tup, resolved, records, waivers, evalNow)
+		verdict, err := Evaluate(tup, resolved, nil, records, waivers, evalNow)
 		require.NoError(t, err)
 		assert.Equal(t, GateFailed, gateState(t, verdict, GateUnit).State)
 	})
@@ -237,7 +237,7 @@ func TestEvaluateWaiverWaivesAndInvalidations(t *testing.T) {
 			SourceSHA: sha(77), State: WaiverApproved,
 			ExpiresAt: evalNow.Add(time.Hour),
 		}}
-		verdict, err := Evaluate(tup, resolved, records, waivers, evalNow)
+		verdict, err := Evaluate(tup, resolved, nil, records, waivers, evalNow)
 		require.NoError(t, err)
 		assert.Equal(t, GateFailed, gateState(t, verdict, GateUnit).State)
 	})
@@ -248,7 +248,7 @@ func TestEvaluateWaiverWaivesAndInvalidations(t *testing.T) {
 			SourceSHA: tup.SourceSHA, State: WaiverApproved,
 			ExpiresAt: evalNow.Add(time.Hour),
 		}}
-		verdict, err := Evaluate(tup, resolved, fullPassSet(), waivers, evalNow)
+		verdict, err := Evaluate(tup, resolved, nil, fullPassSet(), waivers, evalNow)
 		require.NoError(t, err)
 		assert.Equal(t, GatePassed, gateState(t, verdict, GatePolicyIntegrity).State,
 			"a non-waivable check ignores waivers entirely")

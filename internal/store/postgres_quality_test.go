@@ -172,7 +172,7 @@ func TestQualityVerdictPersistsAndStales(t *testing.T) {
 		require.NoError(t, store.AppendEvidence(ctx, &records[index]), records[index].Kind)
 	}
 
-	verdict, err := evidence.Evaluate(tup, resolved, records, nil, time.Now())
+	verdict, err := evidence.Evaluate(tup, resolved, nil, records, nil, time.Now())
 	require.NoError(t, err)
 	require.True(t, verdict.Ready)
 	require.NoError(t, store.PersistVerdict(ctx, verdict))
@@ -194,7 +194,7 @@ func TestQualityVerdictPersistsAndStales(t *testing.T) {
 	drifted := tup
 	drifted.SourceSHA = strings.Repeat("3", 40)
 	records[0].EvidenceID = "018f7300-0000-7000-8000-0000000000ff"
-	driftedVerdict, err := evidence.Evaluate(drifted, resolved, nil, nil, time.Now())
+	driftedVerdict, err := evidence.Evaluate(drifted, resolved, nil, nil, nil, time.Now())
 	require.NoError(t, err)
 	require.False(t, driftedVerdict.Ready)
 	require.NoError(t, store.PersistVerdict(ctx, driftedVerdict))

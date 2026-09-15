@@ -128,7 +128,7 @@ func TestVerdictReEvaluationUpsertsAndStales(t *testing.T) {
 		require.NoError(t, pg.Quality().AppendEvidence(ctx, &record), check)
 		records = append(records, record)
 	}
-	verdict, err := evidence.Evaluate(tuple, resolved, records, nil, time.Now())
+	verdict, err := evidence.Evaluate(tuple, resolved, nil, records, nil, time.Now())
 	require.NoError(t, err)
 	require.True(t, verdict.Ready)
 	require.NoError(t, pg.Quality().PersistVerdict(ctx, verdict))
@@ -136,7 +136,7 @@ func TestVerdictReEvaluationUpsertsAndStales(t *testing.T) {
 
 	drifted := tuple
 	drifted.SourceSHA = strings.Repeat("5", 40)
-	driftedVerdict, err := evidence.Evaluate(drifted, resolved, nil, nil, time.Now())
+	driftedVerdict, err := evidence.Evaluate(drifted, resolved, nil, nil, nil, time.Now())
 	require.NoError(t, err)
 	require.NoError(t, pg.Quality().PersistVerdict(ctx, driftedVerdict))
 

@@ -150,6 +150,15 @@ func TestW6PilotReplayComparison(t *testing.T) {
 			commit = "00a5802a0e98e9c09aaeba60eb44c5e9fb79c5d5"
 		}
 		require.NoError(t, pg.CompleteExecution(ctx, claim.ExecutionID, claimRunner, "w6-verify-gen", "completed", &commit, "w6 replay"))
+		// D1: the S2B slices executed under approved command profiles
+		// (maven/npm sandbox validation); the boundary self-attestation
+		// derives its profile fact from validation_runs, so the replay
+		// reconstructs that record for each claimed item.
+		_, execErr := db.ExecContext(ctx, `
+			INSERT INTO validation_runs (project_id, work_item_id, attempt, profile_ref, result)
+			VALUES ($1, $2, 1, $3, 'passed')`, govProject, item,
+			"maven-build@1.0.0@sha256:"+strings.Repeat("ab", 32))
+		require.NoError(t, execErr, "validation fact %s", item)
 	}
 	t.Logf("S2B-STATE   validating=%d (the W1 stuck state)", validating())
 	require.Equal(t, 2, validating())

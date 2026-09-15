@@ -1,0 +1,25 @@
+{
+  "schema_version": "3.0",
+  "evidence_id": "018f1f4d-8f50-7b65-b4d1-43f8a49880d1",
+  "project_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d2",
+  "work_item_id": "018f1f4d-8f50-7b65-b4d1-43f8a49870d3",
+  "kind": "boundary",
+  "authority": "control_plane",
+  "status": "passed",
+  "source_sha": "1111111111111111111111111111111111111111",
+  "target_sha": "2222222222222222222222222222222222222222",
+  "pipeline_id": null,
+  "job_id": null,
+  "policy_version": "3.0.0",
+  "producer": {
+    "type": "control_plane",
+    "id": "maestro-evaluator",
+    "version": "d1.1"
+  },
+  "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "attempt": 1,
+  "observed_at": "2026-09-15T08:00:00Z",
+  "created_at": "2026-09-15T08:00:01Z",
+  "sensitivity": "internal",
+  "summary": "execution 018f1f4d-8f50-7b65-b4d1-43f8a49890c1 ran on registered runner 018f1f4d-8f50-7b65-b4d1-43f8a49890b1 (approved) under approved profile maven-build@1.0.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
