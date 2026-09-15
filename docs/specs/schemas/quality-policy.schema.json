@@ -2,6 +2,54 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro.internal/schemas/quality-policy-v3.json",
   "title": "Maestro Quality Policy",
+  "$defs": {
+    "producer_kind": {
+      "title": "Evidence producer kind",
+      "description": "D1 producer-kind declaration: every gate's evidence comes from a declared kind of producer. pipeline_job = a CI job named after the gate kind (GitLab ingestion); control_plane = the evaluation engine's own deterministic judgment. The gate-to-kind assignment below is the frozen contract the engine enforces on evidence acceptance.",
+      "type": "string",
+      "enum": ["pipeline_job", "control_plane"]
+    },
+    "gate_producer_kinds": {
+      "title": "Gate → producer kinds (frozen oracle assignment)",
+      "description": "policy_integrity/baseline_freshness/boundary are engine-oracle gates: their guaranteed producer is the control_plane self-attestation (CI-named jobs may complement, never replace it). All other gates are CI gates: pipeline_job producers only.",
+      "type": "object",
+      "additionalProperties": false,
+      "propertyNames": {
+        "enum": [
+          "baseline_freshness",
+          "boundary",
+          "policy_integrity",
+          "build",
+          "unit",
+          "lint_typecheck",
+          "coverage",
+          "integration",
+          "contract",
+          "secret_scan",
+          "sast",
+          "dependency",
+          "image",
+          "license"
+        ]
+      },
+      "properties": {
+        "baseline_freshness": {"const": ["pipeline_job", "control_plane"]},
+        "boundary": {"const": ["pipeline_job", "control_plane"]},
+        "policy_integrity": {"const": ["pipeline_job", "control_plane"]},
+        "build": {"const": ["pipeline_job"]},
+        "unit": {"const": ["pipeline_job"]},
+        "lint_typecheck": {"const": ["pipeline_job"]},
+        "coverage": {"const": ["pipeline_job"]},
+        "integration": {"const": ["pipeline_job"]},
+        "contract": {"const": ["pipeline_job"]},
+        "secret_scan": {"const": ["pipeline_job"]},
+        "sast": {"const": ["pipeline_job"]},
+        "dependency": {"const": ["pipeline_job"]},
+        "image": {"const": ["pipeline_job"]},
+        "license": {"const": ["pipeline_job"]}
+      }
+    }
+  },
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "version", "scope", "required_gates", "coverage", "security", "flaky_retry_count", "waiver"],

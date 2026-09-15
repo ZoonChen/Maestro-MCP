@@ -48,7 +48,7 @@
         "license"
       ]
     },
-    "authority": {"enum": ["merge_gate", "diagnostic"]},
+    "authority": {"enum": ["merge_gate", "diagnostic", "control_plane"]},
     "status": {"enum": ["passed", "failed", "error", "cancelled", "skipped"]},
     "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
     "target_sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
@@ -60,7 +60,7 @@
       "additionalProperties": false,
       "required": ["type", "id", "version"],
       "properties": {
-        "type": {"enum": ["gitlab_job", "runner_profile", "human_qa"]},
+        "type": {"enum": ["gitlab_job", "runner_profile", "human_qa", "control_plane"]},
         "id": {"type": "string", "minLength": 1, "maxLength": 255},
         "version": {"type": "string", "minLength": 1, "maxLength": 128}
       }
@@ -95,6 +95,21 @@
           "job_id": {"type": "null"},
           "producer": {
             "properties": {"type": {"enum": ["runner_profile", "human_qa"]}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"authority": {"const": "control_plane"}}},
+      "then": {
+        "properties": {
+          "pipeline_id": {"type": "null"},
+          "job_id": {"type": "null"},
+          "kind": {
+            "enum": ["baseline_freshness", "boundary", "policy_integrity"]
+          },
+          "producer": {
+            "properties": {"type": {"const": "control_plane"}}
           }
         }
       }

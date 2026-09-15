@@ -253,7 +253,7 @@ func seedVerdictWithGate(t *testing.T, f *qualityFixture) evidence.StoredSnapsho
 		require.NoError(t, f.pg.Quality().AppendEvidence(context.Background(), &record))
 		records = append(records, record)
 	}
-	verdict, err := evidence.Evaluate(tuple, resolved, records, nil, time.Now())
+	verdict, err := evidence.Evaluate(tuple, resolved, nil, records, nil, time.Now())
 	require.NoError(t, err)
 	require.True(t, verdict.Ready)
 	require.NoError(t, f.pg.Quality().PersistVerdict(context.Background(), verdict))

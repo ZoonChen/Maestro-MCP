@@ -30,6 +30,17 @@ GitLab Pipeline/Job 产生权威构建、测试和扫描结果；Webhook Receive
 
 Pipeline/job webhook、周期对账、Artifact 完成、source/target/policy 变化和人工重评触发聚合。前置条件：GitLab project mapping verified、event authenticated、Pipeline 对应 MR、source/target SHA 精确匹配、Job 名称与 producer allowlist 匹配、Artifact digest 可校验。
 
+### 3.1 control_plane 自证 producer（D1）
+
+三门引擎 oracle（`policy_integrity`/`baseline_freshness`/`boundary`）的自然判定者不是 CI 作业，而是评估引擎自身的确定性判定。每次携带事实的评估对这些门产出 `authority=control_plane` 的 Evidence（producer `type=control_plane`），语义：
+
+- **判定权归引擎**：判定是纯机械函数——`policy_integrity`=effective policy 链装载完整（合并文档 digest 匹配、provenance 各层 digest 与实际装载文档一致、存储行 digest 列与文档重算一致）；`baseline_freshness`=元组钉住的 policy version 等于当前 active 版本（评估中途策略漂移即 failed）；`boundary`=该工作项执行经注册 runner（approved/online）与批准 Command Profile 完成，从 executions/validation 记录机械推导。
+- **append-only**：自证 Evidence 与 CI Evidence 同等进入只追加的 evidence 表（EVIDENCE-RULE-001/002 适用）；身份由判定内容确定性派生（同判定同 ID 幂等重放），判定变更=新记录 + attempt 递增，最新 attempt 胜出聚合，历史留档可查。
+- **audit 可查**：每条自证记录绑定 project/work item、SHA 元组、policy version、producer 版本与判定理由（summary），经 evidence 查询面与审计导出面可查。
+- **平权合成**：自证 producer 与 CI producer 在 EVIDENCE-RULE-003 聚合下平权——同门任一 producer 的 standing failure 均阻断，互不覆盖；`control_plane` authority 仅对三门有效（gate→producer 种类声明冻结于 `quality-policy.schema.json` `$defs.gate_producer_kinds`），CI 门不接受引擎自证。
+- **无执行记录不铸证**：工作项不存在任何 executions 记录时，boundary 不产出自证 Evidence（该门交由 CI producer 或保持 pending）；存在执行记录但 runner 未注册或无批准 Profile 时 fail-closed 并在理由中点名缺口。
+- **历史元组重演**：携带非空 policy version 的元组按该版本重演评估（重放钉），`baseline_freshness` 判定钉住版本与 active 版本的一致性——漂移 fail-closed，而不是静默重定基线。
+
 ## 4. 正常交互及时序图
 
 ```mermaid
@@ -66,7 +77,7 @@ Evidence：`observed → verified → parsed → accepted/rejected → stale`；
 
 ## 7. 字段、配置和格式校验
 
-Evidence 必填 `evidence_id/kind/authority/project_id/source_sha/target_sha/pipeline_id/job_id/status/producer/version/content_digest/observed_at/parsed_at/policy_digest`；本地结果必须 `authority=diagnostic`。状态只接受 `passed/failed/error/cancelled/skipped`，不得省略。覆盖率、JUnit、SARIF、依赖/License 报告按固定 parser version 解析；未知 schema/version 一律 error。
+Evidence 必填 `evidence_id/kind/authority/project_id/source_sha/target_sha/pipeline_id/job_id/status/producer/version/content_digest/observed_at/parsed_at/policy_digest`；本地结果必须 `authority=diagnostic`；三门引擎 oracle 的自证判定必须 `authority=control_plane`（无 pipeline/job 身份、仅限三门，条件规则冻结于 evidence.schema.json）。状态只接受 `passed/failed/error/cancelled/skipped`，不得省略。覆盖率、JUnit、SARIF、依赖/License 报告按固定 parser version 解析；未知 schema/version 一律 error。
 
 ## 8. 并发、幂等和一致性
 

@@ -60,6 +60,11 @@ type Verdict struct {
 	PolicyDigest string
 	Gates        []GateResult
 	Ready        bool
+	// ControlPlane carries the self-attestation records minted by this
+	// evaluation (D1): the caller persists them append-only so the
+	// engine-oracle gates' judgment is queryable evidence, never a
+	// side-channel. Empty when facts were not supplied.
+	ControlPlane []Record
 }
 
 // Evaluate aggregates immutable evidence into gate snapshots per
@@ -67,6 +72,11 @@ type Verdict struct {
 //
 //   - only merge_gate evidence bound to the EXACT SHA tuple counts;
 //     diagnostic evidence never satisfies a required gate
+//   - when facts are supplied, the three engine-oracle gates
+//     (policy_integrity/baseline_freshness/boundary) additionally
+//     self-attest: the engine's judgment mints control_plane evidence
+//     that joins the same per-producer aggregation — equal standing
+//     with CI producers, no override in either direction
 //   - per producer the newest attempt (or the head of a supersedes
 //     chain) is that producer's current state; history is never erased
 //   - a gate passes only when every contributing producer's current
@@ -77,7 +87,7 @@ type Verdict struct {
 //   - a valid, unexpired waiver for a waivable check yields waived
 //
 // Ready requires every required gate to be passed or waived.
-func Evaluate(tup Tuple, policy *EffectivePolicy, records []Record, waivers []Waiver, now time.Time) (*Verdict, error) {
+func Evaluate(tup Tuple, policy *EffectivePolicy, facts *ControlPlaneFacts, records []Record, waivers []Waiver, now time.Time) (*Verdict, error) {
 	if policy == nil || policy.Policy == nil {
 		return nil, fmt.Errorf("evaluate: effective policy is required")
 	}
@@ -110,7 +120,22 @@ func Evaluate(tup Tuple, policy *EffectivePolicy, records []Record, waivers []Wa
 		}
 	}
 
-	verdict := &Verdict{Tuple: tup, PolicyDigest: policy.PolicyDigest}
+	// D1 self-attestation: with facts, the engine-oracle gates mint
+	// their own control_plane evidence. The minted records join the
+	// same aggregation pool as CI evidence (equal standing) and are
+	// returned on the verdict for append-only persistence.
+	verdict := &Verdict{Tuple: tup, PolicyDigest: policy.PolicyDigest, ControlPlane: []Record{}}
+	if facts != nil {
+		minted := mintControlPlaneRecords(tup, policy, facts, heads, now)
+		for _, record := range minted {
+			if err := record.Validate(); err != nil {
+				return nil, fmt.Errorf("evaluate: control-plane mint: %w", err)
+			}
+		}
+		heads = append(heads, minted...)
+		verdict.ControlPlane = minted
+	}
+
 	for _, check := range policy.Policy.RequiredGates {
 		gate := GateResult{
 			GateID:      StableGateID(tup, check),
@@ -128,11 +153,20 @@ func Evaluate(tup Tuple, policy *EffectivePolicy, records []Record, waivers []Wa
 		}
 
 		// Current state per producer: newest attempt wins within a
-		// producer; supersedes already removed corrections.
+		// producer; supersedes already removed corrections. CI gates
+		// accept only merge_gate producers; the engine-oracle gates
+		// additionally accept the engine's own control_plane
+		// self-attestation (D1: 判定权归引擎，与 CI 平权合成).
 		current := map[string]Record{}
 		for _, record := range heads {
-			if record.Kind != check || record.Authority != AuthorityMergeGate ||
-				!record.MatchesTuple(tup.SourceSHA, tup.TargetSHA) {
+			if record.Kind != check || !record.MatchesTuple(tup.SourceSHA, tup.TargetSHA) {
+				continue
+			}
+			if record.Authority == AuthorityControlPlane {
+				if record.Producer.Type != AuthorityControlPlane || !IsControlPlaneGate(check) {
+					continue
+				}
+			} else if record.Authority != AuthorityMergeGate {
 				continue
 			}
 			existing, present := current[record.Producer.ID]

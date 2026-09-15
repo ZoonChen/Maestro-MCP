@@ -44,10 +44,10 @@ type pgIdentityStore struct{ q pgExecer }
 // and guards are identical, only the role enum and error sentinels
 // differ between the two tables.
 type grantBinding struct {
-	UserID     string
-	SourceRef  string
-	ValidFrom  string // RFC3339; empty defaults to the server clock
-	ValidTo    *string
+	UserID    string
+	SourceRef string
+	ValidFrom string // RFC3339; empty defaults to the server clock
+	ValidTo   *string
 }
 
 // validateGrantBinding performs the shared fail-closed checks of an

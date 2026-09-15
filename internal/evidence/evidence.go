@@ -17,10 +17,14 @@ const (
 
 // Authority levels: merge_gate evidence originates only from verified
 // GitLab ingestion; diagnostic evidence (runner profiles, human QA) can
-// never satisfy a required gate (EVIDENCE-REQ-002, TC-EVIDENCE-004).
+// never satisfy a required gate (EVIDENCE-REQ-002, TC-EVIDENCE-004);
+// control_plane evidence is the evaluation engine's own self-attestation
+// of the three engine-oracle gates (D1; gates-and-evidence section 3).
 const (
 	AuthorityMergeGate  = "merge_gate"
 	AuthorityDiagnostic = "diagnostic"
+	// AuthorityControlPlane is declared in controlplane.go with the
+	// self-attestation machinery it governs.
 )
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
@@ -54,7 +58,7 @@ type Record struct {
 
 // Producer identifies the originating system and its version.
 type Producer struct {
-	Type    string `json:"type"` // gitlab_job | runner_profile | human_qa
+	Type    string `json:"type"` // gitlab_job | runner_profile | human_qa | control_plane
 	ID      string `json:"id"`
 	Version string `json:"version"`
 }
@@ -70,7 +74,7 @@ func (r *Record) Validate() error {
 		return fmt.Errorf("evidence %s: kind %q is outside the frozen enum", r.EvidenceID, r.Kind)
 	}
 	switch r.Authority {
-	case AuthorityMergeGate, AuthorityDiagnostic:
+	case AuthorityMergeGate, AuthorityDiagnostic, AuthorityControlPlane:
 	default:
 		return fmt.Errorf("evidence %s: authority %q is outside the enum", r.EvidenceID, r.Authority)
 	}
@@ -89,21 +93,34 @@ func (r *Record) Validate() error {
 		return fmt.Errorf("evidence %s: attempt must be >= 1", r.EvidenceID)
 	}
 	switch r.Producer.Type {
-	case "gitlab_job", "runner_profile", "human_qa":
+	case "gitlab_job", "runner_profile", "human_qa", AuthorityControlPlane:
 	default:
 		return fmt.Errorf("evidence %s: producer type %q is outside the enum", r.EvidenceID, r.Producer.Type)
 	}
 	if r.Producer.ID == "" || r.Producer.Version == "" {
 		return fmt.Errorf("evidence %s: producer id and version are required", r.EvidenceID)
 	}
-	if r.Authority == AuthorityMergeGate {
+	switch r.Authority {
+	case AuthorityMergeGate:
 		if r.PipelineID == nil || *r.PipelineID < 1 || r.JobID == nil || *r.JobID < 1 {
 			return fmt.Errorf("evidence %s: merge_gate authority requires pipeline_id and job_id", r.EvidenceID)
 		}
 		if r.Producer.Type != "gitlab_job" {
 			return fmt.Errorf("evidence %s: merge_gate authority requires a gitlab_job producer", r.EvidenceID)
 		}
-	} else {
+	case AuthorityControlPlane:
+		// The engine's self-attestation carries no pipeline/job identity
+		// and is valid only for the three engine-oracle gates.
+		if r.PipelineID != nil || r.JobID != nil {
+			return fmt.Errorf("evidence %s: control_plane authority must not carry pipeline/job ids", r.EvidenceID)
+		}
+		if r.Producer.Type != AuthorityControlPlane {
+			return fmt.Errorf("evidence %s: control_plane authority requires a control_plane producer", r.EvidenceID)
+		}
+		if !IsControlPlaneGate(r.Kind) {
+			return fmt.Errorf("evidence %s: control_plane authority is outside its gate domain (%q)", r.EvidenceID, r.Kind)
+		}
+	default:
 		if r.PipelineID != nil || r.JobID != nil {
 			return fmt.Errorf("evidence %s: diagnostic authority must not carry pipeline/job ids", r.EvidenceID)
 		}
