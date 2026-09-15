@@ -79,8 +79,12 @@ type RemoteMergeRequest struct {
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
 	SourceSHA    string `json:"sha"`
-	MergeCommit  string `json:"merge_commit_sha"`
-	MergedAt     string `json:"merged_at"`
+	// TargetSHA is the provider's diff_refs.base_sha — the MR diff's
+	// base and the second half of the evidence tuple. Reconciliation
+	// could not complete tuples without it (S2B2-F13).
+	TargetSHA   string `json:"target_sha"`
+	MergeCommit string `json:"merge_commit_sha"`
+	MergedAt    string `json:"merged_at"`
 }
 
 type remoteMRBody struct {
@@ -142,6 +146,7 @@ func (c *Client) MergeRequest(ctx context.Context, gitlabProjectID, mrIID int64)
 		SourceBranch: decoded.SourceBranch,
 		TargetBranch: decoded.TargetBranch,
 		SourceSHA:    sourceSHA,
+		TargetSHA:    decoded.DiffRefs.BaseSHA,
 		MergeCommit:  decoded.MergeCommit,
 		MergedAt:     decoded.MergedAt,
 	}, nil

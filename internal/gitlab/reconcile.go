@@ -74,8 +74,12 @@ func (r *Reconciler) ReconcileMergeRequest(ctx context.Context, projectID string
 		SourceBranch:  remote.SourceBranch,
 		TargetBranch:  remote.TargetBranch,
 		SourceSHA:     remote.SourceSHA,
-		MergeCommit:   remote.MergeCommit,
-		MergedAt:      remote.MergedAt,
+		// The provider's diff base completes the evidence tuple, so a
+		// reconcile can unstick jobs whose events predated a complete
+		// MR projection (S2B2-F13).
+		TargetSHA:    remote.TargetSHA,
+		MergeCommit:  remote.MergeCommit,
+		MergedAt:     remote.MergedAt,
 	}
 	outcome, err := r.Syncer.ApplyMergeRequestRecord(ctx, projectID, rec, reconcileFactID(rec))
 	if err != nil {

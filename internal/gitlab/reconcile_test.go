@@ -151,6 +151,16 @@ func TestReconcileDrivesDone(t *testing.T) {
 	assert.Equal(t, "done", status)
 	assert.Equal(t, "gitlab:reconcile:mr:12", factID, "the lineage names its source kind")
 
+	// The provider's diff base lands as target_sha (S2B2-F13): a
+	// reconcile must complete the evidence tuple, not only the state.
+	var targetSHA string
+	require.NoError(t, f.db.QueryRow(`
+		SELECT target_sha FROM merge_requests
+		WHERE gitlab_instance_id = '018f7800-0000-7000-8000-000000000001'
+		  AND gitlab_project_id = 9001 AND mr_iid = 12`).Scan(&targetSHA))
+	assert.Equal(t, strings.Repeat("b", 40), targetSHA,
+		"diff_refs.base_sha survives the provider pull and completes the tuple")
+
 	// Idempotent re-reconcile.
 	outcome, err = reconciler.ReconcileMergeRequest(context.Background(), rcProject, 12)
 	require.NoError(t, err)
