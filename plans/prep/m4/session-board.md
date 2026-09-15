@@ -252,6 +252,13 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 | V4-6 | DOC-INDEX M4 行 + v4 复盘 | ⬜ 同一收口 PR | 集成会话（仪式） |
 | V4-7 | 职能角色授权书（R4 蓝图§4.2——影子期已在用，正式化） | ⬜ 随 V4-1 评审 | owner |
 
+### D1+D2+D3 收口：F14 结构解全落地，done 链全司打开（2026-09-15，会话 I）
+
+- **D1（#136）合入**：三门控制面自证——评估器 opt-in ControlPlaneFacts，policy_integrity/baseline_freshness/boundary 由引擎机械判定并产 evidence（authority=control_plane，确定性身份派生幂等，append-only）。spec：producer 种类声明（pipeline_job | control_plane）。
+- **D2（#138/#139）合入**：基线 3.1.0 两档制——core 6 门（build/unit/secret_scan + 三门自证）+ capability_gates 8 门（声明才必达，**每项声明必带 producer 锚**，schema 层禁止无生产者的必达门——F14 病根的制度性防御）。integration/contract 收编统一机制。常驻栈已重建并换镜像。
+- **D3 完成**：Keycloak 建 pilot-qa（密码 pilot-qa-2026）+ functional_principals 种 qa_owner（签发人=陈自恒，BLUEPRINT §4.2 owner 决策）；审计事件已落链。
+- **效果**：A1-4/A1-6 → done（**首批真实 done 样本**：CI 证据 + 控制面自证 + merged webhook 全链）。done 链全司打开。gate_snapshots 不再有永不消的 pending 噪音。审计链 199 条。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
