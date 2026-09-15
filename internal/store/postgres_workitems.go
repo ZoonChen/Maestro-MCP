@@ -110,10 +110,12 @@ func (s *PostgresStore) ClaimNextWorkItem(
 			queueVersion, expectedQueueVersion, ErrConcurrentConflict)
 	}
 
-	// Next eligible work item in the runner's bound project. Items whose
-	// locked-gate assets are not consumable (not approved, digest drift
-	// or a stale binding) are skipped — the asset gate fails closed at
-	// dispatch time (WGM-INV-015, J2a-4).
+	// Next eligible work item in the runner's bound project, priority
+	// first (urgent > high > normal > low — the product's BOM ordering
+	// rides into dispatch, S2B2-F8), then FIFO within one priority
+	// band. Items whose locked-gate assets are not consumable (not
+	// approved, digest drift or a stale binding) are skipped — the
+	// asset gate fails closed at dispatch time (WGM-INV-015, J2a-4).
 	row := tx.QueryRowContext(ctx, `
 		SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch
 		FROM work_items w
@@ -128,7 +130,12 @@ func (s *PostgresStore) ClaimNextWorkItem(
 					WHERE a.asset_id = g.asset_id AND a.version = g.bound_version
 					  AND a.status = 'approved' AND a.source_digest = g.bound_digest))
 		  )
-		ORDER BY w.created_at, w.id
+		ORDER BY CASE w.priority
+				WHEN 'urgent' THEN 0
+				WHEN 'high' THEN 1
+				WHEN 'normal' THEN 2
+				ELSE 3 END,
+			w.created_at, w.id
 		LIMIT 1
 		FOR UPDATE OF w SKIP LOCKED`, runnerID)
 

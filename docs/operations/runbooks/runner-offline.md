@@ -64,7 +64,7 @@ sequenceDiagram
 
 ### 4.2 安全恢复
 
-1. 确认旧执行进程树终止；无法确认时等待 Lease 到期，并保持 Workspace `quarantined`。
+1. 确认旧执行进程树终止；无法确认时等待 Lease 到期，并保持 Workspace `quarantined`。TTL 到期的 Lease 由控制面常驻 offline-monitor sweep 自动置 `expired` 并把工作项重排回队列（S2B2-F12 接线后无需人工触发；冻结项目除外，见应急停止 Runbook）。
 2. Runner 用有效设备身份建立新的 connection generation，完成 capability、版本、时钟和沙箱 self-check。
 3. Reconciler 比较 Lease epoch、WorkItem version、任务分支 SHA 与 Workspace 状态；旧 generation/epoch 结果只存 late evidence。
 4. 先运行无 Secret 的 smoke Command Profile，连续健康后解除 `draining`；对过期 Lease 生成新 epoch，重派前从 GitLab 重新确认 source/target SHA。

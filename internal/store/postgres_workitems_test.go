@@ -220,3 +220,108 @@ func TestClaimGuardsAndErrorPaths(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT status FROM work_items WHERE id = $1`, claim.WorkItemID).Scan(&status))
 	assert.Equal(t, "blocked", status)
 }
+
+// --- S2B2-F8: claim dispatch is priority-first, FIFO within a band ---
+
+// seedPriorityFixture seeds one project/runner pair with queued items
+// shaped by the caller (id suffix, priority, created_at age in
+// seconds) so ordering assertions are exact.
+func seedPriorityFixture(t *testing.T, db *sql.DB, index int, items [][3]any) {
+	t.Helper()
+	ctx := context.Background()
+	teamID := fmt.Sprintf("018f4000-0000-7000-8000-%012d", index)
+	projectID := fmt.Sprintf("018f4100-0000-7000-8000-%012d", index)
+	_, err := db.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1, $2)`, teamID, fmt.Sprintf("prio-team-%02d", index))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO projects (id, team_id, key, name, status) VALUES ($1, $2, $3, $4, 'active')`,
+		projectID, teamID, fmt.Sprintf("prio-%02d", index), fmt.Sprintf("Prio %d", index))
+	require.NoError(t, err)
+	for _, item := range items {
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO work_items (id, project_id, title, status, priority, created_at)
+			VALUES ($1, $2, $3, 'queued', $4, now() - make_interval(secs => $5::int))`,
+			fmt.Sprintf("018f4600-0000-7000-8000-%012d", item[0]), projectID,
+			fmt.Sprintf("Prio item %d", item[0]), item[1], item[2])
+		require.NoError(t, err)
+	}
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO runners (id, display_name, device_key_hash, status)
+		VALUES ($1, $2, $3, 'approved')`,
+		fmt.Sprintf("018f4700-0000-7000-8000-%012d", index), fmt.Sprintf("prio-runner-%02d", index), fmt.Sprintf("sha256:prio-%02d", index))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO runner_bindings (project_id, runner_id) VALUES ($1, $2)`,
+		projectID, fmt.Sprintf("018f4700-0000-7000-8000-%012d", index))
+	require.NoError(t, err)
+}
+
+func prioItemUUID(suffix int) string {
+	return fmt.Sprintf("018f4600-0000-7000-8000-%012d", suffix)
+}
+
+func prioRunnerUUID(index int) string {
+	return fmt.Sprintf("018f4700-0000-7000-8000-%012d", index)
+}
+
+func TestClaimDispatchesPriorityBeforeFIFO(t *testing.T) {
+	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
+		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	db := testPostgresDB(t)
+	resetWorkItemSchema(t, db)
+	registry, err := NewPostgresStore(db)
+	require.NoError(t, err)
+
+	// The FIFO story alone (S2B first slice) dispatched the earliest
+	// item; F8 showed a P1 head blocking P0 targets. Items: 1=normal
+	// (oldest), 2=high (middle), 3=urgent (newest), 4=low (oldest).
+	seedPriorityFixture(t, db, 90, [][3]any{
+		{1, "normal", 400},
+		{2, "high", 300},
+		{3, "urgent", 200},
+		{4, "low", 500},
+	})
+
+	first, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(90), "gen-1", 0, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(3), first.WorkItemID, "urgent outranks FIFO age")
+
+	second, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(90), "gen-2", first.QueueVersion, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(2), second.WorkItemID, "high follows urgent")
+
+	third, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(90), "gen-3", second.QueueVersion, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(1), third.WorkItemID, "normal beats low regardless of age")
+
+	fourth, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(90), "gen-4", third.QueueVersion, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(4), fourth.WorkItemID, "low is last")
+}
+
+func TestClaimStaysFIFOWithinOnePriorityBand(t *testing.T) {
+	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
+		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	db := testPostgresDB(t)
+	resetWorkItemSchema(t, db)
+	registry, err := NewPostgresStore(db)
+	require.NoError(t, err)
+
+	seedPriorityFixture(t, db, 91, [][3]any{
+		{1, "high", 300},
+		{2, "high", 200},
+		{3, "high", 100},
+	})
+
+	first, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(91), "gen-1", 0, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(1), first.WorkItemID, "same band: oldest (300s ago) first")
+
+	second, err := registry.ClaimNextWorkItem(ctx, prioRunnerUUID(91), "gen-2", first.QueueVersion, 90*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, prioItemUUID(2), second.WorkItemID)
+}

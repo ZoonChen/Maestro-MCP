@@ -86,6 +86,12 @@ type Options struct {
 	// (W6-5, S2C-A5); nil leaves the sink unstarted (domain events
 	// accumulate — the W1 shadow observation's 187-event spin).
 	DomainSink *DomainSinkOptions
+	// LeaseSweep runs the offline-monitor recovery pass on its own
+	// ticker (S2B2-F12): it expires TTL-elapsed leases and redispatches
+	// their stranded work items. nil leaves the sweep unstarted —
+	// expired claims then strand items in executing until an operator
+	// intervenes, the exact gap the F12 probe surfaced.
+	LeaseSweep *LeaseSweepOptions
 	// MCPGuard enforces the frozen tool permissions on MCP tool calls
 	// through the same policy as REST (M1 exit gate: one authorize for
 	// every surface); nil keeps the M0 delegated-context mode.
@@ -440,6 +446,21 @@ func New(ctx context.Context, opts Options) (*Application, error) {
 			sink.Run(a.backgroundCtx, owner, interval)
 		}()
 	}
+	// Exactly one lease-recovery sweep per process (S2B2-F12): the
+	// monitor owns the TTL-elapsed lease expiry and the guarded
+	// redispatch, so an expired claim never strands its work item in
+	// executing. The sweep is idempotent and SKIP LOCKED-guarded, but a
+	// single owner keeps audit noise minimal (the dispatcher pattern).
+	if opts.LeaseSweep != nil {
+		monitor := opts.LeaseSweep.Monitor
+		a.backgroundWG.Add(1)
+		go func() {
+			defer a.backgroundWG.Done()
+			if err := monitor.Run(a.backgroundCtx); err != nil {
+				slog.Error("lease sweep monitor stopped", "error", err)
+			}
+		}()
+	}
 	// Exactly one Jira sync worker per process (task brief J3): the
 	// cycle owns the anchor snapshot cadence and the escalation clock.
 	if opts.JiraSync != nil {
@@ -509,6 +530,17 @@ type DomainSinkOptions struct {
 type JiraSyncOptions struct {
 	Worker   *jira.Worker
 	Interval time.Duration
+}
+
+// LeaseSweepRunner is the recovery loop the application hosts (the
+// runner package's OfflineMonitor satisfies it; tests inject a spy).
+type LeaseSweepRunner interface {
+	Run(context.Context) error
+}
+
+// LeaseSweepOptions wires the offline-monitor recovery pass (S2B2-F12).
+type LeaseSweepOptions struct {
+	Monitor LeaseSweepRunner
 }
 
 func (a *Application) startWebhookDispatch(opts *WebhookDispatchOptions) {

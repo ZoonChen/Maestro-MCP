@@ -957,6 +957,9 @@ paths:
         The governance claim face (S2C-A3): an authenticated principal
         holding work_item.claim dispatches at most one queued work item
         to a runner that is approved and bound to the route's project.
+        Dispatch order is priority first (urgent > high > normal >
+        low), then FIFO within one priority band (S2B2-F8: the BOM's
+        product priority rides into dispatch instead of pure FIFO).
         The runner identity and connection generation ride the body
         (the lease-fencing contract); the queue CAS token is read
         server-side unless the caller presents one from a prior claim.
