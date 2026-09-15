@@ -37,11 +37,22 @@ build)
   docker build -t "$IMAGE" "$MAESTRO_SRC"
   ;;
 migrate)
+  # P3 role swap: migrations are DDL, the app role (maestro) lost database
+  # CREATE (NOCREATEDB, non-owner) — the bootstrap's CREATE SCHEMA IF NOT
+  # EXISTS fails on its ACL check even when the schema exists. Migrations
+  # therefore run as maestro-dba when the pilot stack holds its password;
+  # the app-role DSN remains the fallback for pre-swap stacks.
+  MIGRATE_USER=maestro
+  MIGRATE_PASSWORD=maestro-local-dev
+  if [ -s "$PILOT_STACK_DIR/maestro-dba-password" ]; then
+    MIGRATE_USER=maestro-dba
+    MIGRATE_PASSWORD="$(cat "$PILOT_STACK_DIR/maestro-dba-password")"
+  fi
   docker run --rm --network maestro-pilot \
     -e MAESTRO_DB_DRIVER=postgres \
-    -e MAESTRO_DATABASE_DSN='postgres://maestro:maestro-local-dev@host.docker.internal:5434/maestro?sslmode=disable' \
+    -e MAESTRO_DATABASE_DSN="postgres://${MIGRATE_USER}:${MIGRATE_PASSWORD}@host.docker.internal:5434/maestro?sslmode=disable" \
     "$IMAGE" migrate up
-  ;;
+    ;;
 up)
   for f in webhook-payload-key gitlab-webhook-token gitlab-bot-pat client-secret jira-pat; do
     [ -s "$PILOT_STACK_DIR/$f" ] || { echo "missing $PILOT_STACK_DIR/$f" >&2; exit 66; }
