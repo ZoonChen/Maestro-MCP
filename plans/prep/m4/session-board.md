@@ -259,6 +259,13 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **D3 完成**：Keycloak 建 pilot-qa（密码 pilot-qa-2026）+ functional_principals 种 qa_owner（签发人=陈自恒，BLUEPRINT §4.2 owner 决策）；审计事件已落链。
 - **效果**：A1-4/A1-6 → done（**首批真实 done 样本**：CI 证据 + 控制面自证 + merged webhook 全链）。done 链全司打开。gate_snapshots 不再有永不消的 pending 噪音。审计链 199 条。
 
+### S2B 开发切片系列 + W7 下发（2026-09-18，会话 I）
+
+- **S2B3–S2B10 连续八会话十六条 done**（详设→领取→沙箱→MR→管线→人工合并→reconcile→done 全生产者闭合，零豁免）：done 累计 **20/110**（一期 P0 20/37≈54%）；A 域 P0 全清、B 域推进过半。审计链 302（治理域 242，export+verify=true）、evidence 149（CI 93+自证 56）。一手证据：`~/Works/yuandong/projects/peixun-s2b{3..10}/`（FR-REGISTER+evidence.json）；S2B10 集成侧全面检查全绿（gate 6/6×2、MR !24/!25 SHA 钉定、supersede 020@1→@2 原位愈合 binding 01a0af77、Jira 17–20 锚定零未决）。
+- **切片摩擦累积已裁定为 W7 契约波**（两例以上实证/灰度硬前提）：F29 claim 定向+归还面（B10-1 两误领悬两天）/F32 complete SHA 服务端校验/F15 validation_runs 上报 API（每切片手工回填）/F20 UpsertJob 终态单调守卫（切片 4 起悬置）+随行 F26 竞速缓解、F22 键对称——**brief-W7-slice-friction-fixes.md**，与切片会话不同仓可并行，常驻栈重建只在切片间隙。
+- **下一站 s2b11**：C1-1 上传与转码 + B10-1 公告与轮播（B10-1 悬挂租约 09-19 02:17Z 到期回队后为队首；先领 C1-1，二领前复核队序，未回队则等待而非领第三项）。
+- 时间线：W2 周报 ~09-20（自动）；出口评估最早 09-26；V4 欠账（D1 入 BOM/Jira 换号）待 owner。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
