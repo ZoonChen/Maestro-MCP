@@ -832,7 +832,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 			Pilot:         handler.NewPilotHandler(pgStore.Pilot()),
 			Jira:          handler.NewJiraHandler(pgStore.Jira()),
 			WorkGraph:     handler.NewWorkGraphHandler(pgStore.WorkGraph(), pgStore.Assets()),
-			Workflow:      handler.NewWorkflowActionsHandler(pgStore, pgStore.Assets()),
+			Workflow:      handler.NewWorkflowActionsHandler(pgStore, pgStore.Assets(), pgStore.Quality()),
 			Scope:         pgStore.Instances(),
 		}
 	}

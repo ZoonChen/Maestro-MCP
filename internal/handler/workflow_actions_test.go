@@ -102,7 +102,7 @@ func newWorkflowActionsFixture(t *testing.T) *workflowActionsFixture {
 	router.Use(mw.Authenticate)
 	RegisterControlPlane(router, ControlPlaneOptions{
 		Identity: mw,
-		Workflow: NewWorkflowActionsHandler(pg, pg.Assets()),
+		Workflow: NewWorkflowActionsHandler(pg, pg.Assets(), pg.Quality()),
 		Scope:    pg.Instances(),
 	})
 	return &workflowActionsFixture{

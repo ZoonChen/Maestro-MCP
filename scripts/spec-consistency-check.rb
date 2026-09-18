@@ -103,9 +103,11 @@ openapi_paths.each do |path|
   end
 end
 
-# 36 = the 32 frozen writes + the four W6-3 governance execution
-# routes (claim / execution complete / asset approve / gate binding).
-errors << "expected 36 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 36
+# 38 = the 32 frozen writes + the four W6-3 governance execution
+# routes (claim / execution complete / asset approve / gate binding)
+# + the two W7 slice-friction routes (execution release / validation-run
+# report).
+errors << "expected 38 OpenAPI write operations, got #{write_operations.length}" unless write_operations.length == 38
 
 # The /auth protocol group (task brief E) is a separate spec: its write
 # surface is exactly one cookie-bound protocol operation (logout), which

@@ -304,6 +304,23 @@ func (s *Syncer) applyJob(ctx context.Context, instanceID string, body []byte) (
 		if err != nil {
 			return ApplyOutcome{}, err
 		}
+		// W7-5 (F26): a terminal gate-named job on a marker branch whose
+		// evidence tuple is not yet complete used to be DROPPED — when
+		// its terminal event raced the first reconciliation that builds
+		// the tuple, the evidence vanished and only a manual job retry
+		// (a brand-new job arriving after the tuple) could recover it
+		// (S2B10: one retry round lost per incident). Deferring the
+		// whole delivery instead rides the SAME outbox replay path the
+		// pipeline-deferral above uses: the event replays after
+		// reconciliation completes the tuple and mints its evidence.
+		// Deferral is bounded to marker branches (maestro/<key>/<item>):
+		// team-natural branches never carry governance evidence.
+		if deferred, deferErr := s.jobEvidenceDeferred(ctx, projectID, job); deferErr != nil {
+			return ApplyOutcome{}, deferErr
+		} else if deferred {
+			return ApplyOutcome{}, fmt.Errorf(
+				"gitlab sync: job %d terminal on %s but tuple incomplete, evidence deferred", job.JobID, job.Ref)
+		}
 		if applied, ingestErr := s.Ingest.IngestJob(ctx, projectID, job, payload.SHA); ingestErr != nil {
 			return ApplyOutcome{}, ingestErr
 		} else if applied {
@@ -311,6 +328,29 @@ func (s *Syncer) applyJob(ctx context.Context, instanceID string, body []byte) (
 		}
 	}
 	return ApplyOutcome{Kind: "job"}, nil
+}
+
+// jobEvidenceDeferred reports whether a terminal gate-named job on a
+// marker branch must wait for its evidence tuple: the branch resolves
+// through the naming contract but the MR projection's SHA tuple is not
+// complete yet. Non-terminal jobs, non-gate producers and unmarked
+// branches never defer.
+func (s *Syncer) jobEvidenceDeferred(ctx context.Context, projectID string, job JobRecord) (bool, error) {
+	if _, terminal := jobStatusToEvidence[job.Status]; !terminal {
+		return false, nil
+	}
+	if !isGateKind(job.Name) {
+		return false, nil
+	}
+	key, _ := BranchMarker(jobBranch(job))
+	if key == "" {
+		return false, nil
+	}
+	_, _, _, _, complete, err := s.Store.BranchTuple(ctx, projectID, jobBranch(job))
+	if err != nil {
+		return false, err
+	}
+	return !complete, nil
 }
 
 // TupleFor builds the evaluation tuple from an MR record.

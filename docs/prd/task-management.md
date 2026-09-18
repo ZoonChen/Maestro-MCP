@@ -63,6 +63,7 @@ stateDiagram-v2
     leased --> executing
     leased --> queued: lease expires before side effect
     executing --> validating
+    executing --> queued: runner releases the lease (W7-1, queue-head re-entry)
     validating --> ready_for_human_merge
     ready_for_human_merge --> done
     ready_for_human_merge --> validating: SHA or policy changed
