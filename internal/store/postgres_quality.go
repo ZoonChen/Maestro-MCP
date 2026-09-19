@@ -529,3 +529,111 @@ func jobFK(record *evidence.Record) string {
 	_ = record.JobID
 	return ""
 }
+
+// ReportedValidationRun is the W7-3 (F15) reporting payload: the
+// boundary gate's missing writer. judgeBoundary reads the newest
+// non-empty validation_runs.profile_ref; since S2B3 every slice
+// backfilled that row by hand because the only writer on a resident PG
+// was the legacy SQLite import. These fields map the frozen
+// validation_runs columns the reporting face needs.
+type ReportedValidationRun struct {
+	ProfileRef   string
+	BaseCommit   string
+	SourceCommit string
+	ChangedFiles []byte // raw JSON array as reported
+	DurationMS   int64
+	BoundaryOK   bool
+	TestOK       bool
+	CoverageOK   bool
+	Result       string
+	Producer     string
+}
+
+// StoredValidationRun identities the collapsed row for the reply.
+type StoredValidationRun struct {
+	ID      int64
+	Attempt int
+}
+
+// ReportValidationRun appends one diagnostic validation run under an
+// idempotency key: the same key replays the SAME row (created=false);
+// a different key mints the next attempt. The work item row lock
+// serializes concurrent reporters so the attempt sequence has no gaps
+// and no unique-violation races.
+func (s pgQualityStore) ReportValidationRun(
+	ctx context.Context, projectID, workItemID, idempotencyKey string, run ReportedValidationRun,
+) (StoredValidationRun, bool, error) {
+	if idempotencyKey == "" {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: idempotency key is required: %w", ErrInvalidParameter)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	err = tx.QueryRowContext(ctx,
+		`SELECT 1 FROM work_items WHERE project_id = $1 AND id = $2 FOR UPDATE`,
+		projectID, workItemID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StoredValidationRun{}, false, ErrTaskNotFound
+	}
+	if err != nil {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: work item lock: %w", err)
+	}
+
+	var nextAttempt int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(attempt), 0) + 1 FROM validation_runs
+		WHERE project_id = $1 AND work_item_id = $2`,
+		projectID, workItemID).Scan(&nextAttempt); err != nil {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: attempt: %w", err)
+	}
+
+	result := run.Result
+	if result == "" {
+		result = "reported"
+	}
+	producer := run.Producer
+	if producer == "" {
+		producer = "maestro-local"
+	}
+	changedFiles := run.ChangedFiles
+	if len(changedFiles) == 0 {
+		changedFiles = []byte("[]")
+	}
+
+	var stored StoredValidationRun
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO validation_runs
+			(project_id, work_item_id, attempt, base_commit, source_commit, changed_files,
+			 profile_ref, boundary_ok, test_ok, coverage_ok, result, duration_ms, producer, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (project_id, work_item_id, idempotency_key) WHERE idempotency_key <> ''
+		DO NOTHING
+		RETURNING id, attempt`,
+		projectID, workItemID, nextAttempt, run.BaseCommit, run.SourceCommit, string(changedFiles),
+		run.ProfileRef, run.BoundaryOK, run.TestOK, run.CoverageOK, result, run.DurationMS,
+		producer, idempotencyKey).Scan(&stored.ID, &stored.Attempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Idempotent replay: the same key collapses onto its row.
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id, attempt FROM validation_runs
+			WHERE project_id = $1 AND work_item_id = $2 AND idempotency_key = $3`,
+			projectID, workItemID, idempotencyKey).Scan(&stored.ID, &stored.Attempt); err != nil {
+			return StoredValidationRun{}, false, fmt.Errorf("validation run: replay lookup: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return StoredValidationRun{}, false, fmt.Errorf("validation run: replay commit: %w", err)
+		}
+		return stored, false, nil
+	}
+	if err != nil {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: insert: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return StoredValidationRun{}, false, fmt.Errorf("validation run: commit: %w", err)
+	}
+	return stored, true, nil
+}

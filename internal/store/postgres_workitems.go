@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,6 +74,26 @@ func (s *PostgresStore) RunnerBoundToProject(ctx context.Context, runnerID, proj
 func (s *PostgresStore) ClaimNextWorkItem(
 	ctx context.Context, runnerID, connectionGeneration string, expectedQueueVersion int64, leaseTTL time.Duration,
 ) (*WorkItemClaim, error) {
+	return s.claimWorkItem(ctx, runnerID, connectionGeneration, "", expectedQueueVersion, leaseTTL)
+}
+
+// ClaimTargetedWorkItem is the W7-1 (F29) guarded dispatch: the caller
+// names the work item it was assigned. The dispatch selection itself is
+// unchanged (priority, then FIFO) — targeting is a GUARD, not a queue
+// jump: when the selection's head is not the requested item, the claim
+// refuses with ErrClaimTargetMismatch before any lease side effect
+// instead of silently handing the runner the wrong work item (the B10-1
+// two-incident failure mode: a mis-claimed lease could only hang until
+// its TTL expired).
+func (s *PostgresStore) ClaimTargetedWorkItem(
+	ctx context.Context, runnerID, connectionGeneration, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration,
+) (*WorkItemClaim, error) {
+	return s.claimWorkItem(ctx, runnerID, connectionGeneration, targetWorkItemID, expectedQueueVersion, leaseTTL)
+}
+
+func (s *PostgresStore) claimWorkItem(
+	ctx context.Context, runnerID, connectionGeneration, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration,
+) (*WorkItemClaim, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("claim: begin: %w", err)
@@ -113,8 +135,10 @@ func (s *PostgresStore) ClaimNextWorkItem(
 	// Next eligible work item in the runner's bound project, priority
 	// first (urgent > high > normal > low — the product's BOM ordering
 	// rides into dispatch, S2B2-F8), then FIFO within one priority
-	// band. Items whose locked-gate assets are not consumable (not
-	// approved, digest drift or a stale binding) are skipped — the
+	// band. Released items re-enter at the HEAD of their band (W7-1:
+	// queue_requeued_at sorts ahead of natural FIFO order, newest
+	// release first). Items whose locked-gate assets are not consumable
+	// (not approved, digest drift or a stale binding) are skipped — the
 	// asset gate fails closed at dispatch time (WGM-INV-015, J2a-4).
 	row := tx.QueryRowContext(ctx, `
 		SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch
@@ -135,6 +159,8 @@ func (s *PostgresStore) ClaimNextWorkItem(
 				WHEN 'high' THEN 1
 				WHEN 'normal' THEN 2
 				ELSE 3 END,
+			(w.queue_requeued_at IS NULL),
+			w.queue_requeued_at DESC NULLS LAST,
 			w.created_at, w.id
 		LIMIT 1
 		FOR UPDATE OF w SKIP LOCKED`, runnerID)
@@ -146,6 +172,13 @@ func (s *PostgresStore) ClaimNextWorkItem(
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim: select work item: %w", err)
+	}
+	// W7-1 (F29): the targeted guard — refuse a mismatched head BEFORE
+	// any lease side effect. No queue jump: the caller waits for the
+	// head to clear (or claims it deliberately untargeted).
+	if targetWorkItemID != "" && claim.WorkItemID != targetWorkItemID {
+		return nil, fmt.Errorf("claim: head is %s, not the requested %s: %w",
+			claim.WorkItemID, targetWorkItemID, ErrClaimTargetMismatch)
 	}
 
 	now := time.Now().UTC()
@@ -256,6 +289,29 @@ func (s *PostgresStore) CompleteExecution(
 	if executionStatus == "" {
 		return fmt.Errorf("complete: outcome %q: %w", outcome, ErrInvalidParameter)
 	}
+	// W7-2 (F32): the platform's known branch head is the MR projection
+	// bound to this work item (the branch tuple's source SHA). A
+	// presented SHA that disagrees with a projected head is refused —
+	// the two mis-acceptances (one truncated, one wrong-branch 40-hex)
+	// proved the client-side discipline alone does not hold. No
+	// projection yet means nothing to contradict; the format check at
+	// the handler already fenced the shape.
+	if commitSHA != nil && *commitSHA != "" {
+		var knownHead sql.NullString
+		err = tx.QueryRowContext(ctx, `
+			SELECT mr.source_sha FROM merge_requests mr
+			WHERE mr.project_id = $1 AND mr.work_item_id = $2
+			  AND mr.source_sha IS NOT NULL AND mr.source_sha <> ''
+			ORDER BY mr.observed_at DESC LIMIT 1`,
+			projectID, workItemID).Scan(&knownHead)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("complete: branch head lookup: %w", err)
+		}
+		if knownHead.Valid && !strings.EqualFold(knownHead.String, *commitSHA) {
+			return fmt.Errorf("complete: sha %s vs known head %s: %w",
+				*commitSHA, knownHead.String, ErrCommitSHAMismatch)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE executions SET status = $2, ended_at = now() WHERE id = $1`,
 		executionID, executionStatus); err != nil {
@@ -287,6 +343,94 @@ func (s *PostgresStore) CompleteExecution(
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("complete: commit: %w", err)
+	}
+	return nil
+}
+
+// ReleaseExecution is the W7-1 (F29) give-back face: the runner that
+// holds the lease returns it BEFORE any terminal outcome — the work
+// item goes back to queued at the HEAD of its priority band
+// (queue_requeued_at, newest first), the queue CAS token advances, and
+// the state change commits with its audit row (work_item.released) and
+// outbox event (work_item.state.changed executing -> queued) in the
+// same transaction (WGM-INV-012). The B10-1 alternative — parking a
+// mis-claimed lease for its full TTL — cost the pilot two days.
+func (s *PostgresStore) ReleaseExecution(
+	ctx context.Context, executionID, runnerID, connectionGeneration, reason, actor string,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("release: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var leaseID, workItemID, projectID string
+	var leaseVersion int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT e.lease_id, e.work_item_id, e.project_id, l.version
+		FROM executions e JOIN leases l ON l.id = e.lease_id
+		WHERE e.id = $1 AND e.runner_id = $2 AND e.status = 'running'`,
+		executionID, runnerID).Scan(&leaseID, &workItemID, &projectID, &leaseVersion)
+	if err == sql.ErrNoRows {
+		return ErrLeaseNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("release: lookup: %w", err)
+	}
+	// Fencing: the releasing connection must own the lease generation.
+	var owned int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM leases WHERE id = $1 AND connection_generation = $2 AND status = 'active'`,
+		leaseID, connectionGeneration).Scan(&owned); err == sql.ErrNoRows {
+		return ErrRunnerGenerationStale
+	} else if err != nil {
+		return fmt.Errorf("release: fence: %w", err)
+	}
+
+	// The machine's own edge: only an executing item returns to queued.
+	var itemVersion int64
+	err = tx.QueryRowContext(ctx, `
+		UPDATE work_items
+		SET status = 'queued', version = version + 1,
+		    queue_requeued_at = now(), updated_at = now()
+		WHERE id = $1 AND project_id = $2 AND status = 'executing'
+		RETURNING version`,
+		workItemID, projectID).Scan(&itemVersion)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("release: work item outside executing: %w", ErrConcurrentConflict)
+	}
+	if err != nil {
+		return fmt.Errorf("release: work item: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE executions SET status = 'released', ended_at = now() WHERE id = $1`,
+		executionID); err != nil {
+		return fmt.Errorf("release: execution: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE leases SET status = 'released', updated_at = now() WHERE id = $1 AND version = $2`,
+		leaseID, leaseVersion); err != nil {
+		return fmt.Errorf("release: lease: %w", err)
+	}
+	// Queue changes again: waiters must re-observe the token.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE projects SET version = version + 1, updated_at = now() WHERE id = $1`, projectID); err != nil {
+		return fmt.Errorf("release: queue token: %w", err)
+	}
+	if err := recordGovernanceEvent(ctx, tx, governanceEvent{
+		ProjectID: projectID, Action: "work_item.released",
+		ResourceType: "work_item", ResourceID: workItemID,
+		Actor: actor, Reason: reason,
+		OutboxType: "work_item.state.changed",
+		Payload: mustMarshal(map[string]any{
+			"work_item_id": workItemID, "from": "executing", "to": "queued",
+			"version": itemVersion, "reason_code": "WORK_ITEM_RELEASED",
+		}),
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("release: commit: %w", err)
 	}
 	return nil
 }

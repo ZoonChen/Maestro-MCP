@@ -61,12 +61,18 @@ var (
 	ErrRunnerStatusInvalid   = errors.New("runner status invalid for this operation")
 	ErrRunnerNotBound        = errors.New("runner not bound to project")
 	ErrRunnerGenerationStale = errors.New("runner connection generation stale")
-	ErrEnrollmentInvalid     = errors.New("enrollment code invalid")
-	ErrEnrollmentExpired     = errors.New("enrollment code expired")
-	ErrEnrollmentConsumed    = errors.New("enrollment code already consumed")
-	ErrDuplicateEvent        = errors.New("event already recorded")
-	ErrOutboxClaimMismatch   = errors.New("outbox claim no longer owned by this dispatcher")
-	ErrMigrationLocked       = errors.New("schema migration held by another owner")
+	// W7-1 (F29): a targeted claim met a different queue head — refused
+	// before any lease side effect instead of a silent mis-dispatch.
+	ErrClaimTargetMismatch = errors.New("claim target is not the queue head")
+	// W7-2 (F32): the presented commit SHA does not match the branch
+	// head the platform already projected for the work item.
+	ErrCommitSHAMismatch   = errors.New("commit_sha does not match the known branch head")
+	ErrEnrollmentInvalid   = errors.New("enrollment code invalid")
+	ErrEnrollmentExpired   = errors.New("enrollment code expired")
+	ErrEnrollmentConsumed  = errors.New("enrollment code already consumed")
+	ErrDuplicateEvent      = errors.New("event already recorded")
+	ErrOutboxClaimMismatch = errors.New("outbox claim no longer owned by this dispatcher")
+	ErrMigrationLocked     = errors.New("schema migration held by another owner")
 )
 
 // ---------------------------------------------------------------------------

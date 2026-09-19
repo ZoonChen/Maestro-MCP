@@ -587,7 +587,16 @@ paths:
       tags: [GitLab]
       operationId: reconcileMergeRequest
       summary: Request read-only reconciliation with GitLab facts
-      description: Refreshes read models only; it cannot merge or push any branch.
+      description: >-
+        Refreshes read models only; it cannot merge or push any branch.
+        Known key asymmetry (F22, W7-6 documented as-is): the route
+        resolves the mapping under the ROUTE project, and MR
+        projections live under the mapping project — so reconciliation
+        for a governance project without its own GitLab mapping must be
+        called under the mapping project (the slice sessions' standing
+        workaround). Symmetrizing (branch-contract resolution like
+        BranchTuple) is registered as follow-up design, not changed
+        here.
       x-maestro-permission: gitlab.reconcile
       x-maestro-audit-event: gitlab.merge_request_reconcile_requested
       x-maestro-idempotency: required-header
@@ -1003,7 +1012,10 @@ paths:
         commit SHA and moves the work item to validating — the gate
         verdict (W6-1) owns everything after that; blocked/failed map
         to failed, cancelled to cancelled. The lease generation fences
-        stale completions.
+        stale completions. W7-2 (F32): the SHA is fenced server-side —
+        full 40-hex shape, and agreement with the branch head the
+        platform projected for the bound merge request
+        (COMMIT_SHA_MISMATCH otherwise).
       x-maestro-permission: work_item.submit
       x-maestro-audit-event: work_item.execution.completed
       x-maestro-idempotency: terminal-state-collapse
@@ -1025,6 +1037,54 @@ paths:
                 properties:
                   execution_id: {type: string, format: uuid}
                   outcome: {type: string, enum: [completed, blocked, failed, cancelled]}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+  /projects/{project_id}/executions/{execution_id}/release:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: execution_id
+        in: path
+        required: true
+        description: Execution identifier returned by the claim
+        schema: {type: string, format: uuid}
+    post:
+      tags: [WorkItems]
+      operationId: releaseExecution
+      summary: Return a lease before any terminal outcome (W7-1)
+      description: >
+        The give-back face (F29): the lease-owning connection returns a
+        mis-claimed or abandoned execution; the work item re-enters the
+        queue at the HEAD of its priority band (ahead of its natural
+        FIFO position) and the queue CAS token advances so waiters
+        re-observe. The state change commits with its audit row
+        (work_item.released) and its work_item.state.changed outbox
+        event in the same transaction. This is the executing -> queued
+        legal edge registered in the task state machine.
+      x-maestro-permission: work_item.claim
+      x-maestro-audit-event: work_item.released
+      x-maestro-idempotency: terminal-state-collapse
+      x-maestro-concurrency: lease-generation-fencing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkflowReleaseRequest'}
+      responses:
+        '202':
+          description: The execution was released and the work item re-queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [execution_id, outcome]
+                properties:
+                  execution_id: {type: string, format: uuid}
+                  outcome: {type: string, enum: [released]}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -1126,6 +1186,60 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422': {$ref: '#/components/responses/Unprocessable'}
+  /projects/{project_id}/work-items/{work_item_id}/validation-runs:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+      - name: work_item_id
+        in: path
+        required: true
+        description: Work item identifier
+        schema: {type: string, format: uuid}
+    post:
+      tags: [WorkItems]
+      operationId: reportValidationRun
+      summary: Report a local validation run for the boundary gate (W7-3)
+      description: >
+        The validation-run reporting face (F15): the slice's local
+        diagnostic run (profile_ref, commits, changed files, duration)
+        lands in validation_runs through an authenticated, idempotent
+        API — judgeBoundary reads the newest non-empty profile_ref to
+        judge the boundary control-plane gate. Before this face the
+        only writer on a resident PG was the legacy SQLite import, so
+        every S2B slice backfilled the row by hand via psql. The
+        Idempotency-Key header is required: the same key replays the
+        SAME row (200 with replayed=true); a new key mints the next
+        attempt.
+      x-maestro-permission: work_item.submit
+      x-maestro-audit-event: validation_run.reported
+      x-maestro-idempotency: idempotency-key-header
+      x-maestro-concurrency: work-item-row-lock
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Caller-unique key; the same key collapses onto the same validation_runs row
+          schema: {type: string, minLength: 1, maxLength: 200}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ValidationRunReportRequest'}
+      responses:
+        '201':
+          description: A new validation run attempt was recorded
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ValidationRunReportResult'}
+        '200':
+          description: The idempotency key replayed its existing row
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ValidationRunReportResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /projects/{project_id}/assets:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -2381,6 +2495,14 @@ components:
         connection_generation: {type: string, minLength: 1, maxLength: 64, description: 'Lease-fencing generation'}
         queue_version: {type: integer, format: int64, minimum: 1, description: 'Queue CAS token; server-read when absent'}
         lease_ttl_seconds: {type: integer, minimum: 1, maximum: 86400, description: 'Lease budget; capped at 24h, default 1800'}
+        work_item_id:
+          type: string
+          format: uuid
+          description: >-
+            W7-1 targeting guard (F29): when present, the claim refuses
+            with 409 CLAIM_TARGET_MISMATCH if the dispatch head is a
+            different work item — never a silent mis-dispatch. Targeting
+            never jumps the queue; it only refuses the wrong item.
     WorkflowClaimResult:
       type: object
       additionalProperties: false
@@ -2402,8 +2524,58 @@ components:
         runner_id: {type: string, format: uuid}
         connection_generation: {type: string, minLength: 1, maxLength: 64}
         outcome: {type: string, enum: [completed, blocked, failed, cancelled]}
-        commit_sha: {type: string, description: 'Required when outcome is completed'}
+        commit_sha:
+          type: string
+          pattern: '^[0-9a-fA-F]{40}$'
+          description: >-
+            Required when outcome is completed. W7-2 (F32) server-side
+            fences: a full 40-hex Git object name (truncated SHAs are
+            refused at the shape check) that must agree with the branch
+            head the platform projected for the work item's bound merge
+            request (a disagreeing full SHA is refused with 400
+            COMMIT_SHA_MISMATCH).
         summary: {type: string, maxLength: 4000}
+    WorkflowReleaseRequest:
+      type: object
+      additionalProperties: false
+      required: [runner_id, connection_generation, reason]
+      properties:
+        runner_id: {type: string, format: uuid}
+        connection_generation: {type: string, minLength: 1, maxLength: 64}
+        reason: {type: string, minLength: 8, maxLength: 2000, description: 'Why the lease is returned; lands on the audit row'}
+    ValidationRunReportRequest:
+      type: object
+      additionalProperties: false
+      required: [profile_ref]
+      properties:
+        profile_ref:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >-
+            The command profile the run executed under (the boundary
+            gate's input); judgeBoundary reads the newest non-empty row.
+        base_commit: {type: string, maxLength: 40}
+        source_commit: {type: string, maxLength: 40}
+        changed_files:
+          type: array
+          description: Paths the run touched (recorded as reported)
+          items: {type: string}
+        duration_ms: {type: integer, format: int64, minimum: 0, description: 'Measured wall-clock duration of the run'}
+        boundary_ok: {type: boolean, description: "The run's boundary check outcome"}
+        test_ok: {type: boolean, description: "The run's test outcome"}
+        coverage_ok: {type: boolean, description: "The run's coverage outcome"}
+        result: {type: string, maxLength: 40, description: 'Free-form outcome label; defaults to "reported"'}
+        producer: {type: string, maxLength: 80, description: 'Reporting producer identity; defaults to "maestro-local"'}
+    ValidationRunReportResult:
+      type: object
+      additionalProperties: false
+      required: [id, attempt, created, replayed]
+      properties:
+        id: {type: integer, description: 'validation_runs row identity'}
+        attempt: {type: integer, minimum: 1, description: 'The attempt the row collapsed onto'}
+        created: {type: boolean, description: 'true when this call minted the row'}
+        replayed: {type: boolean, description: 'true when the idempotency key replayed its existing row'}
     WorkflowGateBindingRequest:
       type: object
       additionalProperties: false

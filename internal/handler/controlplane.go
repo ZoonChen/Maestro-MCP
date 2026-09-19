@@ -119,6 +119,16 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/work-items/:wid/gate-bindings": {
 		http.MethodPost: "workgraph.propose",
 	},
+	// W7-1 (F29): the give-back face rides the same dispatch grant as
+	// the claim it inverts.
+	"/api/v3/projects/:pid/executions/:execId/release": {
+		http.MethodPost: "work_item.claim",
+	},
+	// W7-3 (F15): the validation-run report is part of the developer's
+	// submission package — the same frozen submit grant complete uses.
+	"/api/v3/projects/:pid/work-items/:wid/validation-runs": {
+		http.MethodPost: "work_item.submit",
+	},
 }
 
 // ControlPlaneOptions wires the human /api/v3 control-plane group.
@@ -202,8 +212,10 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 	if options.Workflow != nil {
 		group.POST("/projects/:pid/work-items/claim", options.Workflow.Claim)
 		group.POST("/projects/:pid/executions/:execId/complete", options.Workflow.Complete)
+		group.POST("/projects/:pid/executions/:execId/release", options.Workflow.Release)
 		group.POST("/projects/:pid/assets/:assetId/versions/:version/approve", options.Workflow.ApproveAsset)
 		group.POST("/projects/:pid/work-items/:wid/gate-bindings", options.Workflow.BindGate)
+		group.POST("/projects/:pid/work-items/:wid/validation-runs", options.Workflow.ReportValidationRun)
 	}
 }
 

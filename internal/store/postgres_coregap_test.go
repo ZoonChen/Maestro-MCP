@@ -227,3 +227,43 @@ func TestSensitivityAndOptionalityHelpers(t *testing.T) {
 	full.AvailableAt = time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
 	require.NoError(t, pg.Outbox().Enqueue(ctx, full))
 }
+
+// TestOutboxClaimPendingExcluding covers the W6 DomainEventSink claim:
+// the batch/owner validation fences and the event-type exclusion that
+// keeps webhook-delivery events with the webhook dispatcher.
+func TestOutboxClaimPendingExcluding(t *testing.T) {
+	pg, _ := newCoreGapFixture(t)
+	ctx := context.Background()
+
+	_, err := pg.Outbox().ClaimPendingExcluding(ctx, 0, "domain-sink", nil)
+	require.Error(t, err, "batch size must be positive")
+	_, err = pg.Outbox().ClaimPendingExcluding(ctx, 4, "", nil)
+	require.Error(t, err, "claim owner must not be empty")
+
+	domainA := testOutboxEvent("excl-domain-a")
+	domainB := testOutboxEvent("excl-domain-b")
+	require.NoError(t, pg.Outbox().Enqueue(ctx, domainA))
+	require.NoError(t, pg.Outbox().Enqueue(ctx, domainB))
+	webhook := testOutboxEvent("excl-hook")
+	webhook.EventType = "webhook.deliver"
+	require.NoError(t, pg.Outbox().Enqueue(ctx, webhook))
+
+	claimed, err := pg.Outbox().ClaimPendingExcluding(ctx, 8, "domain-sink", []string{"webhook.deliver"})
+	require.NoError(t, err)
+	require.Len(t, claimed, 2, "the excluded webhook event stays with its dispatcher")
+	for _, event := range claimed {
+		assert.Equal(t, "work_item.state.changed", event.EventType)
+		require.NotNil(t, event.LeaseOwner)
+		assert.Equal(t, "domain-sink", *event.LeaseOwner)
+		assert.EqualValues(t, "sending", event.Status)
+	}
+
+	var webhookStatus string
+	require.NoError(t, pg.DB().QueryRowContext(ctx,
+		`SELECT status FROM outbox_events WHERE event_id = $1`, webhook.EventID).Scan(&webhookStatus))
+	assert.Equal(t, "pending", webhookStatus, "excluded events are untouched")
+
+	again, err := pg.Outbox().ClaimPendingExcluding(ctx, 8, "domain-sink", []string{"webhook.deliver"})
+	require.NoError(t, err)
+	assert.Empty(t, again, "claimed rows are leased, not re-dispatchable")
+}

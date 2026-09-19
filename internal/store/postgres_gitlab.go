@@ -299,12 +299,22 @@ func (s pgGitlabStore) UpsertJob(ctx context.Context, rec gitlab.JobRecord) erro
 	if err != nil {
 		return fmt.Errorf("gitlab sync: pipeline lookup: %w", err)
 	}
+	// W7-4 (F20): the monotonic terminal-state guard. The upsert used
+	// to be pure last-write-wins, so a deferred replay of a stale
+	// created/running event landing after success dragged the
+	// projection back to a non-terminal state — the evidence ingestor
+	// (terminal-only) then never minted evidence and every gate hung
+	// pending until a manual job retry. A projected terminal state
+	// (success/failed/canceled) now refuses regressions: the stale
+	// replay collapses onto the terminal row as a no-op.
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO pipeline_jobs (id, pipeline_id, gitlab_job_id, name, status, stage)
 		VALUES ($1, (SELECT id FROM pipelines WHERE gitlab_instance_id = $2 AND gitlab_pipeline_id = $3),
 			$4, $5, $6, NULLIF($7, ''))
 		ON CONFLICT (pipeline_id, gitlab_job_id) DO UPDATE SET
-			status = EXCLUDED.status, stage = EXCLUDED.stage, observed_at = now()`,
+			status = EXCLUDED.status, stage = EXCLUDED.stage, observed_at = now()
+		WHERE pipeline_jobs.status NOT IN ('success', 'failed', 'canceled')
+		   OR EXCLUDED.status IN ('success', 'failed', 'canceled')`,
 		pgNewUUID(), rec.InstanceID, rec.PipelineID, rec.JobID, rec.Name, rec.Status, rec.Stage); err != nil {
 		return fmt.Errorf("gitlab sync: job upsert: %w", err)
 	}
