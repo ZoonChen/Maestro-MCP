@@ -345,3 +345,97 @@ func replyJSONIntField(t *testing.T, body, field string) string {
 	}
 	return strings.TrimSpace(rest[:end])
 }
+
+// TestW7FrictionReleaseAndCompleteFences drills the store error fences
+// the happy-path tests leave cold: the release lease lookup, release
+// generation fence and release concurrency guard; the complete lease
+// lookup and outcome validation; the validation-run not-found and
+// default-value paths. These branches are the CI pg-store 80% gate's
+// remaining gap (881/1114 = 79.1% before this function).
+func TestW7FrictionReleaseAndCompleteFences(t *testing.T) {
+	f := newW7FrictionFixture(t)
+	claimPath := "/api/v3/projects/" + w7ProjectID + "/work-items/claim"
+	fullSHA := strings.Repeat("ab", 20)
+
+	var execID string
+	t.Run("claim head for the fence drills", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost, claimPath,
+			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"fence-1"}`, w7RunnerID), "")
+		require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
+		execID = replyJSONStringField(t, reply.Body.String(), "execution_id")
+		require.NotEmpty(t, execID)
+	})
+
+	releasePath := "/api/v3/projects/" + w7ProjectID + "/executions/" + execID + "/release"
+	t.Run("release with the wrong runner is LEASE_EXPIRED", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost, releasePath,
+			`{"runner_id":"018f7900-0000-7000-8000-000000000099","connection_generation":"fence-1","reason":"wrong runner probe"}`, "")
+		require.Equal(t, http.StatusGone, reply.Code, reply.Body.String())
+		assert.Contains(t, reply.Body.String(), "LEASE_EXPIRED")
+	})
+
+	t.Run("release with a stale generation is fenced", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost, releasePath,
+			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"fence-0","reason":"stale generation probe"}`, w7RunnerID), "")
+		require.Equal(t, http.StatusConflict, reply.Code, reply.Body.String())
+		assert.Contains(t, reply.Body.String(), "LEASE_VERSION_MISMATCH")
+	})
+
+	t.Run("release of an item that left executing is a conflict", func(t *testing.T) {
+		_, err := f.db.Exec(`UPDATE work_items SET status='queued' WHERE id=$1`, w7HeadItem)
+		require.NoError(t, err)
+		reply := w7Request(t, f, f.devTK, http.MethodPost, releasePath,
+			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"fence-1","reason":"concurrency probe"}`, w7RunnerID), "")
+		require.Equal(t, http.StatusConflict, reply.Code, reply.Body.String())
+		assert.Contains(t, reply.Body.String(), "CONCURRENCY_CONFLICT")
+		// The refused release leaves the stale pair behind (the store
+		// rolled back); retire it the way the offline monitor would so
+		// the queue's partial unique index frees the item for re-claim.
+		_, err = f.db.Exec(`UPDATE executions SET status='released', ended_at=now() WHERE id=$1`, execID)
+		require.NoError(t, err)
+		_, err = f.db.Exec(`
+			UPDATE leases l SET status='released', updated_at=now()
+			FROM executions e WHERE e.lease_id = l.id AND e.id = $1`, execID)
+		require.NoError(t, err)
+	})
+
+	t.Run("complete fences: lease lookup and outcome validation", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost, claimPath,
+			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"fence-2"}`, w7RunnerID), "")
+		require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
+		execID = replyJSONStringField(t, reply.Body.String(), "execution_id")
+		completePath := "/api/v3/projects/" + w7ProjectID + "/executions/" + execID + "/complete"
+
+		wrongRunner := w7Request(t, f, f.devTK, http.MethodPost, completePath,
+			fmt.Sprintf(`{"runner_id":"018f7900-0000-7000-8000-000000000099","connection_generation":"fence-2","outcome":"completed","commit_sha":%q}`, fullSHA), "")
+		require.Equal(t, http.StatusGone, wrongRunner.Code, wrongRunner.Body.String())
+		assert.Contains(t, wrongRunner.Body.String(), "LEASE_EXPIRED")
+
+		badOutcome := w7Request(t, f, f.devTK, http.MethodPost, completePath,
+			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"fence-2","outcome":"exploded","commit_sha":%q}`, w7RunnerID, fullSHA), "")
+		require.Equal(t, http.StatusBadRequest, badOutcome.Code, badOutcome.Body.String())
+		assert.Contains(t, badOutcome.Body.String(), "INVALID_PARAMETER")
+	})
+
+	t.Run("validation run on an unknown item is 404", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost,
+			"/api/v3/projects/"+w7ProjectID+"/work-items/018f7900-0000-7000-8000-000000000099/validation-runs",
+			`{"profile_ref":"p@1"}`, "fence-key-404")
+		require.Equal(t, http.StatusNotFound, reply.Code, reply.Body.String())
+	})
+
+	t.Run("validation run defaults fill result, producer and changed_files", func(t *testing.T) {
+		reply := w7Request(t, f, f.devTK, http.MethodPost,
+			"/api/v3/projects/"+w7ProjectID+"/work-items/"+w7HeadItem+"/validation-runs",
+			`{"profile_ref":"p@2"}`, "fence-key-defaults")
+		require.Equal(t, http.StatusCreated, reply.Code, reply.Body.String())
+		var result, producer, changed string
+		require.NoError(t, f.db.QueryRow(`
+			SELECT result, producer, changed_files::text FROM validation_runs
+			WHERE project_id=$1 AND work_item_id=$2 AND idempotency_key='fence-key-defaults'`,
+			w7ProjectID, w7HeadItem).Scan(&result, &producer, &changed))
+		assert.Equal(t, "reported", result)
+		assert.Equal(t, "maestro-local", producer)
+		assert.Equal(t, "[]", changed)
+	})
+}

@@ -96,3 +96,79 @@ func TestTelemetryAndAuditChain(t *testing.T) {
 	require.Len(t, partial, 2)
 	require.NoError(t, obs.AuditChainVerify(ctx, m3Project, 2, 3, partialDigests))
 }
+
+// TestPlatformDepthsSamplesBacklogs covers the G2 persistent metric
+// face: the inbox backlog, DLQ depth and outbox pending counts, plus
+// the lag percentiles' presence on seeded rows.
+func TestPlatformDepthsSamplesBacklogs(t *testing.T) {
+	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
+		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	admin, err := OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_obs_depths_test WITH (FORCE)`)
+	require.NoError(t, err)
+	_, err = admin.ExecContext(context.Background(), `CREATE DATABASE maestro_obs_depths_test`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.Background(), `DROP DATABASE IF EXISTS maestro_obs_depths_test WITH (FORCE)`)
+		_ = admin.Close()
+	})
+	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
+	db, err := OpenPostgres(context.Background(),
+		dsn[:strings.LastIndex(dsn, "/")+1]+"maestro_obs_depths_test")
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = ApplyPostgresMigrations(context.Background(), db)
+	require.NoError(t, err)
+	pg, err := NewPostgresStore(db)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	instance := pgNewUUID()
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO gitlab_instances (id, base_url, display_name, bot_credential_ref, webhook_secret_ref)
+		VALUES ($1, 'https://depths.example', 'Depths', 'ref', 'ref')`, instance)
+	require.NoError(t, err)
+	seedInbox := func(externalID, status string) {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO webhook_inbox (id, gitlab_instance_id, external_event_id, event_kind, webhook_uuid, payload_digest, status)
+			VALUES ($1, $2, $3, 'merge_request', $4, $5, $6)`,
+			pgNewUUID(), instance, externalID, pgNewUUID(), "sha256:"+strings.Repeat("a", 64), status)
+		require.NoError(t, err)
+	}
+	seedInbox("depths-1", "received")
+	seedInbox("depths-2", "retry_wait")
+	seedInbox("depths-3", "dead_letter")
+	seedInbox("depths-4", "processed") // not a backlog state
+
+	const teamID = "018f7e00-0000-7000-8000-0000000000d1"
+	_, err = db.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1, 'depths')`, teamID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO projects (id, team_id, key, name, status) VALUES ($1, $2, 'depths', 'Depths', 'active')`,
+		m3Project, teamID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO outbox_events
+			(event_id, event_type, event_version, source, project_id, subject, occurred_at,
+			 correlation_id, causation_id, payload_digest, sensitivity, payload, status)
+		VALUES ($1, 'work_item.state.changed', 1, 'governance', $2, $3, now(),
+		        $5, $6, $9, 'internal', '{}'::jsonb, 'pending'),
+		       ($4, 'work_item.state.changed', 1, 'governance', $2, $3, now(),
+		        $7, $8, $10, 'internal', '{}'::jsonb, 'delivered')`,
+		pgNewUUID(), m3Project, pgNewUUID(), pgNewUUID(), pgNewUUID(), pgNewUUID(), pgNewUUID(), pgNewUUID(),
+		"sha256:"+strings.Repeat("b", 64), "sha256:"+strings.Repeat("c", 64))
+	require.NoError(t, err)
+
+	depths, err := pg.Observability().PlatformDepths(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, depths.InboxBacklog, "received + retry_wait count; processed does not")
+	assert.EqualValues(t, 1, depths.DLQDepth)
+	assert.EqualValues(t, 1, depths.OutboxPending, "only the undelivered row counts")
+	assert.Greater(t, depths.InboxLagMeanSeconds, 0.0)
+	require.NotNil(t, depths.InboxLagP95Seconds, "seeded rows make the inbox percentile real")
+	assert.Greater(t, *depths.InboxLagP95Seconds, 0.0)
+	require.NotNil(t, depths.OutboxLagP95Seconds, "seeded outbox row makes the percentile real")
+	assert.Greater(t, *depths.OutboxLagP95Seconds, 0.0)
+}
