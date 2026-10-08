@@ -266,6 +266,14 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **下一站 s2b11**：C1-1 上传与转码 + B10-1 公告与轮播（B10-1 悬挂租约 09-19 02:17Z 到期回队后为队首；先领 C1-1，二领前复核队序，未回队则等待而非领第三项）。
 - 时间线：W2 周报 ~09-20（自动）；出口评估最早 09-26；V4 欠账（D1 入 BOM/Jira 换号）待 owner。
 
+### W7 收口 + s2b11 + 常驻栈 WIN-W7-01（2026-09-19，会话 I）
+
+- **W7 全收口（PR #142，main=3168733）**：六项落地（F29 定向 claim+release 归还/F32 SHA 双栅栏/F15 validation-runs 上报面/F20 UpsertJob 单调守卫/F26 事件侧 deferral 代码/F22 文档化）；迁移 0023、writes 36→38、状态机 executing→queued 新边。覆盖门 79.1%→**80.3%** 由集成会话补测三批（错误栅栏 7 子用例/ClaimPendingExcluding/PlatformDepths，cc84a0d）；关闭声明=`deploy/gitlab/peixun/reports/W7-slice-friction-closure.md`。**教训：pg-store 覆盖门只算 12 个白名单文件，observability/workgraph 等不在内。**
+- **常驻栈 WIN-20260919-W7-01**（切片间隙执行）：pre/post pg_dump；0023 落库→镜像自 main 重建→换容器；readyz 200；B10-1 租约到期自动回队（02:17Z）零损失；release/validation-runs 路由 RBAC 探测正确。
+- **s2b11（C1-1）收口**：单项零豁免 done（连续第十七条；done 21/110、main=3910af12、审计 312 verify=true、evidence 155）；F35 Mimosa Java 误报墙（外部工具缺口）/F36 同 F34 族；F26 retry 语义精确化（=GitLab API 重跑、双管线都解、全 job 重跑）。B10-1 按停车纪律等待，现已回队为队首。
+- **下一切片接替（W7 能力生效）**：claim 一律定向；误领即 release；boundary 回填走 validation-runs 端点（psql 手工回填退役）。
+- **W2 周报（09-20）改为手动触发**：本机 crontab 写入被沙箱拦停（pg-backup cron 之外新增失败）；到期由集成会话直接跑 `scripts/pilot/shadow-report.sh`。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
