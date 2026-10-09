@@ -22,7 +22,8 @@
 #   --fetch-token    刷新脚本（默认 pilot-stack/fetch-token.sh；none=不刷新）
 #
 # 环境变量：
-#   SHADOW_REPORT_PG_CONTAINER  默认 maestro-mcp-maestro-postgres-1
+#   SHADOW_REPORT_PG_CONTAINER  默认 maestro-resident-postgres
+#   （常驻栈容器名；8081 为 F38 后常驻端口，--api 可覆盖）
 #
 # 注册入账（S2C-4，写操作）由配套 Go 驱动完成，本脚本只打印报告 digest：
 #   go run ./scripts/pilot/report-register --report <周报路径> --week <N>
@@ -31,13 +32,13 @@ set -euo pipefail
 
 SCRIPT_VERSION="shadow-report/1.0.0"
 SHADOW_START_EPOCH=1789171200 # 2026-09-12T00:00:00Z（S2 影子期开工日）
-DEFAULT_API="http://127.0.0.1:8080"
-DEFAULT_PG_CONTAINER="maestro-mcp-maestro-postgres-1"
+DEFAULT_API="http://127.0.0.1:8081"
+DEFAULT_PG_CONTAINER="maestro-resident-postgres"
 PILOT_PROJECT="018fb5b0-0000-7000-8000-000000000006" # peixun BOM 治理域（审计链指纹面）
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$DEFAULT_API"
-PG_CONTAINER="$DEFAULT_PG_CONTAINER"
+PG_CONTAINER="${SHADOW_REPORT_PG_CONTAINER:-$DEFAULT_PG_CONTAINER}"
 TOKEN_FILE="$HOME/Works/yuandong/projects/maestro-p5a-bases/pilot-stack/pilot-token"
 FETCH_TOKEN="$HOME/Works/yuandong/projects/maestro-p5a-bases/pilot-stack/fetch-token.sh"
 OUT_DIR="$REPO_ROOT/deploy/gitlab/peixun/reports"

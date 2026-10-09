@@ -274,6 +274,15 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **下一切片接替（W7 能力生效）**：claim 一律定向；误领即 release；boundary 回填走 validation-runs 端点（psql 手工回填退役）。
 - **W2 周报（09-20）改为手动触发**：本机 crontab 写入被沙箱拦停（pg-backup cron 之外新增失败）；到期由集成会话直接跑 `scripts/pilot/shadow-report.sh`。
 
+### 停机两周恢复 + s2b12 + 出口评估重排（2026-10-09，会话 I）
+
+- **s2b11 第二项（09-20）**：B10-1 公告与轮播 done（MR !27=4998cb95、PEIXUN-22 锚定镜像 ok）——复会完成第二项指派，done 22/110。
+- **停机事件（~09-24→10-08）**：pilot-server/keycloak/gitlab-tls 三容器 Exited 两周（restart=no 无策略，宿主/daemon 事件后不回升）；W2–W5 周报全缺、**09-26 出口评估未发生**。s2b12 开工时按 ART-incident-002 纪律恢复（WIN-20261008-S2B12-01：快照→原位 start→库零漂移核验）。
+- **s2b12（10-08）**：C1-2 播放地址零豁免 done（连续第十九条全生产者闭合；MR !28=81d93bf1、pipeline #110 四 job 绿、详设 024@1、审计 326 verify=true）——**W7 三能力首战成功**（定向 claim 零错位/F15 validation-runs API 幂等/F32 双栅栏拒截断 SHA）。**调度纠偏**：下发开场语引用了 09-19 旧快照（B10-1 已被 s2b11 完成），切片会话以治理面真值纠偏零重做——**分发纪律定案：开场语必须现场查队首再写**。
+- **新摩擦**：F39（高）aliyun 全网不可达→ci-smoke 镜像回落 Maven Central（随 !28 合入）；F40（中）Jira off-net，PEIXUN-23 manual 锚 mirror=f 诚实留 1 未决；F41（低）shadow-report.sh 旧容器名+旧端口——**已修**（8081/maestro-resident-postgres/补实现 SHADOW_REPORT_PG_CONTAINER，冒烟 verify=true）；F38 restart 策略**已落地**（三容器 unless-stopped 对齐，WIN-20261009-I4-F38）。
+- **done=23/110（一期 P0 62%）**；下站 s2b13=C3-1 问卷/考试引擎（076 队首，独占切片）**执行中**。
+- **出口评估重排（待 owner 裁决）**：W6 周报 10-11 手动重启→W7 10-18→最早 10-25（两周完整新数据）；V4 owner 欠账（D1 入 BOM、Jira 换受限账号）随评估一并清。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
