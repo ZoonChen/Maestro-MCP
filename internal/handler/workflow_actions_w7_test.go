@@ -135,27 +135,38 @@ func w7QueueVersion(t *testing.T, f *workflowActionsFixture) int64 {
 }
 
 // TestW7FrictionTargetedClaimAndRelease replays the B10-1 incident
-// shape end to end: the assigned item is NOT the queue head, the
-// targeted claim refuses the mis-dispatch, the untargeted head claim
-// can be RELEASED back to the queue head (audit + outbox atomic), and
-// the released item is the next dispatch.
+// shape end to end under W8 semantics: the assigned item is NOT the
+// queue head and the targeted claim TAKES it directly (F58 reversal —
+// an unowned head no longer freezes parallel lanes), the head claim can
+// be RELEASED back to the queue head (audit + outbox atomic), and the
+// released item is the next dispatch.
 func TestW7FrictionTargetedClaimAndRelease(t *testing.T) {
 	f := newW7FrictionFixture(t)
 
-	t.Run("targeted claim of the non-head item is refused", func(t *testing.T) {
+	t.Run("targeted claim of the non-head item succeeds (F58 reversal)", func(t *testing.T) {
+		// The F58 scene (10-10 parallel wave): an unowned, older item owns
+		// the queue head while the session's assigned item sits behind it.
+		// W7's head guard refused this claim and serialized every lane
+		// behind the head; W8 takes the named item and leaves the head
+		// untouched.
 		before := w7QueueVersion(t, f)
 		reply := w7Request(t, f, f.devTK, http.MethodPost,
 			"/api/v3/projects/"+w7ProjectID+"/work-items/claim",
 			fmt.Sprintf(`{"runner_id":%q,"connection_generation":"w7-gen-1","work_item_id":%q}`, w7RunnerID, w7TailItem), "")
-		require.Equal(t, http.StatusConflict, reply.Code, reply.Body.String())
-		assert.Contains(t, reply.Body.String(), "CLAIM_TARGET_MISMATCH")
+		require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
+		assert.Contains(t, reply.Body.String(), `"work_item_id":"`+w7TailItem+`"`)
+		require.NotEmpty(t, replyJSONStringField(t, reply.Body.String(), "execution_id"))
 
-		var leases, executions int
-		require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM leases`).Scan(&leases))
-		require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM executions`).Scan(&executions))
-		assert.Zero(t, leases, "the refusal happens before any lease side effect")
-		assert.Zero(t, executions)
-		assert.Equal(t, before, w7QueueVersion(t, f), "the queue token does not move on refusal")
+		var tailStatus, headStatus string
+		require.NoError(t, f.db.QueryRow(`SELECT status FROM work_items WHERE id = $1`, w7TailItem).Scan(&tailStatus))
+		require.NoError(t, f.db.QueryRow(`SELECT status FROM work_items WHERE id = $1`, w7HeadItem).Scan(&headStatus))
+		assert.Equal(t, "executing", tailStatus)
+		assert.Equal(t, "queued", headStatus, "the unowned head is not disturbed (F58: the 091 stand-in stays queued)")
+
+		var headLeases int
+		require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM leases WHERE work_item_id = $1`, w7HeadItem).Scan(&headLeases))
+		assert.Zero(t, headLeases, "no lease side effect on the head")
+		assert.Equal(t, before+1, w7QueueVersion(t, f), "exactly one queue token advance — for the taken item")
 	})
 
 	var headExecution string

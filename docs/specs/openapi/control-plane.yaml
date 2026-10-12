@@ -973,7 +973,15 @@ paths:
         (the lease-fencing contract); the queue CAS token is read
         server-side unless the caller presents one from a prior claim.
         locked-gate consumption is enforced fail-closed inside the
-        claim transaction (WGM-INV-015).
+        claim transaction (WGM-INV-015). W8 (F58): when the body names
+        a work_item_id, explicit targeting is intent — the claim takes
+        that item directly wherever it sits in the queue (an unowned
+        head can no longer freeze parallel lanes); refusals are
+        specific and never fall through to another item: 404
+        TASK_NOT_FOUND (absent or not queued in this project), 409
+        CLAIM_TARGET_HELD (active lease; the reply carries
+        held_by_runner, lease_id and lease_expires_at), 409
+        ASSET_GATE_NOT_SATISFIED (locked gate not consumable).
       x-maestro-permission: work_item.claim
       x-maestro-audit-event: work_item.claimed
       x-maestro-idempotency: queue-cas-token
@@ -2499,10 +2507,14 @@ components:
           type: string
           format: uuid
           description: >-
-            W7-1 targeting guard (F29): when present, the claim refuses
-            with 409 CLAIM_TARGET_MISMATCH if the dispatch head is a
-            different work item — never a silent mis-dispatch. Targeting
-            never jumps the queue; it only refuses the wrong item.
+            W8 (F58) direct dispatch: explicit targeting is intent —
+            the claim takes this item directly wherever it sits in the
+            queue, with no queue-head requirement. The target must be
+            queued, lease-free and gate-consumable in the route's
+            project; refusals are 404 TASK_NOT_FOUND (absent or not
+            queued), 409 CLAIM_TARGET_HELD (active lease; the reply
+            names the holder) and 409 ASSET_GATE_NOT_SATISFIED — the
+            claim never falls through to another item.
     WorkflowClaimResult:
       type: object
       additionalProperties: false
