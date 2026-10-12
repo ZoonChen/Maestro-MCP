@@ -291,6 +291,13 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **周报**：W4（10-03→10-09，ART-shadow-report-004@1）/W5 补跑（10-10→10-12，ART-shadow-report-005@1，含 F58/F61 事件数据）。
 - **出口评估就绪**：W6 周报 10-18 后评估（建议 10-25），或 owner 决定提前（P0 全清为最强论据）；V4 欠账（D1 入 BOM、Jira 换号）随评估清。
 
+### W8 收口：F58 定向 claim 语义放宽合入 + 常驻栈换新 + 防线三缺口发现（2026-10-12，会话 W8）
+
+- **W8（#147）合入，main=901ccf9**：F58 关闭——**显式定向即意图**，定向领取直取目标项（queued+无活跃租约+runner 绑定路由项目+gate 可消费，FOR UPDATE+租约唯一索引兜底），无主队首不再卡死并行车道。拒绝面明确且绝不回退他项：404 `TASK_NOT_FOUND` / 409 `CLAIM_TARGET_HELD`（携 held_by_runner/lease_id/lease_expires_at）/ 409 `ASSET_GATE_NOT_SATISFIED` / 409 `CONCURRENCY_CONFLICT`；`ErrClaimTargetMismatch` 哨兵退役。**不定向路径逐字未动**（W7 其余子例原样回归全绿）；无迁移、钉子不变（writes 38/RBAC 68/MCP 25）。测试：W7 第一子例语义反转 + 四负例 + 并发两 runner 一胜一败。门禁：全量 Go（PG -p 1）/lint 0（隔离缓存）/docs 四检/pg-store 覆盖门 **80.1%**/e2e 全绿；**build-test-sbom 红为 main 既有状态**（10-08 起三次 main 直跑皆红，被点名调用点均不在本 PR 改动面，admin 合并照先例）。关闭声明=`deploy/gitlab/peixun/reports/W8-targeted-claim-closure.md`。
+- **常驻栈 WIN-20261012-W8-01**：镜像自 901ccf9 重建；migrate **no-op**（applied=0，target=23，符合预期）；8081 换容器 readyz=200。**F58 活体前后对比**（零副作用探针=定向不存在项）：换前旧镜像 409 `CLAIM_TARGET_MISMATCH` → 换后新镜像 404 `TASK_NOT_FOUND`，queue token 全程未动。快照 pre=123757/post=124053。
+- **🔴 新登记缺口（P3-防线三回归，W8 窗口发现）**：**cron 自动备份（pg-backup.sh 每 4h）自 09-13 装好起从未成功**——docker 在 /usr/local/bin 而 cron PATH 只有 /usr/bin:/bin…，`docker inspect` 恒失败报"not running"（pg-backup.log 96 行全败）；现存全部 dump 为会话手动产物，**恢复底线名存实亡一个月**。修复=crontab 行加 PATH 前缀或脚本内绝对路径（一行、待 owner 批准后随下个窗口执行）；灰度前必修。
+- **随记**：MAESTRO-GUIDE.md 无队首纪律表述（查过，无需勘误）；门禁期发现 git worktree 无 user.name 配置（本波按仓库惯例显式 author 修正，建议补 local config）。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
