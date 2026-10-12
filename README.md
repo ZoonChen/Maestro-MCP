@@ -2,7 +2,7 @@
 
 > 公司内部 AI 开发协作控制面：任务编排、Runner 执行、GitLab 协作与质量治理
 
-[![Go](https://img.shields.io/badge/Go-1.26.6-00ADD8.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.9-00ADD8.svg)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-blue.svg)](https://modelcontextprotocol.io/)
 [![Spec](https://img.shields.io/badge/Docs-v3.0%20review-orange.svg)](docs/README.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -88,7 +88,7 @@ AI 开发工具 ─stdio MCP→ 本地 maestro runner ─出站 HTTPS→ Control
 
 ## 本地构建与验证
 
-使用 `.go-version` 与 `.node-version` 中锁定的 Go `1.26.6`、Node `22.14.0`，并使用 npm `11.19.1`。`web/dist` 不提交；受支持的构建入口会先生成前端资源，再编译嵌入这些资源的 Go binary。
+使用 `.go-version` 与 `.node-version` 中锁定的 Go `1.26.9`、Node `22.14.0`，并使用 npm `11.19.1`。`web/dist` 不提交；受支持的构建入口会先生成前端资源，再编译嵌入这些资源的 Go binary。
 
 ```bash
 make build
