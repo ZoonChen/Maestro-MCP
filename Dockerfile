@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY web/ ./
 RUN npm run build && test -s dist/index.html
 
-FROM golang:1.26.6-alpine AS go-builder
+FROM golang:1.26.9-alpine AS go-builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
