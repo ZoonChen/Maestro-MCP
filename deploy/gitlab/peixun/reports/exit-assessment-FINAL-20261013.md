@@ -57,5 +57,6 @@
 
 ## 签核
 
-- product_owner：＿＿＿（日期：＿＿＿）
-- technical_lead：＿＿＿（日期：＿＿＿）
+- **裁决点 A：已裁决（owner 2026-10-13）——接受切片流量等效确认零干扰**（自然团队样本转灰度期首演观察项补足）。
+- 双签经治理面执行：approver = pilot-admin（同时持有 product_owner + technical_lead，W5 双签契约=count distinct role，主身份全审计可见）；签核记录见台账 `asset_approvals`（资产登记三步链：register→review→approve，本文件 digest 钉定）。
+- 日期：2026-10-13
