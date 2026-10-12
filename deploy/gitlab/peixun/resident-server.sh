@@ -54,7 +54,12 @@ migrate)
     "$IMAGE" migrate up
     ;;
 up)
-  for f in webhook-payload-key gitlab-webhook-token gitlab-bot-pat client-secret jira-pat; do
+  # The config mounts from the STABLE pilot-stack dir, never from the
+  # checkout this script runs in (F69: a worktree-run up burned the
+  # worktree path into the container mount; worktree cleanup then made
+  # the container unstartable). up syncs the repo copy over first.
+  cp "$(dirname "$0")/resident-config.yaml" "$PILOT_STACK_DIR/resident-config.yaml"
+  for f in webhook-payload-key gitlab-webhook-token gitlab-bot-pat client-secret jira-pat resident-config.yaml; do
     [ -s "$PILOT_STACK_DIR/$f" ] || { echo "missing $PILOT_STACK_DIR/$f" >&2; exit 66; }
   done
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -73,7 +78,7 @@ up)
     -e MAESTRO_PILOT_JIRA_PAT="$(cat "$PILOT_STACK_DIR/jira-pat")" \
     -e SSL_CERT_FILE=/certs/ca.pem \
     -v "$PILOT_STACK_DIR/certs/ca.pem:/certs/ca.pem:ro" \
-    -v "$(dirname "$0")/resident-config.yaml:/config/maestro.yaml:ro" \
+    -v "$PILOT_STACK_DIR/resident-config.yaml:/config/maestro.yaml:ro" \
     -v maestro-pilot-server-data:/var/lib/maestro \
     "$IMAGE" server --config /config/maestro.yaml --db /var/lib/maestro/maestro.db --http 0.0.0.0:8080
   sleep 3
