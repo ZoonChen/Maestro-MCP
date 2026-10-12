@@ -28,6 +28,18 @@
 #   0 */4 * * * <abs-path>/pg-backup.sh >> <backups-dir>/pg-backup.log 2>&1
 set -euo pipefail
 
+# cron runs with a minimal PATH (/usr/bin:/bin) that lacks /usr/local/bin
+# where docker lives on this host — every scheduled run since 09-13 died
+# on "docker: command not found" and the guard misreported it as the
+# container being down (F62, P3 line-3 regression found by W8). Resolve
+# the binary explicitly before any docker call.
+if ! command -v docker >/dev/null 2>&1; then
+  for _docker_bin in /usr/local/bin/docker /opt/homebrew/bin/docker /usr/bin/docker; do
+    if [ -x "$_docker_bin" ]; then PATH="$(dirname "$_docker_bin"):$PATH"; break; fi
+  done
+fi
+command -v docker >/dev/null 2>&1 || { echo "pg-backup: docker binary not found (PATH=$PATH)" >&2; exit 2; }
+
 PG_CONTAINER="${PILOT_PG_CONTAINER:-maestro-resident-postgres}"
 PG_USER="${PILOT_PG_USER:-maestro}"
 PG_DATABASE="${PILOT_PG_DATABASE:-maestro}"
