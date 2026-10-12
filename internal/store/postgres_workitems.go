@@ -13,10 +13,12 @@ import (
 
 // PostgreSQL work-item claim and lease lifecycle (M1-RUN-001): the v3
 // Runner API's dispatch core. One serializable transaction per claim
-// selects the next eligible work item FOR UPDATE, enforces the
-// one-active-lease invariant, creates the lease + execution with the
-// caller's connection generation, and advances the queue CAS token —
-// the token the daemon must present on its next claim.
+// selects the next eligible work item FOR UPDATE (untargeted: priority
+// then FIFO head; targeted — W8-1/F58: the named item directly, no
+// queue-position requirement), enforces the one-active-lease invariant,
+// creates the lease + execution with the caller's connection
+// generation, and advances the queue CAS token — the token the daemon
+// must present on its next claim.
 
 // WorkItemClaim is the dispatch outcome for one runner claim.
 type WorkItemClaim struct {
@@ -74,25 +76,50 @@ func (s *PostgresStore) RunnerBoundToProject(ctx context.Context, runnerID, proj
 func (s *PostgresStore) ClaimNextWorkItem(
 	ctx context.Context, runnerID, connectionGeneration string, expectedQueueVersion int64, leaseTTL time.Duration,
 ) (*WorkItemClaim, error) {
-	return s.claimWorkItem(ctx, runnerID, connectionGeneration, "", expectedQueueVersion, leaseTTL)
+	return s.claimWorkItem(ctx, runnerID, connectionGeneration, "", "", expectedQueueVersion, leaseTTL)
 }
 
-// ClaimTargetedWorkItem is the W7-1 (F29) guarded dispatch: the caller
-// names the work item it was assigned. The dispatch selection itself is
-// unchanged (priority, then FIFO) — targeting is a GUARD, not a queue
-// jump: when the selection's head is not the requested item, the claim
-// refuses with ErrClaimTargetMismatch before any lease side effect
-// instead of silently handing the runner the wrong work item (the B10-1
-// two-incident failure mode: a mis-claimed lease could only hang until
-// its TTL expired).
+// ClaimTargetedWorkItem is the W8-1 (F58) direct dispatch: the caller
+// names the work item it was assigned and the claim takes THAT item —
+// explicit targeting is intent, not a queue-position guard. W7's guard
+// (refuse whenever the head differs) serialized parallel lanes behind
+// whatever sat at the head; the 10-10 three-lane incident (an unowned
+// head froze every targeted claim for hours) retired it. The target
+// must be queued, carry no active lease, live in a project the runner
+// is bound to (the route scopes the lookup), and its locked gates must
+// be consumable. Refusals are specific and never fall through to
+// another item: absent or not queued is ErrTaskNotFound; an active
+// lease is a *ClaimTargetHeld carrying the holder; a non-consumable
+// gate is ErrAssetGateNotSatisfied. The untargeted path (head
+// selection, FIFO, release-to-head re-entry) is unchanged.
 func (s *PostgresStore) ClaimTargetedWorkItem(
-	ctx context.Context, runnerID, connectionGeneration, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration,
+	ctx context.Context, runnerID, connectionGeneration, projectID, targetWorkItemID string,
+	expectedQueueVersion int64, leaseTTL time.Duration,
 ) (*WorkItemClaim, error) {
-	return s.claimWorkItem(ctx, runnerID, connectionGeneration, targetWorkItemID, expectedQueueVersion, leaseTTL)
+	return s.claimWorkItem(ctx, runnerID, connectionGeneration, projectID, targetWorkItemID, expectedQueueVersion, leaseTTL)
 }
+
+// ClaimTargetHeld answers "held by whom, until when" for a targeted
+// claim that met another runner's active lease (W8-2). It wraps the
+// ErrClaimTargetHeld sentinel so the transport face keeps one stable
+// error code while surfacing the holder.
+type ClaimTargetHeld struct {
+	WorkItemID string
+	RunnerID   string
+	LeaseID    string
+	ExpiresAt  time.Time
+}
+
+func (e *ClaimTargetHeld) Error() string {
+	return fmt.Errorf("claim: target %s is held by runner %s until %s: %w",
+		e.WorkItemID, e.RunnerID, e.ExpiresAt.UTC().Format(time.RFC3339), ErrClaimTargetHeld).Error()
+}
+
+func (e *ClaimTargetHeld) Unwrap() error { return ErrClaimTargetHeld }
 
 func (s *PostgresStore) claimWorkItem(
-	ctx context.Context, runnerID, connectionGeneration, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration,
+	ctx context.Context, runnerID, connectionGeneration, projectID, targetWorkItemID string,
+	expectedQueueVersion int64, leaseTTL time.Duration,
 ) (*WorkItemClaim, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -114,71 +141,140 @@ func (s *PostgresStore) claimWorkItem(
 		return nil, fmt.Errorf("claim: runner status %q: %w", runnerStatus, ErrRunnerStatusInvalid)
 	}
 
-	// Queue CAS token.
 	var queueVersion int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT COALESCE(version, 0) FROM projects p
-		JOIN runner_bindings b ON b.project_id = p.id
-		WHERE b.runner_id = $1
-		LIMIT 1`, runnerID).Scan(&queueVersion)
-	if err == sql.ErrNoRows {
-		return nil, ErrRunnerNotBound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("claim: queue token: %w", err)
-	}
-	if queueVersion != expectedQueueVersion {
-		return nil, fmt.Errorf("claim: queue token %d, presented %d: %w",
-			queueVersion, expectedQueueVersion, ErrConcurrentConflict)
-	}
-
-	// Next eligible work item in the runner's bound project, priority
-	// first (urgent > high > normal > low — the product's BOM ordering
-	// rides into dispatch, S2B2-F8), then FIFO within one priority
-	// band. Released items re-enter at the HEAD of their band (W7-1:
-	// queue_requeued_at sorts ahead of natural FIFO order, newest
-	// release first). Items whose locked-gate assets are not consumable
-	// (not approved, digest drift or a stale binding) are skipped — the
-	// asset gate fails closed at dispatch time (WGM-INV-015, J2a-4).
-	row := tx.QueryRowContext(ctx, `
-		SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch
-		FROM work_items w
-		JOIN runner_bindings b ON b.project_id = w.project_id
-		WHERE b.runner_id = $1 AND w.status = 'queued'
-		  AND NOT EXISTS (
+	var claim WorkItemClaim
+	if targetWorkItemID != "" {
+		// W8-1 (F58): explicit targeting takes the named item directly.
+		// The route's project scopes the lookup (an item outside it is
+		// indistinguishable from absence) and the runner must be bound to
+		// that project. FOR UPDATE serializes concurrent targeted claims
+		// on the same item; the partial unique index
+		// (idx_leases_one_active) stays the structural last line.
+		var status string
+		err = tx.QueryRowContext(ctx, `
+			SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch, w.status
+			FROM work_items w
+			JOIN runner_bindings b ON b.project_id = w.project_id
+			WHERE b.runner_id = $1 AND w.id = $2 AND w.project_id = $3
+			FOR UPDATE OF w`, runnerID, targetWorkItemID, projectID).
+			Scan(&claim.WorkItemID, &claim.ProjectID, &claim.WorkItemVersion,
+				&claim.WorkItemRole, &claim.LeaseEpoch, &status)
+		if err == sql.ErrNoRows {
+			return nil, ErrTaskNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("claim: target lookup: %w", err)
+		}
+		// An active lease answers "held by whom" instead of a bare
+		// conflict (W8-2) — even for an item whose status flip lagged.
+		var holderRunner, holderLease string
+		var heldUntil time.Time
+		err = tx.QueryRowContext(ctx, `
+			SELECT runner_id, id, expires_at FROM leases
+			WHERE project_id = $1 AND work_item_id = $2 AND status = 'active'`,
+			claim.ProjectID, claim.WorkItemID).Scan(&holderRunner, &holderLease, &heldUntil)
+		if err == nil {
+			return nil, &ClaimTargetHeld{
+				WorkItemID: claim.WorkItemID, RunnerID: holderRunner,
+				LeaseID: holderLease, ExpiresAt: heldUntil,
+			}
+		}
+		if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("claim: holder lookup: %w", err)
+		}
+		if status != "queued" {
+			// executing/validating/done/... — nothing to claim; the held
+			// case above already answered the informative conflict.
+			return nil, fmt.Errorf("claim: target %s is %s: %w", targetWorkItemID, status, ErrTaskNotFound)
+		}
+		// The same consumability predicate the head selection applies as
+		// a skip — targeted, it is a refusal: the caller named this item,
+		// so the claim must not silently fall through to another one.
+		var blocked int
+		err = tx.QueryRowContext(ctx, `
 			SELECT 1 FROM asset_gate_bindings g
-			WHERE g.work_item_id = w.id
+			WHERE g.work_item_id = $1
 			  AND (g.status <> 'bound'
 			       OR NOT EXISTS (
-					SELECT 1 FROM assets a
-					WHERE a.asset_id = g.asset_id AND a.version = g.bound_version
-					  AND a.status = 'approved' AND a.source_digest = g.bound_digest))
-		  )
-		ORDER BY CASE w.priority
-				WHEN 'urgent' THEN 0
-				WHEN 'high' THEN 1
-				WHEN 'normal' THEN 2
-				ELSE 3 END,
-			(w.queue_requeued_at IS NULL),
-			w.queue_requeued_at DESC NULLS LAST,
-			w.created_at, w.id
-		LIMIT 1
-		FOR UPDATE OF w SKIP LOCKED`, runnerID)
+				SELECT 1 FROM assets a
+				WHERE a.asset_id = g.asset_id AND a.version = g.bound_version
+				  AND a.status = 'approved' AND a.source_digest = g.bound_digest))`,
+			claim.WorkItemID).Scan(&blocked)
+		if err == nil {
+			return nil, fmt.Errorf("claim: target %s gate not consumable: %w",
+				targetWorkItemID, ErrAssetGateNotSatisfied)
+		}
+		if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("claim: gate consumability: %w", err)
+		}
+		// Queue CAS token of the target's own project.
+		err = tx.QueryRowContext(ctx,
+			`SELECT COALESCE(version, 0) FROM projects WHERE id = $1`, claim.ProjectID).Scan(&queueVersion)
+		if err != nil {
+			return nil, fmt.Errorf("claim: queue token: %w", err)
+		}
+		if queueVersion != expectedQueueVersion {
+			return nil, fmt.Errorf("claim: queue token %d, presented %d: %w",
+				queueVersion, expectedQueueVersion, ErrConcurrentConflict)
+		}
+	} else {
+		// Queue CAS token.
+		err = tx.QueryRowContext(ctx, `
+			SELECT COALESCE(version, 0) FROM projects p
+			JOIN runner_bindings b ON b.project_id = p.id
+			WHERE b.runner_id = $1
+			LIMIT 1`, runnerID).Scan(&queueVersion)
+		if err == sql.ErrNoRows {
+			return nil, ErrRunnerNotBound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("claim: queue token: %w", err)
+		}
+		if queueVersion != expectedQueueVersion {
+			return nil, fmt.Errorf("claim: queue token %d, presented %d: %w",
+				queueVersion, expectedQueueVersion, ErrConcurrentConflict)
+		}
 
-	var claim WorkItemClaim
-	err = row.Scan(&claim.WorkItemID, &claim.ProjectID, &claim.WorkItemVersion, &claim.WorkItemRole, &claim.LeaseEpoch)
-	if err == sql.ErrNoRows {
-		return nil, ErrNoAvailableTask
-	}
-	if err != nil {
-		return nil, fmt.Errorf("claim: select work item: %w", err)
-	}
-	// W7-1 (F29): the targeted guard — refuse a mismatched head BEFORE
-	// any lease side effect. No queue jump: the caller waits for the
-	// head to clear (or claims it deliberately untargeted).
-	if targetWorkItemID != "" && claim.WorkItemID != targetWorkItemID {
-		return nil, fmt.Errorf("claim: head is %s, not the requested %s: %w",
-			claim.WorkItemID, targetWorkItemID, ErrClaimTargetMismatch)
+		// Next eligible work item in the runner's bound project, priority
+		// first (urgent > high > normal > low — the product's BOM ordering
+		// rides into dispatch, S2B2-F8), then FIFO within one priority
+		// band. Released items re-enter at the HEAD of their band (W7-1:
+		// queue_requeued_at sorts ahead of natural FIFO order, newest
+		// release first). Items whose locked-gate assets are not consumable
+		// (not approved, digest drift or a stale binding) are skipped — the
+		// asset gate fails closed at dispatch time (WGM-INV-015, J2a-4).
+		row := tx.QueryRowContext(ctx, `
+			SELECT w.id, w.project_id, w.version, COALESCE(w.role, ''), w.lease_epoch
+			FROM work_items w
+			JOIN runner_bindings b ON b.project_id = w.project_id
+			WHERE b.runner_id = $1 AND w.status = 'queued'
+			  AND NOT EXISTS (
+				SELECT 1 FROM asset_gate_bindings g
+				WHERE g.work_item_id = w.id
+				  AND (g.status <> 'bound'
+				       OR NOT EXISTS (
+						SELECT 1 FROM assets a
+						WHERE a.asset_id = g.asset_id AND a.version = g.bound_version
+						  AND a.status = 'approved' AND a.source_digest = g.bound_digest))
+			  )
+			ORDER BY CASE w.priority
+					WHEN 'urgent' THEN 0
+					WHEN 'high' THEN 1
+					WHEN 'normal' THEN 2
+					ELSE 3 END,
+				(w.queue_requeued_at IS NULL),
+				w.queue_requeued_at DESC NULLS LAST,
+				w.created_at, w.id
+			LIMIT 1
+			FOR UPDATE OF w SKIP LOCKED`, runnerID)
+
+		err = row.Scan(&claim.WorkItemID, &claim.ProjectID, &claim.WorkItemVersion, &claim.WorkItemRole, &claim.LeaseEpoch)
+		if err == sql.ErrNoRows {
+			return nil, ErrNoAvailableTask
+		}
+		if err != nil {
+			return nil, fmt.Errorf("claim: select work item: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()

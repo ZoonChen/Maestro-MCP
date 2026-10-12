@@ -61,9 +61,11 @@ var (
 	ErrRunnerStatusInvalid   = errors.New("runner status invalid for this operation")
 	ErrRunnerNotBound        = errors.New("runner not bound to project")
 	ErrRunnerGenerationStale = errors.New("runner connection generation stale")
-	// W7-1 (F29): a targeted claim met a different queue head — refused
-	// before any lease side effect instead of a silent mis-dispatch.
-	ErrClaimTargetMismatch = errors.New("claim target is not the queue head")
+	// W8-1 (F58): the targeted work item carries an active lease — the
+	// claim answers with the holder (store.ClaimTargetHeld) instead of a
+	// silent fall-through. Supersedes W7's ErrClaimTargetMismatch head
+	// guard, which serialized parallel lanes behind an unowned head.
+	ErrClaimTargetHeld = errors.New("claim target has an active lease")
 	// W7-2 (F32): the presented commit SHA does not match the branch
 	// head the platform already projected for the work item.
 	ErrCommitSHAMismatch   = errors.New("commit_sha does not match the known branch head")

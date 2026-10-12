@@ -87,7 +87,7 @@ stateDiagram-v2
 
 ## 8. 并发、幂等和一致性
 
-创建、派发、取消、重试均需幂等键；领取以 compare-and-swap 更新 state/version 并产生递增 Lease epoch。状态、Lease、Audit 与 Outbox 同事务；MR/Pipeline 通过外部 ID 去重并最终一致。重复结果返回既有处理结论。
+创建、派发、取消、重试均需幂等键；领取以 compare-and-swap 更新 state/version 并产生递增 Lease epoch。定向领取（请求显式携带 `work_item_id`，W8/F58）即显式意图：不要求队首位置，目标满足 queued、无活跃 Lease、Runner 绑定其项目且 locked-gate 可消费即直接领取；拒绝为 404（不存在或非 queued）、409 携当前持有者（活跃 Lease）、409 gate 不可消费，绝不回退领取其他项。不定向领取维持队首语义（优先级、band 内 FIFO、release 回队首）。状态、Lease、Audit 与 Outbox 同事务；MR/Pipeline 通过外部 ID 去重并最终一致。重复结果返回既有处理结论。
 
 ## 9. 安全、Secret、隐私和审计
 

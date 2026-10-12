@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/publicerror"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -28,7 +29,7 @@ type WorkflowActionsStore interface {
 	RunnerBoundToProject(ctx context.Context, runnerID, projectID string) (bool, error)
 	ProjectQueueVersion(ctx context.Context, projectID string) (int64, error)
 	ClaimNextWorkItem(ctx context.Context, runnerID, connectionGeneration string, expectedQueueVersion int64, leaseTTL time.Duration) (*store.WorkItemClaim, error)
-	ClaimTargetedWorkItem(ctx context.Context, runnerID, connectionGeneration, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration) (*store.WorkItemClaim, error)
+	ClaimTargetedWorkItem(ctx context.Context, runnerID, connectionGeneration, projectID, targetWorkItemID string, expectedQueueVersion int64, leaseTTL time.Duration) (*store.WorkItemClaim, error)
 	CompleteExecution(ctx context.Context, executionID, runnerID, connectionGeneration, outcome string, commitSHA *string, summary string) error
 	ReleaseExecution(ctx context.Context, executionID, runnerID, connectionGeneration, reason, actor string) error
 }
@@ -70,9 +71,12 @@ const (
 // caller presents the runner identity and connection generation (the
 // fencing contract); the queue token is read server-side unless the
 // caller carries one from a prior claim. The optional work_item_id is
-// the W7-1 (F29) targeting guard: when present and the dispatch head is
-// a different item, the claim refuses (409 CLAIM_TARGET_MISMATCH)
-// instead of silently mis-dispatching.
+// the W8-1 (F58) direct dispatch: explicit targeting is intent — the
+// claim takes the named item wherever it sits in the queue (an unowned
+// head can no longer freeze parallel lanes). The target must be queued
+// and lease-free in the route's project with consumable gates; refusals
+// never fall through to another item (404 TASK_NOT_FOUND, 409
+// CLAIM_TARGET_HELD with the holder, 409 ASSET_GATE_NOT_SATISFIED).
 func (h *WorkflowActionsHandler) Claim(c *gin.Context) {
 	var body struct {
 		RunnerID             string `json:"runner_id"`
@@ -135,7 +139,7 @@ func (h *WorkflowActionsHandler) Claim(c *gin.Context) {
 	var claim *store.WorkItemClaim
 	if body.TargetWorkItemID != "" {
 		claim, err = h.exec.ClaimTargetedWorkItem(c.Request.Context(),
-			body.RunnerID, body.ConnectionGeneration, body.TargetWorkItemID, queueVersion, leaseTTL)
+			body.RunnerID, body.ConnectionGeneration, projectID, body.TargetWorkItemID, queueVersion, leaseTTL)
 	} else {
 		claim, err = h.exec.ClaimNextWorkItem(c.Request.Context(),
 			body.RunnerID, body.ConnectionGeneration, queueVersion, leaseTTL)
@@ -147,9 +151,14 @@ func (h *WorkflowActionsHandler) Claim(c *gin.Context) {
 		case errors.Is(err, store.ErrConcurrentConflict):
 			staticErrorReply(c, http.StatusConflict, "CONCURRENCY_CONFLICT",
 				"Queue token is stale; re-observe and retry")
-		case errors.Is(err, store.ErrClaimTargetMismatch):
-			staticErrorReply(c, http.StatusConflict, "CLAIM_TARGET_MISMATCH",
-				"The queue head is a different work item; refusing to claim another item (no silent mis-dispatch)")
+		case errors.Is(err, store.ErrTaskNotFound):
+			staticErrorReply(c, http.StatusNotFound, "TASK_NOT_FOUND",
+				"The targeted work item does not exist or is not queued in this project")
+		case errors.Is(err, store.ErrClaimTargetHeld):
+			claimHeldReply(c, err)
+		case errors.Is(err, store.ErrAssetGateNotSatisfied):
+			staticErrorReply(c, http.StatusConflict, "ASSET_GATE_NOT_SATISFIED",
+				"The targeted work item's locked gate is not consumable; the claim does not fall through to another item")
 		case errors.Is(err, store.ErrRunnerNotFound), errors.Is(err, store.ErrRunnerNotBound), errors.Is(err, store.ErrRunnerStatusInvalid):
 			staticErrorReply(c, http.StatusForbidden, "FORBIDDEN", "Runner is not eligible to claim")
 		default:
@@ -167,6 +176,24 @@ func (h *WorkflowActionsHandler) Claim(c *gin.Context) {
 		"queue_version": claim.QueueVersion,
 		"expires_at":    time.Now().UTC().Add(leaseTTL).Format(time.RFC3339),
 	})
+}
+
+// claimHeldReply is the W8-2 targeted-claim conflict: the same envelope
+// as staticErrorReply plus the current holder (runner, lease, expiry)
+// so a parallel lane learns who to wait for instead of retrying blind.
+func claimHeldReply(c *gin.Context, err error) {
+	reply := gin.H{
+		"error":          "The targeted work item is held by an active lease",
+		"error_code":     "CLAIM_TARGET_HELD",
+		"correlation_id": publicerror.NewCorrelationID(),
+	}
+	var held *store.ClaimTargetHeld
+	if errors.As(err, &held) {
+		reply["held_by_runner"] = held.RunnerID
+		reply["lease_id"] = held.LeaseID
+		reply["lease_expires_at"] = held.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	c.JSON(http.StatusConflict, reply)
 }
 
 // Complete handles POST /api/v3/projects/:pid/executions/:execId/complete:
