@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/ZoonChen/Maestro-MCP/internal/publicerror"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
 	"github.com/gin-gonic/gin"
@@ -66,6 +68,19 @@ const (
 	workflowClaimLeaseMax     = 24 * time.Hour
 )
 
+// workflowRequireRunnerUUID fences the runner identity's shape BEFORE any
+// uuid-column query (F66/F-G2-1, W9-1): the rehearsal's one 500 came from
+// a display name riding runner_id into a PostgreSQL uuid parameter — a
+// shape the caller can fix, so it is a 400, never a server error.
+func workflowRequireRunnerUUID(c *gin.Context, runnerID string) bool {
+	if _, err := uuid.Parse(runnerID); err != nil {
+		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER",
+			"runner_id must be the runner's UUID (not its display name)")
+		return false
+	}
+	return true
+}
+
 // Claim handles POST /api/v3/projects/:pid/work-items/claim: dispatch at
 // most one queued work item to an approved, project-bound runner. The
 // caller presents the runner identity and connection generation (the
@@ -106,6 +121,9 @@ func (h *WorkflowActionsHandler) Claim(c *gin.Context) {
 	if body.RunnerID == "" || body.ConnectionGeneration == "" {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER",
 			"runner_id and connection_generation are required")
+		return
+	}
+	if !workflowRequireRunnerUUID(c, body.RunnerID) {
 		return
 	}
 	projectID := c.Param("pid")
@@ -217,6 +235,9 @@ func (h *WorkflowActionsHandler) Complete(c *gin.Context) {
 			"runner_id, connection_generation and outcome are required")
 		return
 	}
+	if !workflowRequireRunnerUUID(c, body.RunnerID) {
+		return
+	}
 	if body.Outcome == "completed" && (body.CommitSHA == nil || *body.CommitSHA == "") {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER",
 			"A completed execution must carry its commit_sha")
@@ -269,6 +290,9 @@ func (h *WorkflowActionsHandler) Release(c *gin.Context) {
 		body.ConnectionGeneration == "" || len(body.Reason) < 8 || len(body.Reason) > 2000 {
 		staticErrorReply(c, http.StatusBadRequest, "INVALID_PARAMETER",
 			"runner_id, connection_generation and a reason of 8-2000 characters are required")
+		return
+	}
+	if !workflowRequireRunnerUUID(c, body.RunnerID) {
 		return
 	}
 	principal := PrincipalFromContext(c)
