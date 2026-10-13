@@ -513,8 +513,11 @@ test.describe.configure({ mode: 'serial' });
 // The hook performs the full governance bring-up (docker network + IdP
 // containers + `go run` migrate + server start); a cold CI runner without
 // a Go build cache needs far more than the 30s default hook budget — the
-// in-hook waitForHTTP already allows 240s for the server alone.
+// in-hook waitForHTTP already allows 240s for the server alone. Hooks take
+// no options argument, so the budget is extended from inside via
+// test.setTimeout.
 test.beforeAll(async () => {
+  test.setTimeout(300_000);
   if (PG_REFUSED) {
     gov.reason = PG_REFUSED;
     return;
@@ -552,7 +555,7 @@ test.beforeAll(async () => {
   } catch (error) {
     gov.reason = `governance setup failed: ${String(error).slice(0, 400)} | logs: ${governanceServerLogs(GOV_CONTAINER).slice(0, 400)}`;
   }
-}, { timeout: 300_000 });
+});
 
 test.afterAll(() => {
   cleanupContainers();
