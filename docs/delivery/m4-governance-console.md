@@ -61,6 +61,12 @@ sequenceDiagram
 | `M4-REL-001` | OBS | [reliability](../operations/reliability-and-recovery.md) | SLO、backup/WAL、restore/degrade | 99.5%、RPO/RTO、恢复 Evidence |
 | `M4-RBK-001` | OBS, REL | [Runner 离线](../operations/runbooks/runner-offline.md)、[Webhook/Pipeline](../operations/runbooks/webhook-pipeline-failure.md)、[数据库恢复](../operations/runbooks/database-backup-restore.md)、[紧急停止](../operations/runbooks/emergency-stop-credential-revoke.md) | runbook automation/on-call tooling | 四类 Runbook 与演练记录 |
 | `M4-PILOT-001` | UI..RBK | [pilot acceptance](../testing/pilot-acceptance.md) | rollout flags/pilot telemetry | 影子、灰度、人工验收/准入报告 |
+| `M4-WG-001` | PILOT | [ADR-009](../decisions/ADR-009-versioned-typed-work-graph.md)、[WG model](../technical/work-graph-model.md) | workgraph model/assets ledger | 职能主体+九表台账+资产登记 |
+| `M4-WG-002` | WG-001 | [WG scheduler](../technical/work-graph-scheduler.md) | 拆解协议/调度/聚合 | DecompositionProposal→Plan→Attempt |
+| `M4-WG-003` | WG-002 | [WG model](../technical/work-graph-model.md) | MCP 工具面+控制台 | 六件工具+seal HITL+三视图 |
+| `M4-JR-001` | WG-001 | [gitlab integration](../technical/gitlab-integration.md) | 锚定/镜像/对账 | 三腿全生命周期+对账清零 |
+| `M4-PT-001` | WG-003, JR-001 | [pilot acceptance](../testing/pilot-acceptance.md) | 双仓/Profiles/PoC 首演 | 0→1 全链路+39 done 证据 |
+| `M4-SP-001` | PT-001 | [DB restore](../operations/runbooks/database-backup-restore.md) | 三道防线+库恢复 | 物理隔离/角色对调/自动备份 |
 
 生产只能由全部 Mandatory Gate 聚合产生，单角色不能手工改绿。
 
@@ -74,6 +80,12 @@ sequenceDiagram
 - `M4-REL-001`：availability/latency/webhook/queue/runner/DB SLI；月 99.5%、API P95<500ms、Webhook P95<2s；每日全备+WAL、RPO15m/RTO4h、季度恢复；只重试幂等操作+指数退避/jitter；依赖降级矩阵。
 - `M4-RBK-001`：Runner offline、Webhook/Pipeline failure、DB backup/restore、emergency stop/revoke；每份含 trigger/impact/contain/diagnose/recover/validate/communicate/postmortem/drill frequency；指定 on-call/权限/证据。
 - `M4-PILOT-001`：2–5 Go/TS 仓库分层选样；shadow→read-only→limited write→project opt-in；成功/失败/成本/人工负担基线；退出/回滚阈值；用户培训和签署。
+- `M4-WG-001`（`WG-REQ-001`）：职能主体 resolver、九表 Work Graph 台账（迁移 0017）、资产 intake 命令、资产台账与 gate 绑定生命周期；Test ID：`TC-WG-001`（work-graph-model.md 性质测试锁定）。
+- `M4-WG-002`（`WG-REQ-002`）：DecompositionProposal 四族稳定错误码、封板不可变、图路径领取+CAS+幂等、ExecutionEnvelope/Attempt 五元组绑定（迁移 0019）；Test ID：`TC-WG-002`（work-graph-scheduler.md 协议测试）。
+- `M4-WG-003`（`WG-REQ-003`）：MCP 目录 3.2 六件工具（claim/complete/approve/bind/seal/list）、控制台三视图、seal HITL 面；Test ID：`TC-WG-003`（work-graph-model.md 工具面协议测试）。
+- `M4-JR-001`（`JR-REQ-001`）：Jira 锚定三腿全生命周期（推送/快照/对账）、漂移→escalate→裁决→clean、内网 Server 实测通路；Test ID：`TC-JR-001`（gitlab-integration.md 连接器测试）。
+- `M4-PT-001`（`PT-REQ-002`）：双仓 PoC 0→1 全链首演（flags 通路/详设→沙箱→MR→管线→人工合并→done）、39 done 证据链、出口评估双签；Test ID：`TC-PT-002`（pilot-acceptance.md 全链路场景）。
+- `M4-SP-001`（`SP-REQ-001`）：三道防线——物理隔离（测试 PG 5435 独立容器）、角色对调（NOCREATEDB）、恢复底线（4h 自动备份+72h 保留）；Test ID：`TC-DB-RESTORE-001`（database-backup-restore.md 恢复演练）。
 
 评测分数、SLO、保留期和试点结论必须带版本/窗口/样本/单位，不接受自由文本“通过”。
 
