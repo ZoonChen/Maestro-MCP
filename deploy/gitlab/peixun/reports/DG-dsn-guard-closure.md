@@ -63,4 +63,6 @@ func AssertTestDSN(dsn string) error
 
 ## 6. 门禁记录
 
-本机：`make web-build`、全量 Go（PG 5435，33 包 ok）、test-hygiene、lint 隔离缓存 0、docs 四检、gofmt/vet、负例实弹×3、roundtrip 正/负路径、**e2e 33/33（chrome，console-governance 在 5435 真跑零 skip）**。build-test-sbom 随 PR CI（红为 main 既有状态，见 W8 记录）。
+本机：`make web-build`、全量 Go（PG 5435，33 包 ok）、test-hygiene、lint 隔离缓存 0、docs 四检、gofmt/vet、负例实弹×3、roundtrip 正/负路径、**e2e 33/33（chrome，console-governance 在 5435 真跑零 skip）**。
+
+PR CI（#162）四项全绿：build / **build-test-sbom**（e2e 全套——console-governance 首次在 CI 的受管 5435 实例上真跑）/ lint / **postgres-integration**（全部 56 处哨兵夹具在 CI DSN `5435/maestro_test` 下零干扰通过）。CI 往返如实记录：首轮 sbom 红=治理套件在 CI 不再早退后暴露 beforeAll 默认 30s 预算不足（冷缓存 `go run` 编译）；首修尝试 `{timeout}` 第二参数无效（beforeAll 无此重载，被静默忽略——CI 二轮证实），终修=钩子体内 `test.setTimeout(300_000)`，三轮全绿。
