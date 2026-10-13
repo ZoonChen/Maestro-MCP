@@ -46,8 +46,10 @@ e2e-deps:
 
 # The M0 Playwright suite uses APIRequestContext only, so CI does not need to
 # install browser binaries. Its webServer launches the real Maestro command.
+# The PG-gated console-governance spec rides the same disposable 5435 test
+# instance as `make test` (WITH_TEST_PG), never the resident 5434 database.
 e2e: web-build e2e-deps test-hygiene
-	$(NPM) --prefix tests/e2e test
+	$(WITH_TEST_PG) $(NPM) --prefix tests/e2e test
 
 build: web-build
 	mkdir -p bin

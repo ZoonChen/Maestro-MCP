@@ -19,6 +19,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/config"
 	"github.com/ZoonChen/Maestro-MCP/internal/handler"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // PG-gated M4-OBS-001 producer integration (F2/F3/F4): real
@@ -37,6 +38,9 @@ const (
 func TestTelemetryProducerEndToEndPostgres(t *testing.T) {
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	admin, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)

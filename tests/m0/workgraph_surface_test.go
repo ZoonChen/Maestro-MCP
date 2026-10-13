@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // J2c work-graph/asset MCP surface against the REAL stdio JSON-RPC
@@ -30,6 +31,9 @@ func j2cPostgresEnv(t *testing.T) string {
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(dsn); err != nil {
+		t.Fatal(err)
 	}
 	return dsn
 }

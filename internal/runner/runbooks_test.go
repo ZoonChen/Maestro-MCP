@@ -15,6 +15,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // PG-gated tests for the two S3-owned runbook surfaces (M4-RBK-001):
@@ -43,6 +44,9 @@ func newOpsFixture(t *testing.T) *opsFixture {
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(dsn); err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
 	admin, err := store.OpenPostgres(ctx, dsn)

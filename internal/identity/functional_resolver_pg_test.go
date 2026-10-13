@@ -12,6 +12,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // PG-gated: the store-backed resolver carries ACTIVE functional roles
@@ -22,6 +23,9 @@ func newFunctionalResolverDB(t *testing.T) (*store.PostgresStore, *sql.DB) {
 	t.Helper()
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	admin, err := store.OpenPostgres(context.Background(), dsn)
