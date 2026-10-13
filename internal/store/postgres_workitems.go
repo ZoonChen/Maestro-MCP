@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PostgreSQL work-item claim and lease lifecycle (M1-RUN-001): the v3
@@ -289,6 +290,17 @@ func (s *PostgresStore) claimWorkItem(
 		VALUES ($1, $2, $3, $4, $5, $6, 'active', 1, $7)`,
 		claim.LeaseID, claim.ProjectID, claim.WorkItemID, runnerID,
 		claim.LeaseEpoch, connectionGeneration, expires); err != nil {
+		// F66 (W9-1): the partial unique index (idx_leases_one_active)
+		// is the structural last line — a lease writer that does not
+		// pass the row lock above (the SQLite import, direct surgery)
+		// can commit an active lease inside the claim's own read
+		// window. The loser learns who holds the target instead of a
+		// bare internal error.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			_ = tx.Rollback()
+			return nil, s.heldByActiveLease(ctx, claim.ProjectID, claim.WorkItemID)
+		}
 		return nil, fmt.Errorf("claim: create lease: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -297,11 +309,20 @@ func (s *PostgresStore) claimWorkItem(
 		claim.ExecutionID, claim.ProjectID, claim.WorkItemID, claim.LeaseID, runnerID); err != nil {
 		return nil, fmt.Errorf("claim: create execution: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	var itemVersion int64
+	err = tx.QueryRowContext(ctx, `
 		UPDATE work_items SET status = 'executing', lease_epoch = $2, version = version + 1,
 		     updated_at = now()
-		 WHERE id = $1 AND project_id = $3 AND status = 'queued'`,
-		claim.WorkItemID, claim.LeaseEpoch, claim.ProjectID); err != nil {
+		 WHERE id = $1 AND project_id = $3 AND status = 'queued'
+		 RETURNING version`,
+		claim.WorkItemID, claim.LeaseEpoch, claim.ProjectID).Scan(&itemVersion)
+	if err == sql.ErrNoRows {
+		// The row lock plus the queued read above make this
+		// unreachable; refusing is the fail-closed answer if it ever
+		// is not.
+		return nil, fmt.Errorf("claim: target %s left queued: %w", claim.WorkItemID, ErrConcurrentConflict)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("claim: transition work item: %w", err)
 	}
 	// Advance the CAS token so a replayed claim with the old token conflicts.
@@ -310,12 +331,57 @@ func (s *PostgresStore) claimWorkItem(
 		claim.ProjectID); err != nil {
 		return nil, fmt.Errorf("claim: advance queue token: %w", err)
 	}
+	// F64 (W9-2): the queued -> executing state change commits with its
+	// audit row (work_item.claimed — the action the claim route's
+	// contract already declares) and its work_item.state.changed outbox
+	// event in the same transaction (WGM-INV-012), the release face's
+	// shape. The audit reason carries the claim's own identifiers
+	// (execution, lease expiry); the payload stays inside the frozen
+	// StateChangePayload contract.
+	if err := recordGovernanceEvent(ctx, tx, governanceEvent{
+		ProjectID: claim.ProjectID, Action: "work_item.claimed",
+		ResourceType: "work_item", ResourceID: claim.WorkItemID,
+		Actor: "runner:" + runnerID,
+		Reason: fmt.Sprintf("claim: execution=%s lease=%s lease_expires=%s",
+			claim.ExecutionID, claim.LeaseID, expires.UTC().Format(time.RFC3339)),
+		OutboxType: "work_item.state.changed",
+		Payload: mustMarshal(map[string]any{
+			"work_item_id": claim.WorkItemID, "from": "queued", "to": "executing",
+			"version": itemVersion, "reason_code": "WORK_ITEM_CLAIMED",
+		}),
+	}); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("claim: commit: %w", err)
 	}
 	claim.QueueVersion = queueVersion + 1
 	return &claim, nil
+}
+
+// heldByActiveLease answers the F66 conflict shape from committed state:
+// the active lease that made a claim lose the unique-index race, with
+// its holder, lease id and expiry — or the bare sentinel when the
+// conflicting lease is not (yet) visible. The claim transaction is
+// already rolled back; this reads on the pool.
+func (s *PostgresStore) heldByActiveLease(ctx context.Context, projectID, workItemID string) error {
+	var holderRunner, holderLease string
+	var heldUntil time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT runner_id, id, expires_at FROM leases
+		WHERE project_id = $1 AND work_item_id = $2 AND status = 'active'`,
+		projectID, workItemID).Scan(&holderRunner, &holderLease, &heldUntil)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("claim: unique-index conflict on %s: %w", workItemID, ErrClaimTargetHeld)
+	}
+	if err != nil {
+		return fmt.Errorf("claim: holder lookup after conflict: %w", err)
+	}
+	return &ClaimTargetHeld{
+		WorkItemID: workItemID, RunnerID: holderRunner,
+		LeaseID: holderLease, ExpiresAt: heldUntil,
+	}
 }
 
 // RunnerLeaseHeartbeat renews a lease owned by the runner's connection
