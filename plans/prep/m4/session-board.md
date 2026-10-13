@@ -298,6 +298,18 @@ S2B 为模板任务书：每切片一个会话、同构流程、摩擦如实登�
 - **🔴 新登记缺口（P3-防线三回归，W8 窗口发现）**：**cron 自动备份（pg-backup.sh 每 4h）自 09-13 装好起从未成功**——docker 在 /usr/local/bin 而 cron PATH 只有 /usr/bin:/bin…，`docker inspect` 恒失败报"not running"（pg-backup.log 96 行全败）；现存全部 dump 为会话手动产物，**恢复底线名存实亡一个月**。修复=crontab 行加 PATH 前缀或脚本内绝对路径（一行、待 owner 批准后随下个窗口执行）；灰度前必修。
 - **随记**：MAESTRO-GUIDE.md 无队首纪律表述（查过，无需勘误）；门禁期发现 git worktree 无 user.name 配置（本波按仓库惯例显式 author 修正，建议补 local config）。
 
+### V4 收敛 + 灰度启动 + 凭据管理第一层（2026-10-14，会话 I）
+
+- **V4 收敛仪式完成（PR #156）**：矩阵 12 行（M4 六行翻转+W4.5 六行新增）、DOC-INDEX M4 行+§10 M0–M4 全过句、v4 复盘（5 条制度性教训）、docs-check 37；四检全绿。M0→M4 全收敛。
+- **出口评估提前完成（10-13）**：ART-exit-assessment-001@1 双签（裁决 A 接受切片流量等效确认）；结论③=建议进灰度。D1 入 BOM：ART-bom-001@3 approved、@2 superseded。
+- **灰度启动（10-13 07:41Z）**：双项目 rollout=gray、gray_percent=0。
+- **灰度首演（10-12）**：G1/G2/G3 三片并行——**人工合并率 2/2=100%**、G2 挖出高危真缺陷（交卷链开考复检误拒全修）、W8 并发实战、六门对无绑定项适应✓、零干扰 W6 表全登记。事故链：F68 OrbStack 冻结+F69 worktree 挂载（PR #154 修复）。
+- **Jira maestro-svc 凭据切换（10-14，V4-3 关闭）**：三面回归全过、常驻栈注新 PAT；rd03 旧 PAT 待管理员吊销。备注：项目 Administrators 含删除权（试点期接受+记录）。
+- **第一层凭据管理（PR #157）**：secrets-manifest.yaml + secrets-check.sh 到期巡检——F61/F62 制度性对策。
+- **sbom 门修复（PR #150）**：Go 1.26.9+x/net+Dockerfile+e2e——四层洋葱。
+- **在途**：W9（F64/F66）+ EV（评测数据集）任务书已入库（PR #155）；W6 周报 10-18。
+- **全景**：done 39/110（P0 37/37+首演 2）；审计 421；M0-M4 全收敛+灰度进行中。
+
 ### 第一波（已完成，存档）
 
 A（#84）/ B（#90）/ C（#86）/ D（#85）/ I-契约（#88）全部合入；Phase 0 六分支（#78–#83）与调度板更新（#87/#89/#91）合入。综合检查结论见 §2.6。
