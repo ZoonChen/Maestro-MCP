@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,9 @@ func newPlatformStoreDB(t *testing.T) (IdentityStore, *sql.DB) {
 	t.Helper()
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	admin, err := OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)

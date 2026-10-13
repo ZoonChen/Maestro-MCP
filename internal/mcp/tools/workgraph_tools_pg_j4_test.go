@@ -13,6 +13,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/identity"
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 	mcp "github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -27,6 +28,9 @@ func newJ4ToolsFixture(t *testing.T) (*Services, *ToolGuard, string) {
 	t.Helper()
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	index := strings.LastIndex(dsn, "/")

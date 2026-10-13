@@ -27,8 +27,9 @@ test.use({ trace: 'off' });
 // Everything the browser renders comes from the real server and the
 // real frozen permission matrix.
 //
-// Gating: the shared compose PostgreSQL stack (session board §5,
-// 127.0.0.1:5434) and a working docker engine are OPTIONAL dependencies
+// Gating: the disposable test PostgreSQL (session board §5 / P3 first
+// defense line, 127.0.0.1:5435, provided to `make e2e` by the Makefile
+// WITH_TEST_PG macro) and a working docker engine are OPTIONAL dependencies
 // here. When either is missing, each test reports a runtime skip with
 // the reason — the same convention as the MAESTRO_TEST_POSTGRES_DSN-
 // gated Go suites — and `make e2e` stays green everywhere.
@@ -49,10 +50,23 @@ const PG_ALIAS = 'pg';
 const AUDIENCE = 'maestro-console-e2e';
 const OIDC_CLIENT_ID = 'maestro-console-e2e';
 const OIDC_CLIENT_SECRET = 'e2e-console-secret';
-const PG_PORT = 5434;
+// Fifth defense line (DG): the PG target comes from MAESTRO_TEST_POSTGRES_DSN
+// with the same managed 5435 default as `make test`, and a DSN carrying the
+// resident port 5434 is refused outright — this suite issues DROP DATABASE,
+// and four data-loss incidents (2026-09-12 → 2026-10-13) all started with a
+// test DSN on the resident instance.
+const SUITE_PG_DSN = process.env.MAESTRO_TEST_POSTGRES_DSN
+  ?? 'postgres://maestro-test:maestro-test-local-dev@127.0.0.1:5435/maestro?sslmode=disable';
+const SUITE_PG = new URL(SUITE_PG_DSN);
+const PG_REFUSED = `:${SUITE_PG.port}/` === ':5434/' && process.env.MAESTRO_ALLOW_ANY_DSN !== '1'
+  ? 'MAESTRO_TEST_POSTGRES_DSN targets the resident port 5434; refused by the DSN guard (use the isolated test PG on 5435)'
+  : '';
+const PG_PORT = Number(SUITE_PG.port || 5432);
+const PG_USER = decodeURIComponent(SUITE_PG.username);
+const PG_PASSWORD = decodeURIComponent(SUITE_PG.password);
 const DB_NAME = 'maestro_ui_e2e';
-const PG_DSN = `postgres://maestro:maestro-local-dev@127.0.0.1:${PG_PORT}/${DB_NAME}?sslmode=disable`;
-const CONTAINER_PG_DSN = `postgres://maestro:maestro-local-dev@${PG_ALIAS}:5432/${DB_NAME}?sslmode=disable`;
+const PG_DSN = `postgres://${PG_USER}:${PG_PASSWORD}@${SUITE_PG.hostname}:${PG_PORT}/${DB_NAME}?sslmode=disable`;
+const CONTAINER_PG_DSN = `postgres://${PG_USER}:${PG_PASSWORD}@${PG_ALIAS}:5432/${DB_NAME}?sslmode=disable`;
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 // Under the already-ignored tests/e2e/.test-data so generated
 // certs/databases never dirty the tree.
@@ -118,12 +132,16 @@ async function probeTCP(port: number, host = '127.0.0.1'): Promise<boolean> {
 
 function pgContainer(): string {
   const names = execSync('docker ps --format {{.Names}}', { encoding: 'utf8' });
-  const found = names.split('\n').find((name) => /maestro.*postgres/.test(name));
+  // The disposable test instance first (its compose container_name is
+  // deterministic); anything else maestro-*-postgres only when the DSN was
+  // pointed there deliberately.
+  const found = names.split('\n').find((name) => name === 'maestro-test-postgres')
+    ?? names.split('\n').find((name) => /maestro.*postgres/.test(name));
   return found || PG_CONTAINER_FALLBACK;
 }
 
 function psql(sql: string, database = 'postgres'): void {
-  execFileSync('docker', ['exec', '-i', pgContainer(), 'psql', '-U', 'maestro', '-d', database, '-v', 'ON_ERROR_STOP=1'], {
+  execFileSync('docker', ['exec', '-i', pgContainer(), 'psql', '-U', PG_USER, '-d', database, '-v', 'ON_ERROR_STOP=1'], {
     input: sql,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -493,8 +511,12 @@ function cleanupContainers(): void {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
-  if (!(await probeTCP(PG_PORT))) {
-    gov.reason = 'compose PostgreSQL (127.0.0.1:5434) not running';
+  if (PG_REFUSED) {
+    gov.reason = PG_REFUSED;
+    return;
+  }
+  if (!(await probeTCP(PG_PORT, SUITE_PG.hostname))) {
+    gov.reason = `disposable test PostgreSQL (${SUITE_PG.hostname}:${PG_PORT}) not running`;
     return;
   }
   try {
@@ -890,7 +912,7 @@ test.describe('M4 console governance (real PG + OIDC /api/v3 tree)', () => {
     // The atomic audit trail carries the platform authority class
     // (J1-4 shape) — inspected straight in the scratch database.
     const auditReason = sh(
-      `docker exec ${pgContainer()} psql -U maestro -d ${DB_NAME} -t -A -c `
+      `docker exec ${pgContainer()} psql -U ${PG_USER} -d ${DB_NAME} -t -A -c `
       + `"SELECT reason FROM audit_events WHERE action = 'pilot.decision.recorded' AND project_id = '${IDS.peixunProject}' ORDER BY id DESC LIMIT 1"`,
     ).trim();
     expect(auditReason).toContain('authority=platform:platform_admin');

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // The PG-gated worker suite drives the REAL store tables against a
@@ -177,6 +178,9 @@ func workerTestDB(t *testing.T) (*store.PostgresStore, context.Context) {
 	t.Helper()
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	admin, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)

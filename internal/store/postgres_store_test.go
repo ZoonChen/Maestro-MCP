@@ -11,6 +11,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,9 @@ func testPostgresStore(t *testing.T) *PostgresStore {
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(dsn); err != nil {
+		t.Fatal(err)
 	}
 	db, err := OpenPostgres(context.Background(), dsn)
 	require.NoError(t, err)

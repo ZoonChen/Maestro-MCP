@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/eval"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // PG-gated M4-EVAL-001 persistence: wire validation before the insert,
@@ -19,6 +20,9 @@ import (
 func TestEvaluationRecordPersistence(t *testing.T) {
 	if os.Getenv("MAESTRO_TEST_POSTGRES_DSN") == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
 	}
 	admin, err := OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)

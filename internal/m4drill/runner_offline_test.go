@@ -22,6 +22,7 @@ import (
 	"github.com/ZoonChen/Maestro-MCP/internal/model"
 	"github.com/ZoonChen/Maestro-MCP/internal/runner"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // The runner-offline drill anchor (M4-RBK-001, TC-RBKRUN-001): the
@@ -55,6 +56,9 @@ func newOfflineDrill(t *testing.T) *offlineDrill {
 	dsn := os.Getenv("MAESTRO_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("MAESTRO_TEST_POSTGRES_DSN not set; run against the m1 compose postgres to include this test")
+	}
+	if err := testguard.AssertTestDSN(dsn); err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
 	admin, err := store.OpenPostgres(ctx, dsn)

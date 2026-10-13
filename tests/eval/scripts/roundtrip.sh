@@ -5,14 +5,14 @@
 #   3. 存储读回 VerdictCounts 与 report.json 本地汇总比对
 #
 # 用法（worktree 内需先 make web-build 生成嵌入资源）：
-#   MAESTRO_TEST_POSTGRES_DSN='postgres://maestro:maestro-local-dev@127.0.0.1:5434/maestro?sslmode=disable' \
+#   MAESTRO_TEST_POSTGRES_DSN='postgres://maestro-test:maestro-test-local-dev@127.0.0.1:5435/maestro?sslmode=disable' \
 #     ./tests/eval/scripts/roundtrip.sh
-# 未设 DSN 时默认指向调度板约定的 compose 5434 端口。exit 0 = round-trip 一致。
+# 未设 DSN 时默认指向隔离测试实例 5435（make test 同款受管容器）。exit 0 = round-trip 一致。
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-DSN="${MAESTRO_TEST_POSTGRES_DSN:-postgres://maestro:maestro-local-dev@127.0.0.1:5434/maestro?sslmode=disable}"
+DSN="${MAESTRO_TEST_POSTGRES_DSN:-postgres://maestro-test:maestro-test-local-dev@127.0.0.1:5435/maestro?sslmode=disable}"
 DB_NAME="maestro_eval_roundtrip_evidence"
 TARGET_DSN="${DSN%/*}/${DB_NAME}"
 PROJECT="018f7e00-0000-7000-8000-0000000000e2"
@@ -22,6 +22,13 @@ trap 'rm -rf "$WORK"' EXIT
 
 log() { printf 'roundtrip: %s\n' "$*"; }
 
+# 第五道防线（DG）：常驻库端口 5434 一律拒绝——2026-10-13 第四次库事故即
+# 本脚本旧默认值指向 5434/maestro 所致。CI 临时库场景显式设 MAESTRO_ALLOW_ANY_DSN=1。
+if [[ "$DSN" == *":5434/"* && "${MAESTRO_ALLOW_ANY_DSN:-}" != "1" ]]; then
+  log "DSN 指向常驻库端口 5434，已拒绝（第五道防线 internal/testguard 同款规则）；请改用隔离测试实例 5435" >&2
+  exit 3
+fi
+
 # SQL 通过宿主 psql 或 compose 容器内的 psql 执行；默认连一次性库，
 # CREATE/DROP DATABASE 时连 maintenance 库 postgres。
 sql() {
@@ -29,19 +36,19 @@ sql() {
   if command -v psql >/dev/null 2>&1; then
     psql "${DSN%/*}/${database}" -v ON_ERROR_STOP=1 -q -c "$statement"
   else
-    # 宿主无 psql 时走容器内 psql：优先 compose 规范名
-    # maestro-resident-postgres（docker-compose.yaml 的 container_name），
-    # 兼容旧脚本时期的 maestro-postgres。
-    local container
-    container="$(docker ps --filter name=maestro-resident-postgres --format '{{.ID}}' | head -1)"
+    # 宿主无 psql 时走容器内 psql：默认 DSN 在隔离测试容器 maestro-test-postgres
+    # （P3 防线一）；用户名从 DSN 派生，显式传入其他 DSN 时随行。
+    local container user
+    container="$(docker ps --filter name=maestro-test-postgres --format '{{.ID}}' | head -1)"
     if [ -z "$container" ]; then
-      container="$(docker ps --filter name=maestro-postgres --format '{{.ID}}' | head -1)"
+      container="$(docker ps --filter name=maestro-resident-postgres --format '{{.ID}}' | head -1)"
     fi
     if [ -z "$container" ]; then
-      log "需要可用的 maestro-resident-postgres 容器（或安装宿主 psql）；先在主 checkout 启动 compose 栈" >&2
+      log "需要可用的 maestro-test-postgres 容器（或安装宿主 psql）；先 make test 起受管测试实例" >&2
       exit 3
     fi
-    docker exec -i "$container" psql -U maestro -d "$database" -v ON_ERROR_STOP=1 -q -c "$statement"
+    user="$(printf '%s' "$DSN" | sed -E 's#^[a-z]+://([^:/@]+).*#\1#')"
+    docker exec -i "$container" psql -U "$user" -d "$database" -v ON_ERROR_STOP=1 -q -c "$statement"
   fi
 }
 

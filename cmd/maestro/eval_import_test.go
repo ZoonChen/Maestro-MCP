@@ -15,6 +15,7 @@ import (
 
 	"github.com/ZoonChen/Maestro-MCP/internal/eval"
 	"github.com/ZoonChen/Maestro-MCP/internal/store"
+	"github.com/ZoonChen/Maestro-MCP/internal/testguard"
 )
 
 // The M4-EVAL-001 ingest surface. Non-PG usage tests run everywhere;
@@ -61,6 +62,9 @@ func TestEvalImportUsageFailures(t *testing.T) {
 // foreign key). Returns the store and the target DSN.
 func setupEvalImportDB(t *testing.T, databaseName string) (*store.PostgresStore, string) {
 	t.Helper()
+	if err := testguard.AssertTestDSN(os.Getenv("MAESTRO_TEST_POSTGRES_DSN")); err != nil {
+		t.Fatal(err)
+	}
 	admin, err := store.OpenPostgres(context.Background(), os.Getenv("MAESTRO_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
 	_, err = admin.ExecContext(context.Background(), fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, databaseName))
