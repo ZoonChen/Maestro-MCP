@@ -222,7 +222,7 @@ end
 matrix_path = File.join(DOCS, "governance", "traceability-matrix.csv")
 matrix = CSV.read(matrix_path, headers: true)
 errors << "traceability matrix headers differ from v3 contract" unless matrix.headers == TRACE_HEADERS
-errors << "traceability matrix must contain 31 M0-M4 tasks" unless matrix.length == 31
+errors << "traceability matrix must contain 37 M0-M4 tasks" unless matrix.length == 37
 
 seen_tasks = Set.new
 
