@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ZoonChen/Maestro-MCP/internal/eval"
 )
@@ -145,6 +146,78 @@ func (s pgEvaluationStore) VerdictCounts(ctx context.Context, runID string) (map
 		counts[verdict] = count
 	}
 	return counts, rows.Err()
+}
+
+// EvaluationRunSummary is the observation-plane projection of one run:
+// identity digests, record counts per layer and verdict, and the
+// ingestion window. Digests are NULL when a run mixed values (a run is
+// expected to bind exactly one dataset/adapter digest — authority §3).
+type EvaluationRunSummary struct {
+	RunID             string
+	DatasetDigest     *string
+	ModelConfigDigest *string
+	Records           int64
+	LayerCounts       map[eval.Layer]int64
+	VerdictCounts     map[eval.Verdict]int64
+	FirstRecordAt     time.Time
+	LastRecordAt      time.Time
+}
+
+// RunsByProject lists the project's evaluation runs with their
+// aggregated counts, newest run first (EV-2 / G3-E2: the read API face
+// over the CLI-imported evaluation_records).
+func (s pgEvaluationStore) RunsByProject(ctx context.Context, projectID string) ([]EvaluationRunSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run_id::text,
+			CASE WHEN count(DISTINCT dataset_digest) = 1 THEN min(dataset_digest) END,
+			CASE WHEN count(DISTINCT model_config_digest) = 1 THEN min(model_config_digest) END,
+			count(*) AS records,
+			count(*) FILTER (WHERE layer = 'quality'),
+			count(*) FILTER (WHERE layer = 'trajectory'),
+			count(*) FILTER (WHERE layer = 'security'),
+			count(*) FILTER (WHERE layer = 'capability'),
+			count(*) FILTER (WHERE verdict = 'pass'),
+			count(*) FILTER (WHERE verdict = 'fail'),
+			count(*) FILTER (WHERE verdict = 'error'),
+			count(*) FILTER (WHERE verdict = 'blocked'),
+			count(*) FILTER (WHERE verdict = 'skipped'),
+			min(created_at), max(created_at)
+		FROM evaluation_records
+		WHERE project_id = $1
+		GROUP BY run_id
+		ORDER BY max(created_at) DESC`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("evaluation: runs by project: %w", err)
+	}
+	defer rows.Close()
+
+	summaries := []EvaluationRunSummary{}
+	for rows.Next() {
+		summary := EvaluationRunSummary{
+			LayerCounts:   map[eval.Layer]int64{},
+			VerdictCounts: map[eval.Verdict]int64{},
+		}
+		var quality, trajectory, security, capability int64
+		var verdicts [5]int64
+		if scanErr := rows.Scan(&summary.RunID, &summary.DatasetDigest, &summary.ModelConfigDigest,
+			&summary.Records,
+			&quality, &trajectory, &security, &capability,
+			&verdicts[0], &verdicts[1], &verdicts[2], &verdicts[3], &verdicts[4],
+			&summary.FirstRecordAt, &summary.LastRecordAt); scanErr != nil {
+			return nil, fmt.Errorf("evaluation: runs by project scan: %w", scanErr)
+		}
+		summary.LayerCounts[eval.LayerQuality] = quality
+		summary.LayerCounts[eval.LayerTrajectory] = trajectory
+		summary.LayerCounts[eval.LayerSecurity] = security
+		summary.LayerCounts[eval.LayerCapability] = capability
+		summary.VerdictCounts[eval.VerdictPass] = verdicts[0]
+		summary.VerdictCounts[eval.VerdictFail] = verdicts[1]
+		summary.VerdictCounts[eval.VerdictError] = verdicts[2]
+		summary.VerdictCounts[eval.VerdictBlocked] = verdicts[3]
+		summary.VerdictCounts[eval.VerdictSkipped] = verdicts[4]
+		summaries = append(summaries, summary)
+	}
+	return summaries, rows.Err()
 }
 
 func marshalStrings(values []string) ([]byte, error) {

@@ -825,6 +825,7 @@ func composePostgresSurfaces(ctx context.Context, cfg *config.Config, options *a
 		options.ControlPlane = &handler.ControlPlaneOptions{
 			Identity:      identityMiddleware,
 			Quality:       quality,
+			Evaluation:    handler.NewEvaluationHandler(pgStore.Evaluation()),
 			GitLab:        gitlabHandler,
 			Observability: handler.NewObservabilityHandler(pgStore.Observability()),
 			SLO:           sloHandler,

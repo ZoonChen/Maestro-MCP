@@ -10,13 +10,17 @@ import { readFile } from "node:fs/promises";
 import { sha256Digest } from "./canonical.ts";
 import { isKnownConstraint } from "./constraints.ts";
 import {
+  CASE_STATUSES,
+  GOVERNANCE_DOMAINS,
   LAYERS,
   RISKS,
   SUPPORTED_SCORER_KINDS,
   type Budget,
+  type CaseStatus,
   type Dataset,
   type EvalCase,
   type ExecutionAdapter,
+  type GovernanceDomain,
   type Layer,
   type Risk,
   type ScorerKind,
@@ -128,6 +132,35 @@ function validateCase(raw: unknown, index: number, seenIds: Set<string>): EvalCa
     );
   }
 
+  const governanceDomain = raw.governance_domain;
+  if (
+    governanceDomain !== undefined &&
+    !GOVERNANCE_DOMAINS.includes(governanceDomain as GovernanceDomain)
+  ) {
+    throw new DatasetError(
+      `${caseId}: governance_domain must be one of ${GOVERNANCE_DOMAINS.join(", ")}, got ${String(governanceDomain)}`,
+    );
+  }
+
+  const status = raw.status;
+  if (status !== undefined && !CASE_STATUSES.includes(status as CaseStatus)) {
+    throw new DatasetError(
+      `${caseId}: status must be one of ${CASE_STATUSES.join(", ")}, got ${String(status)}`,
+    );
+  }
+  const initialState = raw.initial_state;
+  const carriesSimulation =
+    typeof initialState === "object" &&
+    initialState !== null &&
+    "simulation" in initialState &&
+    (initialState as Record<string, unknown>).simulation !== undefined;
+  if (status === "planned" && carriesSimulation) {
+    throw new DatasetError(
+      `${caseId}: a planned case must not carry initial_state.simulation ` +
+        "(planned = not executable; author the simulation and flip status to implemented)",
+    );
+  }
+
   for (const field of ["initial_state", "inputs"] as const) {
     if (!isObject(raw[field])) {
       throw new DatasetError(`${caseId}: ${field} must be an object`);
@@ -232,6 +265,12 @@ function validateCase(raw: unknown, index: number, seenIds: Set<string>): EvalCa
     layer: layer as Layer,
     category,
     risk: risk as Risk,
+    ...(governanceDomain === undefined
+      ? {}
+      : { governance_domain: governanceDomain as GovernanceDomain }),
+    ...(status === undefined || status === "implemented"
+      ? {}
+      : { status: status as CaseStatus }),
     initial_state: raw.initial_state as Record<string, unknown>,
     inputs: raw.inputs as Record<string, unknown>,
     allowed_tools: allowedTools,
@@ -298,15 +337,21 @@ export async function loadDataset(path: string): Promise<LoadedDataset> {
 }
 
 /**
- * Fail-closed adapter compatibility gate: every case must be executable
- * by the chosen adapter before the first trial runs, so an incompatible
- * dataset aborts the run instead of producing partial records.
+ * Fail-closed adapter compatibility gate: every EXECUTABLE case must be
+ * runnable by the chosen adapter before the first trial runs, so an
+ * incompatible dataset aborts the run instead of producing partial
+ * records. Planned cases are authoring skeletons — they are excluded
+ * here and skipped by the runner (no trials, no records), never
+ * silently executed or counted.
  */
 export function assertAdapterCompatibility(
   dataset: Dataset,
   adapter: ExecutionAdapter,
 ): void {
   for (const testCase of dataset.cases) {
+    if (testCase.status === "planned") {
+      continue;
+    }
     const reason = adapter.validateCase(testCase);
     if (reason !== null) {
       throw new DatasetError(

@@ -18,6 +18,46 @@ export const LAYERS: readonly Layer[] = [
   "capability",
 ];
 
+/**
+ * The five governance domains (EV-1 skeleton grouping axis): the
+ * scenario work orders follow the governed slice flow — 领取 claim →
+ * 门禁 gate → 合并 merge, with 审计 audit and 回滚 rollback as the
+ * observation and recovery planes. Orthogonal to the authoritative
+ * four-layer distribution (§4): every shard case carries exactly one
+ * domain and one layer; 5×24 and 40/30/40/10 are two partitions of
+ * the same 120.
+ */
+export type GovernanceDomain =
+  | "claim"
+  | "gate"
+  | "merge"
+  | "audit"
+  | "rollback";
+
+export const GOVERNANCE_DOMAINS: readonly GovernanceDomain[] = [
+  "claim",
+  "gate",
+  "merge",
+  "audit",
+  "rollback",
+];
+
+/**
+ * Authoring status. `planned` is the honest skeleton marker (EV-1):
+ * the case carries the full authority-required field set — inputs,
+ * expected governance behavior and scoring criteria — but its
+ * executable simulation content is still to be authored by
+ * QA/Security. The runner skips planned cases (no trials, no records)
+ * and the coverage gate reports their deficit explicitly instead of
+ * rounding the dataset up to complete.
+ */
+export type CaseStatus = "implemented" | "planned";
+
+export const CASE_STATUSES: readonly CaseStatus[] = [
+  "implemented",
+  "planned",
+];
+
 /** The frozen security-risk vocabulary. */
 export type Risk = "benign" | "low" | "elevated" | "high";
 
@@ -74,6 +114,10 @@ export interface EvalCase {
   layer: Layer;
   category: string;
   risk: Risk;
+  /** Governance-domain grouping axis (EV-1); required on shard cases. */
+  governance_domain?: GovernanceDomain;
+  /** Authoring status; absent means implemented. */
+  status?: CaseStatus;
   initial_state: Record<string, unknown>;
   inputs: Record<string, unknown>;
   allowed_tools: string[];

@@ -67,7 +67,11 @@ async function main(): Promise<void> {
   }
 
   const { dataset, digest } = await loadDataset(options.dataset);
-  const { runId, records, report } = runEvaluation(dataset, digest, adapter);
+  const { runId, records, report, plannedCaseIds } = runEvaluation(
+    dataset,
+    digest,
+    adapter,
+  );
 
   const outDir =
     options.out ??
@@ -96,6 +100,11 @@ async function main(): Promise<void> {
   console.log(
     `overall: trials=${report.trial_count} pass=${report.verdict_counts.pass} fail=${report.verdict_counts.fail} error=${report.verdict_counts.error} blocked=${report.verdict_counts.blocked} skipped=${report.verdict_counts.skipped}`,
   );
+  if (plannedCaseIds.length > 0) {
+    console.log(
+      `planned: ${plannedCaseIds.length} case(s) skipped (authoring skeletons; no trials, no records)`,
+    );
+  }
 }
 
 main().catch((error: unknown) => {
