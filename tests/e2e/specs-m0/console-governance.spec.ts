@@ -141,7 +141,14 @@ function pgContainer(): string {
 }
 
 function psql(sql: string, database = 'postgres'): void {
-  execFileSync('docker', ['exec', '-i', pgContainer(), 'psql', '-U', PG_USER, '-d', database, '-v', 'ON_ERROR_STOP=1'], {
+  // Guard: reject values that could be parsed as docker CLI options
+  // (defense-in-depth — pgContainer() sources are trusted, but this
+  // costs one line and closes the entire argument-injection class).
+  const container = pgContainer();
+  if (container.startsWith('-') || database.startsWith('-')) {
+    throw new Error(`psql guard: suspicious argument (container=${container}, db=${database})`);
+  }
+  execFileSync('docker', ['exec', '-i', container, 'psql', '-U', PG_USER, '-d', database, '-v', 'ON_ERROR_STOP=1'], {
     input: sql,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
