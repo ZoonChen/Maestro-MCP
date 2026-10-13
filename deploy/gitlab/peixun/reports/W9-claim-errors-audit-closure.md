@@ -66,4 +66,9 @@
 
 按 WIN 纪律执行：pg_dump 前置快照 → 镜像自合并后 main 重建 → `migrate up` 预期 no-op（无迁移）→ 换容器 → readyz/smoke（claim 活体探针：非 uuid runner_id 应 400、claim 后审计行应可查）。结果见 §8（执行后补记）。
 
-## 8. 常驻栈窗口记录（待执行）
+## 8. 常驻栈窗口记录（WIN-20261013-W9-01，已执行）
+
+- **窗口执行**：镜像自 main 66de939（PR #160）重建；`migrate` **no-op**（applied=0，target=23——W9 无迁移，符合预期）；8081 换容器；smoke：readyz=200、`/`→302 `/dashboard`、`/dashboard`=200（SPA 出页）。后快照 `maestro-w9-post-20261013-135830.dump`。
+- **F66/F64 活体探针未能执行（如实记录）**：开窗取证发现 live maestro 库已被并行会话清空（见下），空库下项目作用域解析对任意 `:pid` 先行 404，claim 面不可达——事故的次生影响，非 W9 缺陷。F66/F64 行为证明以远程 CI 为准（PR #160 `postgres-integration` 含本波全部 W9 测试）。
+- **⚠ 窗口内事故取证（第四次同族，非本会话所为）**：live maestro 库于 2026-10-13 13:17（本地）被清空（work_items=0/audit=0，迁移同秒 19→23 重放指纹）。证据链归因**并行 EV 评测会话**：其 `tests/eval/scripts/roundtrip.sh` 默认 DSN 指向 `5434/maestro`（常驻库），门禁夹具 `DROP SCHEMA public CASCADE` 重放即此形态；EV worktree 12:35 创建、清空 13:17 时间线吻合；W9 会话全程测试走 5435 隔离实例（命令与配置可查）、e2e 走本地 SQLite（`playwright.config.ts` webServer `--db` 实证）。**恢复点已验证**：cron 12:00 自动备份 `maestro-20261013-120001.dump` 在 5435 隔离实例 restore 干净（112 项 / done 39 / 审计 421 / 迁移 23）——F62 修复后自动备份首次立功。**未单方恢复**（P3 先例：恢复需专窗 + 重放验证 + 审计链核验，owner 裁决），已登记 `pilot-stack/change-window.md` 事故行。
+- **遗留（供 owner/集成会话裁决）**：① 常驻库恢复专窗（恢复点即 12:00 dump）；② EV 脚本默认 DSN 的根修（改默认 5435 或删除默认值强制显式传入）——防线一/二拦不住「脚本自带错误默认值」这一新增变体，防线三（备份）本次兜住了。
