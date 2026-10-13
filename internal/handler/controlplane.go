@@ -87,6 +87,12 @@ var controlPlaneActions = map[string]map[string]string{
 	"/api/v3/projects/:pid/work-items/:wid/waivers": {
 		http.MethodGet: "quality.read",
 	},
+	"/api/v3/projects/:pid/evaluations": {
+		// EV-2 / G3-E2: the evaluation observation read face rides the
+		// frozen quality.read string with the rest of the quality
+		// observation routes.
+		http.MethodGet: "quality.read",
+	},
 	"/api/v3/webhooks/dead-letters/:inbox_id/replay": {
 		// W5-6 / OPS-1 terminal state: the replay is an OPERATIONS
 		// action on the frozen webhook.deadletter.replay string held by
@@ -135,6 +141,7 @@ var controlPlaneActions = map[string]map[string]string{
 type ControlPlaneOptions struct {
 	Identity      *OIDCMiddleware
 	Quality       *QualityHandler
+	Evaluation    *EvaluationHandler
 	GitLab        *GitLabHandler
 	Observability *ObservabilityHandler
 	SLO           *SLOSnapshotHandler
@@ -176,6 +183,9 @@ func RegisterControlPlane(r *gin.Engine, options ControlPlaneOptions) {
 		group.POST("/projects/:pid/gates/:gid/waivers", options.Quality.RequestGateWaiver)
 		group.POST("/projects/:pid/waivers/:wid/approve", options.Quality.ApproveGateWaiver)
 		group.POST("/projects/:pid/waivers/:wid/revoke", options.Quality.RevokeGateWaiver)
+	}
+	if options.Evaluation != nil {
+		group.GET("/projects/:pid/evaluations", options.Evaluation.ListProjectEvaluations)
 	}
 	if options.DeadLetters != nil {
 		group.POST("/webhooks/dead-letters/:inbox_id/replay", options.DeadLetters.ReplayDeadLetter)

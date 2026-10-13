@@ -71,6 +71,13 @@ export interface RunOutcome {
   runId: string;
   records: EvaluationRecord[];
   report: EvaluationReport;
+  /**
+   * Planned cases skipped by this run (EV-1 skeleton): authoring
+   * placeholders carry no simulation, so they produce neither trials
+   * nor records — the report and the ingested table stay clean
+   * evaluations only.
+   */
+  plannedCaseIds: string[];
 }
 
 export function runEvaluation(
@@ -84,8 +91,14 @@ export function runEvaluation(
   const runId = options.runId ?? randomUUID();
   const now = options.now ?? (() => new Date());
   const records: EvaluationRecord[] = [];
+  const plannedCaseIds = dataset.cases
+    .filter((testCase) => testCase.status === "planned")
+    .map((testCase) => testCase.case_id);
 
   for (const testCase of dataset.cases) {
+    if (testCase.status === "planned") {
+      continue;
+    }
     const scorer = getScorer(testCase.scorer.kind);
     for (let trialIndex = 0; trialIndex < testCase.budget.trials; trialIndex++) {
       const seed = deriveSeed(testCase.case_id, trialIndex);
@@ -149,5 +162,5 @@ export function runEvaluation(
     adapterKind: adapter.kind,
     generatedAt: lastCreatedAt,
   });
-  return { runId, records, report };
+  return { runId, records, report, plannedCaseIds };
 }

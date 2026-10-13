@@ -107,6 +107,7 @@ func newQualityFixture(t *testing.T) *qualityFixture {
 	router.Use(mw.Authenticate)
 	RegisterControlPlane(router, ControlPlaneOptions{
 		Identity: mw, Quality: quality,
+		Evaluation:  NewEvaluationHandler(pg.Evaluation()),
 		GitLab:      NewGitLabHandler(pg.Instances()),
 		DeadLetters: NewDeadLetterHandler(pg.Webhooks()),
 		Scope:       pg.Instances(),

@@ -111,3 +111,47 @@ test("mock adapter compatibility gate rejects cases without a simulation", async
       /cannot execute quality-fix-null-deref-success/.test(error.message),
   );
 });
+
+test("an invalid governance_domain is rejected with the closed vocabulary", async () => {
+  const parsed = await seedParsed();
+  caseAt(parsed, 0).governance_domain = "deploy";
+  assert.throws(
+    () => validateDataset(parsed),
+    /governance_domain must be one of claim, gate, merge, audit, rollback, got deploy/,
+  );
+});
+
+test("an invalid status is rejected with the closed vocabulary", async () => {
+  const parsed = await seedParsed();
+  caseAt(parsed, 0).status = "draft";
+  assert.throws(
+    () => validateDataset(parsed),
+    /status must be one of implemented, planned, got draft/,
+  );
+});
+
+test("a planned case must not carry a simulation", async () => {
+  const parsed = await seedParsed();
+  const first = caseAt(parsed, 0);
+  first.status = "planned";
+  assert.throws(
+    () => validateDataset(parsed),
+    /a planned case must not carry initial_state\.simulation/,
+  );
+});
+
+test("a planned case without a simulation validates and is exempt from the adapter gate", async () => {
+  const parsed = await seedParsed();
+  const first = caseAt(parsed, 0);
+  first.status = "planned";
+  delete (first.initial_state as Record<string, unknown>).simulation;
+  const dataset = validateDataset(parsed);
+  const planned = dataset.cases.find((testCase) => testCase.status === "planned");
+  assert.ok(planned, "the case stays in the dataset as a skeleton row");
+  // The mock adapter itself would reject it as inexecutable — the
+  // compatibility gate must exempt planned cases instead (the runner
+  // skips them wholesale: no trials, no records).
+  const adapter = new MockAdapter();
+  assert.equal(adapter.validateCase(planned!), "initial_state.simulation must be an object");
+  assert.doesNotThrow(() => assertAdapterCompatibility(dataset, adapter));
+});

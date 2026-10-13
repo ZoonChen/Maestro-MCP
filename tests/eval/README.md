@@ -33,7 +33,8 @@ CLI 退出码 0 表示 harness 完整产出合规记录与报告；verdict 本�
 | `src/runner.ts` | 编排：dataset → trials → adapter → guard → scorer → 记录 → 报告 |
 | `src/cli.ts` | CLI 入口 |
 | `datasets/seed.json` | 种子数据集（8 个示范 case 覆盖四层；harness 冒烟用，不计入分片） |
-| `datasets/regression/`、`datasets/holdout/` | 数据集分片骨架（70/30；每层 ≥3 个示范种子，契约与缺口工单见 `datasets/README.md`） |
+| `datasets/regression/`、`datasets/holdout/` | 120 场景分片（70/30，按治理面域分 10 文件；implemented 16 + planned 104，契约与工单见 `datasets/README.md`） |
+| `scripts/ev1-generate.py` | EV-1 骨架生成器（内嵌场景表=撰写底稿，产出 10 个域分片 JSON） |
 | `scripts/roundtrip.sh` | PG 门控一条龙 Evidence：harness JSONL → `maestro eval-import` → VerdictCounts 读回比对 |
 | `test/` | node:test 单测（digest 稳定性、数据集负测试、判分器、记录 fail-closed、报告手算、runner、e2e+AJV、覆盖校验、分片种子） |
 
@@ -101,13 +102,27 @@ MAESTRO_TEST_POSTGRES_DSN='postgres://maestro:maestro-local-dev@127.0.0.1:5434/m
 
 Go 侧 PG 门控测试：`TestEvalImport*`（`cmd/maestro`，`MAESTRO_TEST_POSTGRES_DSN` 门控）覆盖合法/非法/重复/消歧四类行为，`TestEvalImportRoundTrip` 用 `cmd/maestro/testdata/eval/records.jsonl`（本 harness 真实产出）闭环同一断言。
 
-## 数据集分片与覆盖校验（H2 骨架）
+## 读面与契约观察（EV-2 / EV-3，G3-E2+E3 关闭）
 
-`datasets/regression/`（70% 固定回归）与 `datasets/holdout/`（30%，仅 QA/Security 可见）是正式 120 场景数据集的落盘骨架：每层 ≥3 个示范种子，层别标记为 case 的 `layer` 字段。`npm --prefix tests/eval run dataset-check` 按权威 §4 断言 40/30/40/10 与全局 70/30——**当前种子态显式 FAIL 并列出每层缺口**（这正是给 QA/Security 的撰写工单，见 `datasets/README.md`），不虚报完成。
+`GET /api/v3/projects/{pid}/evaluations`（RBAC `quality.read`，openapi `Evaluation` tag）是 evaluation_records 的观察读面：按 run 聚合返回 `run_id / dataset_digest / model_config_digest / records / layer_counts / verdict_counts / first_record_at / last_record_at`，最新 run 在前。入库仍只走 CLI（fail-closed 文件语义），HTTP 面只读。
+
+三个契约差异经核实为**语义差异而非缺陷**，登记如下（wire/schema 均未改）：
+
+| # | 差异 | 裁定 |
+| --- | --- | --- |
+| 1 | wire 记录**无 project_id**：项目归属是入库时属性（CLI `--project`），API 则由路由作用域承载 | 语义正确——服务端作用域不可由载荷自报（默认拒绝不变式），不修 |
+| 2 | wire 记录**无 trial 字段**：trial 序数由入库投影为 `<case_id>#t<k>` 后缀；API 的 `records` 计数因此=trial 行数（含消歧后缀行），不重 join 场景身份 | 投影已确定性且幂等，`#t` 前缀可还原场景；openapi operation description 已钉住该语义，不修 |
+| 3 | CLI `--json` 摘要的 `runs[].verdict_counts` 只含**非零键**（GROUP BY 直出）；API 的 `verdict_counts` 固定五键**补零** | CLI 是运维摘要非契约面，补零契约只对 API 生效；若后续要统一，登记为 CLI 增强项（非本切片） |
+
+另：API 的 `dataset_digest / model_config_digest` 在 run 内混值时返回 `null`（权威 §3 的 run 冻结预期——一个 run 绑定唯一 dataset/adapter digest），不静默取 min 代言。
+
+## 数据集分片、治理面域与覆盖校验（H2 骨架 → EV-1 v1）
+
+`datasets/regression/`（70% 固定回归=84）与 `datasets/holdout/`（30%，仅 QA/Security 可见=36）承载正式 120 场景数据集，按治理面域分文件（claim/gate/merge/audit/rollback 各 24，与权威四层 40/30/40/10 正交，见 `datasets/README.md`）。case 携带可选 `status`：**implemented**（带 simulation 可执行）或 **planned**（撰写骨架：字段齐全但不可执行，runner 跳过、不产记录）。`npm --prefix tests/eval run dataset-check` 双层断言——**structure**（5×24 + 40/30/40/10 + 70/30，v1 骨架全绿）与 **authoring**（implemented 进度 16/120，显式列每层缺口 = QA/Security 撰写工单，G3-E1 残余），任一层不足即 FAIL，不虚报完成。骨架再生成用 `scripts/ev1-generate.py`。
 
 ## 边界与登记项（回集成会话）
 
-- 正式 120 场景数据集（40 质量/30 轨迹/40 安全/10 能力，70% 回归+30% holdout）、每关键场景 ≥3 trial 与 pass^3 ≥80% 门 —— 分片骨架与计数校验已就位（`dataset-check` 显式列缺口），正式内容撰写属 QA/Security 协作项。
+- 正式 120 场景数据集内容（104 个 planned 场景的 simulation/执行细节撰写）、每关键场景 ≥3 trial 与 pass^3 ≥80% 门 —— v1 骨架与双层计数校验已就位（`dataset-check` 显式列缺口），内容撰写属 QA/Security 协作项（G3-E1 残余，工单=planned 场景本身）。
 - LLM judge 校准（≥100 双标注样本，Cohen's kappa ≥0.70）——未实现，加载即拒绝。
 - ~~JSONL → `evaluation_records` 入库接线~~ —— 已落地（`maestro eval-import`，见上文章库节；trial 消歧为入库投影，wire 与 store 均未改）。
 - `mcp-stdio` 真实适配器（驱动真实 Maestro MCP stdio 面）——M4 后续。

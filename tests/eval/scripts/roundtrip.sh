@@ -29,10 +29,16 @@ sql() {
   if command -v psql >/dev/null 2>&1; then
     psql "${DSN%/*}/${database}" -v ON_ERROR_STOP=1 -q -c "$statement"
   else
+    # 宿主无 psql 时走容器内 psql：优先 compose 规范名
+    # maestro-resident-postgres（docker-compose.yaml 的 container_name），
+    # 兼容旧脚本时期的 maestro-postgres。
     local container
-    container="$(docker ps --filter name=maestro-postgres --format '{{.ID}}' | head -1)"
+    container="$(docker ps --filter name=maestro-resident-postgres --format '{{.ID}}' | head -1)"
     if [ -z "$container" ]; then
-      log "需要可用的 maestro-postgres 容器（或安装宿主 psql）；先在主 checkout 启动 compose 栈" >&2
+      container="$(docker ps --filter name=maestro-postgres --format '{{.ID}}' | head -1)"
+    fi
+    if [ -z "$container" ]; then
+      log "需要可用的 maestro-resident-postgres 容器（或安装宿主 psql）；先在主 checkout 启动 compose 栈" >&2
       exit 3
     fi
     docker exec -i "$container" psql -U maestro -d "$database" -v ON_ERROR_STOP=1 -q -c "$statement"

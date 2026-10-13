@@ -22,6 +22,7 @@ tags:
   - {name: Runners, description: Runner registration approval and revocation}
   - {name: GitLab, description: GitLab instances mappings merge requests and webhooks}
   - {name: Quality, description: Policies Gates Evidence and Waivers}
+  - {name: Evaluation, description: Imported agent evaluation runs read face}
   - {name: Integration, description: Cross-repository IntegrationRuns}
   - {name: Defects, description: Defect triage and Agent remediation}
   - {name: Audit, description: Authorized audit export operations}
@@ -1444,6 +1445,35 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /projects/{project_id}/evaluations:
+    parameters:
+      - {$ref: '#/components/parameters/ProjectId'}
+    get:
+      tags: [Evaluation]
+      operationId: listProjectEvaluations
+      summary: List the imported evaluation runs with aggregated counts
+      description: >-
+        Read-only observation face over the evaluation_records ingested by
+        the `maestro eval-import` CLI (EV-2 / G3-E2; ingestion stays on the
+        fail-closed CLI — no HTTP write surface). Each row aggregates one
+        run: identity digests, record counts per layer and verdict, and the
+        ingestion window, newest run first. Contract notes: the wire record
+        carries no trial field, so the ingest projection stores repeated
+        trials of one case under `<case_id>#t<k>` suffixes — run summaries
+        count those disambiguated trials as distinct rows; digest fields
+        are null when a run mixed values (a run binds exactly one dataset
+        and adapter digest per the evaluation authority §3).
+      responses:
+        '200':
+          description: The project's evaluation runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/EvaluationRunSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /projects/{project_id}/gates/{gate_id}/waivers:
     parameters:
       - {$ref: '#/components/parameters/ProjectId'}
@@ -1935,6 +1965,56 @@ components:
     Timestamp:
       type: string
       format: date-time
+    EvaluationRunSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - run_id
+        - dataset_digest
+        - model_config_digest
+        - records
+        - layer_counts
+        - verdict_counts
+        - first_record_at
+        - last_record_at
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        dataset_digest:
+          description: 'sha256: digest of the run''s frozen dataset; null when the run mixed values.'
+          type: [string, 'null']
+          pattern: '^sha256:[a-f0-9]{64}$'
+        model_config_digest:
+          description: 'sha256: digest of the run''s adapter/model configuration; null when absent or mixed.'
+          type: [string, 'null']
+          pattern: '^sha256:[a-f0-9]{64}$'
+        records:
+          description: Trial records in the run, disambiguated trial case ids included.
+          type: integer
+          format: int64
+          minimum: 1
+        layer_counts:
+          type: object
+          additionalProperties: false
+          required: [quality, trajectory, security, capability]
+          properties:
+            quality: {type: integer, format: int64, minimum: 0}
+            trajectory: {type: integer, format: int64, minimum: 0}
+            security: {type: integer, format: int64, minimum: 0}
+            capability: {type: integer, format: int64, minimum: 0}
+        verdict_counts:
+          type: object
+          additionalProperties: false
+          required: [pass, fail, error, blocked, skipped]
+          properties:
+            pass: {type: integer, format: int64, minimum: 0}
+            fail: {type: integer, format: int64, minimum: 0}
+            error: {type: integer, format: int64, minimum: 0}
+            blocked: {type: integer, format: int64, minimum: 0}
+            skipped: {type: integer, format: int64, minimum: 0}
+        first_record_at: {$ref: '#/components/schemas/Timestamp'}
+        last_record_at: {$ref: '#/components/schemas/Timestamp'}
     ResourceVersion:
       type: integer
       minimum: 1
