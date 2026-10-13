@@ -58,7 +58,7 @@ func AssertTestDSN(dsn string) error
 
 - **keyword-value 形态 DSN**（`host=... port=...`）会被 fail-closed 拒绝（仓库内外 DSN 均为 URL 形态；如需该形态走 `MAESTRO_ALLOW_ANY_DSN=1` 并登记）。
 - **多 worktree 并行的受管容器名冲突**（`container_name: maestro-test-postgres` 全局唯一，P3-1 既有设计）：并行会话各跑 `make test`（受管模式）会撞名；解法=外部 DSN 模式复用同一实例（本片门禁即如此执行）。CI 不受影响（外部 DSN 模式）。
-- CI 的 e2e 中 console-governance 仍为 skip（CI 无 docker 容器名 `maestro-test-postgres`，probe 后 setup 失败→skip，与改造前 5434 探针失败 skip 等效）。
+- CI 的 e2e 中 console-governance 自本片起**真跑**（受管 WITH_TEST_PG 在 runner 上拉起测试实例）；随之暴露并已修复一个潜伏预算问题：beforeAll 完整治理栈编排（冷缓存 `go run` 迁移 + IdP/服务容器）超出 Playwright 钩子默认 30s——显式提至 300s（钩子内 waitForHTTP 本就给服务 240s）。改造前 CI 在 5434 探针处早退，该预算从未被检验。
 - 常驻栈：**无需重建**（纯测试侧变更，不影响运行时二进制）——brief §4 预期一致。
 
 ## 6. 门禁记录
